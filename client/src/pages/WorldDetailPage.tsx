@@ -139,6 +139,12 @@ export default function WorldDetailPage() {
         <Link className="btn small" to={`/worlds/${world.id}/calendar`}>
           🗓 暦・天候
         </Link>
+        <Link className="btn small" to={`/worlds/${world.id}/events`}>
+          🎉 イベント({world.usage.events})
+        </Link>
+        <a className="btn small" href={`/api/worlds/${world.id}/export`} download>
+          ⤓ 世界を書き出し
+        </a>
       </div>
 
       <div className="card">

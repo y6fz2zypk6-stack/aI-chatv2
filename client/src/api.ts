@@ -51,6 +51,8 @@ export interface DonePayload {
   fenceMissingStreak: number;
   autoJoinSuggested: string[];
   generationStatus: 'complete' | 'stopped';
+  /** オートプレイの継続判定で区切りと判断された（§8.7） */
+  autoplayShouldStop: boolean;
 }
 
 export interface StreamHandlers {

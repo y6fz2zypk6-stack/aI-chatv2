@@ -24,11 +24,38 @@ export default function WorldsPage() {
     }
   };
 
+  const importWorld = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const json = JSON.parse(await file.text());
+        const r = await api.post<{ world: World; imported: Record<string, number> }>(
+          '/worlds/import',
+          json,
+        );
+        toast(
+          `「${r.world.name}」を取り込みました（キャラ${r.imported.characters} / ロア${r.imported.lorebook} / 場所${r.imported.locations}）`,
+        );
+        navigate(`/worlds/${r.world.id}`);
+      } catch (err) {
+        toast((err as Error).message, true);
+      }
+    };
+    input.click();
+  };
+
   return (
     <main className="page">
       <h1 className="page-title">
         🌍 世界一覧
         <span className="spacer" />
+        <button className="btn small" onClick={importWorld}>
+          取込
+        </button>
         <button className="btn primary small" onClick={create}>
           ＋ 新しい世界
         </button>

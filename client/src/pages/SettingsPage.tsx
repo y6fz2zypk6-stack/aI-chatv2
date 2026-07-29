@@ -189,6 +189,28 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <div className="section-title">オートプレイ</div>
+      <div className="card">
+        <label className="checkbox-row" style={{ marginBottom: 10 }}>
+          <input
+            type="checkbox"
+            checked={settings.autoplay_judge === 1}
+            onChange={(e) => set({ autoplay_judge: e.target.checked ? 1 : 0 })}
+          />
+          継続判定（区切りが良ければ自動停止）
+        </label>
+        <div className="field">
+          <label>最大ステップ数</label>
+          <input
+            className="input"
+            type="number"
+            min={1}
+            value={settings.autoplay_steps}
+            onChange={(e) => set({ autoplay_steps: num(e.target.value, 3) })}
+          />
+        </div>
+      </div>
+
       <div className="section-title">ステート</div>
       <div className="card">
         <label className="checkbox-row" style={{ marginBottom: 10 }}>

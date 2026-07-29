@@ -8,7 +8,7 @@ import type {
   Message,
   Utterance,
 } from '@shared/types';
-import { api, streamGenerate } from '../api';
+import { api, streamGenerate, type DonePayload } from '../api';
 import { useApp } from '../store';
 
 const WEATHER_ICON: Record<string, string> = {
@@ -42,6 +42,9 @@ export default function ChatPage() {
   const [editText, setEditText] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [autoplaying, setAutoplaying] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const autoplayCancel = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const draftKey = `draft:${id}`;
@@ -99,40 +102,77 @@ export default function ChatPage() {
       ? Math.round((last.state_after.time - prev.state_after.time) / 60)
       : 0;
 
-  const generate = (body: Record<string, unknown>) => {
+  const generate = (body: Record<string, unknown>): Promise<DonePayload | null> => {
     setBusy(true);
     setStreaming('');
-    void streamGenerate(id!, body, {
-      onDelta: (text) => setStreaming((s) => (s ?? '') + text),
-      onDone: (p) => {
-        setStreaming(null);
-        setBusy(false);
-        void load();
-        if (p.generationStatus === 'stopped') toast('生成を停止しました（ここまでを保存）');
-        if (p.fenceMissingStreak >= 3) {
-          toast('⚠ ステート差分が3回連続で欠落しています。モデルの相性を確認してください', true);
-        }
-        for (const w of p.warnings.slice(0, 2)) toast(w);
-        if (p.autoJoinSuggested.length) {
-          const names = p.autoJoinSuggested
-            .map((cid) => charOf(cid)?.name ?? cid)
-            .join('、');
-          if (confirm(`${names} が発話しました。参加者に追加しますか？`)) {
-            void api
-              .put(`/chats/${id}`, {
-                participant_ids: [...chat.participant_ids, ...p.autoJoinSuggested],
-              })
-              .then(() => load());
+    return new Promise((resolve) => {
+      void streamGenerate(id!, body, {
+        onDelta: (text) => setStreaming((s) => (s ?? '') + text),
+        onDone: (p) => {
+          setStreaming(null);
+          setBusy(false);
+          void load();
+          if (p.generationStatus === 'stopped') toast('生成を停止しました（ここまでを保存）');
+          if (p.fenceMissingStreak >= 3) {
+            toast('⚠ ステート差分が3回連続で欠落しています。モデルの相性を確認してください', true);
           }
-        }
-      },
-      onError: (message, status) => {
-        setStreaming(null);
-        setBusy(false);
-        toast(status === 409 ? '他の端末で生成中です' : message, true);
-        void load();
-      },
+          for (const e of p.firedEvents) toast(`🎉 イベント発生: ${e}`);
+          for (const w of p.warnings.slice(0, 2)) toast(w);
+          if (p.autoJoinSuggested.length) {
+            const names = p.autoJoinSuggested
+              .map((cid) => charOf(cid)?.name ?? cid)
+              .join('、');
+            if (confirm(`${names} が発話しました。参加者に追加しますか？`)) {
+              void api
+                .put(`/chats/${id}`, {
+                  participant_ids: [...chat.participant_ids, ...p.autoJoinSuggested],
+                })
+                .then(() => load());
+            }
+          }
+          resolve(p);
+        },
+        onError: (message, status) => {
+          setStreaming(null);
+          setBusy(false);
+          toast(status === 409 ? '他の端末で生成中です' : message, true);
+          void load();
+          resolve(null);
+        },
+      });
     });
+  };
+
+  // オートプレイ（§8.7）: ループはクライアント側。autoplay_steps を上限に継続判定で自動停止
+  const runAutoplay = async () => {
+    if (busy || autoplaying) return;
+    setAutoplaying(true);
+    autoplayCancel.current = false;
+    try {
+      const settings = await api.get<{ autoplay_steps: number }>('/settings');
+      for (let i = 0; i < Math.max(1, settings.autoplay_steps); i++) {
+        if (autoplayCancel.current) break;
+        const p = await generate({ autoContinue: true });
+        if (!p || p.generationStatus === 'stopped' || p.autoplayShouldStop) {
+          if (p?.autoplayShouldStop) toast('区切りが良いためオートプレイを停止しました');
+          break;
+        }
+      }
+    } finally {
+      setAutoplaying(false);
+    }
+  };
+
+  const fork = async (m: Message) => {
+    if (!confirm('このメッセージまでを新しいチャットに分岐しますか？')) return;
+    try {
+      const c = await api.post<Chat>(`/chats/${id}/fork`, { message_id: m.id });
+      setMenuFor(null);
+      toast('分岐しました');
+      navigate(`/chats/${c.id}`);
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
   };
 
   const send = () => {
@@ -144,6 +184,7 @@ export default function ChatPage() {
   };
 
   const stop = () => {
+    autoplayCancel.current = true;
     void api.post(`/chats/${id}/stop`).catch(() => {});
   };
 
@@ -206,7 +247,21 @@ export default function ChatPage() {
         <Link className="btn ghost icon" title="あらすじ" to={`/chats/${id}/summary`}>
           📜
         </Link>
+        <button className="btn ghost icon" title="書き出し" onClick={() => setShowExport(!showExport)}>
+          ⤓
+        </button>
       </header>
+
+      {showExport && (
+        <div className="row" style={{ padding: '6px 14px', background: 'var(--c-surface-warm)', borderBottom: '1px solid var(--c-border)' }}>
+          <a className="btn small" href={`/api/chats/${id}/export`} download onClick={() => setShowExport(false)}>
+            JSON書き出し（候補含む）
+          </a>
+          <a className="btn small" href={`/api/chats/${id}/export?format=text`} download onClick={() => setShowExport(false)}>
+            テキスト書き出し
+          </a>
+        </div>
+      )}
 
       {/* ステートバー（§10.2）: タップでステート編集へ */}
       <div className="state-bar" onClick={() => navigate(`/chats/${id}/state`)}>
@@ -232,6 +287,7 @@ export default function ChatPage() {
             onDelete={() => void removeMessage(m)}
             onCopy={() => copyMessage(m)}
             onEdit={() => startEdit(m)}
+            onFork={() => void fork(m)}
             variantNav={
               isLastAssistant(m) && !busy ? (
                 <span className="variant-nav">
@@ -280,6 +336,17 @@ export default function ChatPage() {
       </div>
 
       <div className="composer">
+        {last?.role === 'assistant' && !busy && (
+          <button
+            className="send-btn"
+            style={{ background: 'var(--c-primary-soft)', color: 'var(--c-primary-strong)', boxShadow: 'none' }}
+            title="オートプレイ（ユーザー入力なしで進める）"
+            onClick={() => void runAutoplay()}
+            disabled={autoplaying}
+          >
+            ▶▶
+          </button>
+        )}
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -337,6 +404,7 @@ function MessageView(props: {
   onDelete: () => void;
   onCopy: () => void;
   onEdit: () => void;
+  onFork: () => void;
   variantNav: React.ReactNode;
 }) {
   const { message: m } = props;
@@ -375,6 +443,7 @@ function MessageView(props: {
           <>
             <button onClick={props.onEdit}>編集</button>
             <button onClick={props.onCopy}>コピー</button>
+            <button onClick={props.onFork}>ここから分岐</button>
             <button onClick={props.onDelete} style={{ color: 'var(--c-danger)' }}>
               削除
             </button>

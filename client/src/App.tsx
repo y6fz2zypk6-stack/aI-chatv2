@@ -6,6 +6,7 @@ import CalendarPage from './pages/CalendarPage';
 import CharacterPage from './pages/CharacterPage';
 import ChatPage from './pages/ChatPage';
 import ChatsPage from './pages/ChatsPage';
+import EventsPage from './pages/EventsPage';
 import HomePage from './pages/HomePage';
 import LocationsPage from './pages/LocationsPage';
 import LoginPage from './pages/LoginPage';
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/worlds/:id/lorebook" element={<LorebookPage />} />
         <Route path="/worlds/:id/locations" element={<LocationsPage />} />
         <Route path="/worlds/:id/calendar" element={<CalendarPage />} />
+        <Route path="/worlds/:id/events" element={<EventsPage />} />
         <Route path="/characters/:id" element={<CharacterPage />} />
         <Route path="/characters/:id/memories" element={<MemoriesPage />} />
         <Route path="/chats" element={<ChatsPage />} />

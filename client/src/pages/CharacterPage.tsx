@@ -43,6 +43,9 @@ export default function CharacterPage() {
       <h1 className="page-title">
         {c.avatar || '👤'} {c.name}
         <span className="spacer" />
+        <a className="btn small" href={`/api/characters/${c.id}/export`} download>
+          ⤓ V2書き出し
+        </a>
         <Link className="btn small" to={`/characters/${c.id}/memories`}>
           🧠 メモリー({c.memory_count})
         </Link>
