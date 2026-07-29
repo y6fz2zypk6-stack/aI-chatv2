@@ -1,0 +1,4 @@
+Zen Maru Gothic
+Copyright 2021 The Zen Project Authors (https://github.com/googlefonts/zen-marugothic)
+Licensed under the SIL Open Font License, Version 1.1
+https://openfontlicense.org
