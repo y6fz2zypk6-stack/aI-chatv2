@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import type { Character, Location, LoreCategory, LorebookEntry } from '@shared/types';
 import { api } from '../api';
+import { Field, Modal, Row, TopBar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
 
 const CATEGORIES: LoreCategory[] = ['世界観', '人物', '用語', 'イベント', 'その他'];
@@ -52,18 +54,10 @@ export default function LorebookPage() {
     input.click();
   };
 
-  const exportJson = () => {
-    window.open(`/api/worlds/${id}/lorebook/export`, '_blank');
-  };
-
   const remove = async (e: LorebookEntry) => {
     if (!confirm(`「${e.title}」を削除しますか？`)) return;
     await api.del(`/lorebook/${e.id}`);
-    load();
-  };
-
-  const toggleEnabled = async (e: LorebookEntry) => {
-    await api.put(`/lorebook/${e.id}`, { enabled: e.enabled ? 0 : 1 });
+    setEditing(null);
     load();
   };
 
@@ -76,66 +70,60 @@ export default function LorebookPage() {
   );
 
   return (
-    <main className="page">
-      <h1 className="page-title">
-        📖 ロアブック
-        <span className="spacer" />
-        <button className="btn small" onClick={exportJson}>
-          書出
-        </button>
-        <button className="btn small" onClick={importJson}>
-          取込
-        </button>
-        <button className="btn primary small" onClick={add}>
-          ＋ 追加
-        </button>
-      </h1>
-      <div className="row" style={{ marginBottom: 12 }}>
-        <Link to={`/worlds/${id}`}>← 世界に戻る</Link>
-        <span className="spacer" />
-        <input
-          className="input"
-          style={{ maxWidth: 200 }}
-          placeholder="検索"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </div>
-
-      {filtered.map((e) => (
-        <div key={e.id} className="card">
-          <div className="row">
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="card-title">
-                {e.title}
-                <span className="chip" style={{ marginLeft: 6 }}>
-                  {e.category}
-                </span>
-                {e.always === 1 && <span className="chip on"> 常時</span>}
-                {e.enabled === 0 && <span className="chip"> 無効</span>}
-              </div>
-              <div className="card-sub">
-                {e.keys.length > 0 && `🔑 ${e.keys.join(' / ')}`}
-                {e.trigger_locations.length > 0 && ` 📍${e.trigger_locations.join(',')}`}
-                {e.trigger_seasons.length > 0 && ` 🍂${e.trigger_seasons.join(',')}`}
-                {e.character_id &&
-                  ` 👤${characters.find((c) => c.id === e.character_id)?.name ?? e.character_id}`}
-                {` ／ 優先度${e.priority}`}
-              </div>
-            </div>
-            <button className="btn ghost small" onClick={() => toggleEnabled(e)}>
-              {e.enabled ? 'ON' : 'OFF'}
+    <>
+      <TopBar
+        title="ロアブック"
+        back={`/worlds/${id}`}
+        actions={
+          <>
+            <button className="icon-btn accent" onClick={importJson} title="取り込み">
+              <Icon.upload />
             </button>
-            <button className="btn small" onClick={() => setEditing({ ...e })}>
-              編集
-            </button>
-            <button className="btn danger small" onClick={() => remove(e)}>
-              削除
-            </button>
+            <a className="icon-btn accent" href={`/api/worlds/${id}/lorebook/export`} download title="書き出し">
+              <Icon.download />
+            </a>
+          </>
+        }
+      />
+      <div className="content">
+        <div className="field" style={{ marginBottom: 12 }}>
+          <input placeholder="検索" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        </div>
+        {filtered.map((e) => (
+          <Row
+            key={e.id}
+            avatar={<Icon.book size={18} />}
+            avatarTinted
+            name={
+              <>
+                {e.title} {e.always === 1 && <span className="tag">常時</span>}
+                {e.enabled === 0 && <span className="tag mute">OFF</span>}
+              </>
+            }
+            desc={
+              <>
+                {e.keys.length > 0 && `${e.keys.join(' / ')}　`}
+                {e.trigger_locations.length > 0 && `場所:${e.trigger_locations.length}　`}
+                {e.trigger_seasons.length > 0 && `${e.trigger_seasons.join(',')}　`}
+                {e.category}・優先度{e.priority}
+              </>
+            }
+            onClick={() => setEditing({ ...e })}
+            chevron
+          />
+        ))}
+        <div className="chatrow add tappable" onClick={add}>
+          <span className="av">
+            <Icon.plus size={19} />
+          </span>
+          <div className="body">
+            <span className="nm">エントリを追加</span>
           </div>
         </div>
-      ))}
-      {filtered.length === 0 && <div className="empty-note">エントリがありません</div>}
+        {filtered.length === 0 && entries.length > 0 && (
+          <div className="empty-note">一致するエントリがありません</div>
+        )}
+      </div>
 
       {editing && (
         <EntryEditor
@@ -143,13 +131,14 @@ export default function LorebookPage() {
           characters={characters}
           locations={locations}
           onClose={() => setEditing(null)}
+          onRemove={() => void remove(editing)}
           onSaved={() => {
             setEditing(null);
             load();
           }}
         />
       )}
-    </main>
+    </>
   );
 }
 
@@ -158,6 +147,7 @@ function EntryEditor(props: {
   characters: Character[];
   locations: Location[];
   onClose: () => void;
+  onRemove: () => void;
   onSaved: () => void;
 }) {
   const [e, setE] = useState(props.entry);
@@ -182,22 +172,27 @@ function EntryEditor(props: {
   };
 
   return (
-    <div className="modal-overlay" onClick={props.onClose}>
-      <div className="modal" onClick={(ev) => ev.stopPropagation()}>
-        <h3>ロアエントリを編集</h3>
-        <div className="grid-2">
-          <div className="field">
-            <label>タイトル</label>
-            <input
-              className="input"
-              value={e.title}
-              onChange={(ev) => setE({ ...e, title: ev.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label>カテゴリ</label>
+    <Modal
+      title="ロアエントリ"
+      onClose={props.onClose}
+      actions={
+        <>
+          <button className="pill sm danger" onClick={props.onRemove}>
+            削除
+          </button>
+          <button className="pill sm primary" onClick={save}>
+            保存
+          </button>
+        </>
+      }
+    >
+      <div className="grid-2">
+        <Field label="タイトル">
+          <input value={e.title} onChange={(ev) => setE({ ...e, title: ev.target.value })} />
+        </Field>
+        <Field label="カテゴリ">
+          <div className="select-wrap">
             <select
-              className="select"
               value={e.category}
               onChange={(ev) => setE({ ...e, category: ev.target.value as LoreCategory })}
             >
@@ -208,39 +203,33 @@ function EntryEditor(props: {
               ))}
             </select>
           </div>
-        </div>
-        <div className="field">
-          <label>発火キーワード（読点・カンマ区切り）</label>
+        </Field>
+      </div>
+      <Field label="発火キーワード（読点・カンマ区切り）">
+        <input
+          value={keysText}
+          onChange={(ev) => setKeysText(ev.target.value)}
+          placeholder="港、港祭り、ハーバー"
+        />
+      </Field>
+      <Field label="注入本文">
+        <textarea
+          className="tall"
+          value={e.content}
+          onChange={(ev) => setE({ ...e, content: ev.target.value })}
+        />
+      </Field>
+      <div className="grid-2">
+        <Field label="優先度（大きいほど優先）">
           <input
-            className="input"
-            value={keysText}
-            onChange={(ev) => setKeysText(ev.target.value)}
-            placeholder="港、港祭り、ハーバー"
+            type="number"
+            value={e.priority}
+            onChange={(ev) => setE({ ...e, priority: parseInt(ev.target.value, 10) || 0 })}
           />
-        </div>
-        <div className="field">
-          <label>注入本文</label>
-          <textarea
-            className="textarea"
-            rows={7}
-            value={e.content}
-            onChange={(ev) => setE({ ...e, content: ev.target.value })}
-          />
-        </div>
-        <div className="grid-2">
-          <div className="field">
-            <label>優先度（大きいほど優先）</label>
-            <input
-              className="input"
-              type="number"
-              value={e.priority}
-              onChange={(ev) => setE({ ...e, priority: parseInt(ev.target.value, 10) || 0 })}
-            />
-          </div>
-          <div className="field">
-            <label>対象キャラ（指定時はそのキャラ参加時のみ）</label>
+        </Field>
+        <Field label="対象キャラ（指定時はそのキャラ参加時のみ）">
+          <div className="select-wrap">
             <select
-              className="select"
               value={e.character_id ?? ''}
               onChange={(ev) => setE({ ...e, character_id: ev.target.value || null })}
             >
@@ -252,66 +241,61 @@ function EntryEditor(props: {
               ))}
             </select>
           </div>
-        </div>
-        <div className="field">
-          <label>場所トリガー（現在地が一致で発火）</label>
-          <div className="row wrap">
-            {props.locations.map((l) => (
-              <span
-                key={l.id}
-                className={`chip${e.trigger_locations.includes(l.id) ? ' on' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() =>
-                  setE({ ...e, trigger_locations: toggleIn(e.trigger_locations, l.id) })
-                }
-              >
-                {l.name}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="field">
-          <label>季節トリガー</label>
-          <div className="row wrap">
-            {SEASONS.map((sn) => (
-              <span
-                key={sn}
-                className={`chip${e.trigger_seasons.includes(sn) ? ' on' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setE({ ...e, trigger_seasons: toggleIn(e.trigger_seasons, sn) })}
-              >
-                {sn}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="row wrap">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={e.always === 1}
-              onChange={(ev) => setE({ ...e, always: ev.target.checked ? 1 : 0 })}
-            />
-            常時注入（always）
-          </label>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={e.enabled === 1}
-              onChange={(ev) => setE({ ...e, enabled: ev.target.checked ? 1 : 0 })}
-            />
-            有効
-          </label>
-        </div>
-        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-          <button className="btn ghost" onClick={props.onClose}>
-            キャンセル
-          </button>
-          <button className="btn primary" onClick={save}>
-            保存
-          </button>
-        </div>
+        </Field>
       </div>
-    </div>
+      <Field label="場所トリガー（現在地が一致で発火）">
+        <div className="row wrap">
+          {props.locations.map((l) => (
+            <span
+              key={l.id}
+              className={`chip${e.trigger_locations.includes(l.id) ? ' on' : ''}`}
+              onClick={() => setE({ ...e, trigger_locations: toggleIn(e.trigger_locations, l.id) })}
+            >
+              {l.name}
+            </span>
+          ))}
+        </div>
+      </Field>
+      <Field label="季節トリガー">
+        <div className="row wrap">
+          {SEASONS.map((sn) => (
+            <span
+              key={sn}
+              className={`chip${e.trigger_seasons.includes(sn) ? ' on' : ''}`}
+              onClick={() => setE({ ...e, trigger_seasons: toggleIn(e.trigger_seasons, sn) })}
+            >
+              {sn}
+            </span>
+          ))}
+        </div>
+      </Field>
+      <div className="setting">
+        <div className="txt">
+          <label>常時注入</label>
+          <span>キーワードに関係なく毎ターン載せる</span>
+        </div>
+        <button
+          className={`toggle${e.always === 1 ? ' on' : ''}`}
+          onClick={() => setE({ ...e, always: e.always ? 0 : 1 })}
+          role="switch"
+          aria-checked={e.always === 1}
+        >
+          <span className="knob" />
+        </button>
+      </div>
+      <div className="setting">
+        <div className="txt">
+          <label>有効</label>
+        </div>
+        <button
+          className={`toggle${e.enabled === 1 ? ' on' : ''}`}
+          onClick={() => setE({ ...e, enabled: e.enabled ? 0 : 1 })}
+          role="switch"
+          aria-checked={e.enabled === 1}
+        >
+          <span className="knob" />
+        </button>
+      </div>
+    </Modal>
   );
 }

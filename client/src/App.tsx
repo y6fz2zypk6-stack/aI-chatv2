@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { api } from './api';
 import { useApp } from './store';
 import CalendarPage from './pages/CalendarPage';
@@ -7,7 +7,6 @@ import CharacterPage from './pages/CharacterPage';
 import ChatPage from './pages/ChatPage';
 import ChatsPage from './pages/ChatsPage';
 import EventsPage from './pages/EventsPage';
-import HomePage from './pages/HomePage';
 import LocationsPage from './pages/LocationsPage';
 import LoginPage from './pages/LoginPage';
 import LorebookPage from './pages/LorebookPage';
@@ -35,9 +34,7 @@ function Toasts() {
 }
 
 export default function App() {
-  const { authenticated, authRequired, setAuth, appTitle, setAppTitle } = useApp();
-  const location = useLocation();
-  const isChat = /^\/chats\/[^/]+$/.test(location.pathname);
+  const { authenticated, authRequired, setAuth, setAppTitle } = useApp();
 
   useEffect(() => {
     (async () => {
@@ -68,22 +65,13 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      {!isChat && (
-        <header className="topbar">
-          <NavLink to="/" className="brand">
-            🍊 {appTitle}
-          </NavLink>
-          <nav>
-            <NavLink to="/chats">会話</NavLink>
-            <NavLink to="/worlds">世界</NavLink>
-            <NavLink to="/personas">ペルソナ</NavLink>
-            <NavLink to="/settings">設定</NavLink>
-          </nav>
-        </header>
-      )}
+    <>
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<ChatsPage />} />
+        <Route path="/chats" element={<ChatsPage />} />
+        <Route path="/chats/:id" element={<ChatPage />} />
+        <Route path="/chats/:id/state" element={<StatePage />} />
+        <Route path="/chats/:id/summary" element={<SummaryPage />} />
         <Route path="/worlds" element={<WorldsPage />} />
         <Route path="/worlds/:id" element={<WorldDetailPage />} />
         <Route path="/worlds/:id/lorebook" element={<LorebookPage />} />
@@ -92,15 +80,11 @@ export default function App() {
         <Route path="/worlds/:id/events" element={<EventsPage />} />
         <Route path="/characters/:id" element={<CharacterPage />} />
         <Route path="/characters/:id/memories" element={<MemoriesPage />} />
-        <Route path="/chats" element={<ChatsPage />} />
-        <Route path="/chats/:id" element={<ChatPage />} />
-        <Route path="/chats/:id/state" element={<StatePage />} />
-        <Route path="/chats/:id/summary" element={<SummaryPage />} />
         <Route path="/personas" element={<PersonasPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<div className="page">ページが見つかりません</div>} />
+        <Route path="*" element={<div className="empty-note">ページが見つかりません</div>} />
       </Routes>
       <Toasts />
-    </div>
+    </>
   );
 }

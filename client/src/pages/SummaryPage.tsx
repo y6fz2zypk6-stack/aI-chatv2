@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import type { Summary } from '@shared/types';
 import { api } from '../api';
+import { TopBar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
 
 export default function SummaryPage() {
@@ -54,39 +56,40 @@ export default function SummaryPage() {
   };
 
   return (
-    <main className="page">
-      <h1 className="page-title">
-        📜 あらすじ
-        <span className="spacer" />
-        <button className="btn small" onClick={runNow} disabled={busy}>
-          {busy ? '要約中…' : '今すぐ要約'}
-        </button>
-        <button className="btn danger small" onClick={removeAll}>
-          削除
-        </button>
-      </h1>
-      <div className="row" style={{ marginBottom: 12 }}>
-        <Link to={`/chats/${id}`}>← チャットに戻る</Link>
-      </div>
-      <div className="card">
+    <>
+      <TopBar
+        title="あらすじ"
+        back={`/chats/${id}`}
+        actions={
+          <button className="icon-btn accent" onClick={runNow} disabled={busy} title="今すぐ要約">
+            <Icon.refresh size={18} />
+          </button>
+        }
+      />
+      <div className="content form">
         <textarea
-          className="textarea"
-          rows={12}
+          className="tall"
+          style={{ minHeight: '46dvh' }}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="まだあらすじがありません。会話が進むと自動で要約されます"
         />
         {summary && (
-          <div className="card-sub" style={{ marginTop: 6 }}>
+          <div className="empty-note" style={{ padding: 0 }}>
             最終更新: {new Date(summary.created_at).toLocaleString('ja-JP')}
           </div>
         )}
-        <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
-          <button className="btn primary" onClick={save}>
-            保存
-          </button>
-        </div>
       </div>
-    </main>
+      <div className="footbar">
+        <button className="pill danger" onClick={removeAll}>
+          <Icon.trash />
+          削除
+        </button>
+        <button className="pill primary grow" onClick={save} disabled={busy}>
+          <Icon.check />
+          {busy ? '要約中…' : '保存'}
+        </button>
+      </div>
+    </>
   );
 }

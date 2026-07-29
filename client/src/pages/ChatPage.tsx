@@ -1,30 +1,43 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import type {
-  Character,
-  Chat,
-  GameTime,
-  Location,
-  Message,
-  Utterance,
+import { useNavigate, useParams } from 'react-router-dom';
+import {
+  CURATED_MODELS,
+  modelLabel,
+  type Character,
+  type Chat,
+  type GameTime,
+  type Location,
+  type Message,
+  type Persona,
+  type Utterance,
 } from '@shared/types';
 import { api, streamGenerate, type DonePayload } from '../api';
+import { Avatar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
-
-const WEATHER_ICON: Record<string, string> = {
-  晴: '☀️',
-  曇: '☁️',
-  雨: '🌧',
-  小雨: '🌦',
-  霧: '🌫',
-  雪: '❄️',
-  みぞれ: '🌨',
-};
 
 interface Detail {
   chat: Chat;
   messages: Message[];
   gameTime: GameTime;
+}
+
+/** 地の文とセリフを分けて描画する（セリフ=基準サイズ、地の文=一段小さく淡色） */
+function BubbleText({ text }: { text: string }) {
+  // 「」で囲まれた塊をセリフ、それ以外を地の文として段落単位で分ける
+  const blocks = text.split(/\n{2,}/);
+  return (
+    <>
+      {blocks.map((block, i) => {
+        const isDialogue = /^\s*[「『]/.test(block);
+        return (
+          <span key={i} className={isDialogue ? 'dlg' : 'act'}>
+            {block}
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
 export default function ChatPage() {
@@ -35,18 +48,20 @@ export default function ChatPage() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [persona, setPersona] = useState<Persona | null>(null);
+  const [defaultModel, setDefaultModel] = useState('');
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autoplaying, setAutoplaying] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [editText, setEditText] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [modelMenu, setModelMenu] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [autoplaying, setAutoplaying] = useState(false);
-  const [showExport, setShowExport] = useState(false);
   const autoplayCancel = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
   const draftKey = `draft:${id}`;
 
   const load = useCallback(async () => {
@@ -54,12 +69,18 @@ export default function ChatPage() {
     try {
       const d = await api.get<Detail>(`/chats/${id}`);
       setDetail(d);
-      const [chars, locs] = await Promise.all([
+      const [chars, locs, config] = await Promise.all([
         api.get<Character[]>(`/worlds/${d.chat.world_id}/characters`),
         api.get<Location[]>(`/worlds/${d.chat.world_id}/locations`),
+        api.get<{ defaultModel: string }>('/config'),
       ]);
       setCharacters(chars);
       setLocations(locs);
+      setDefaultModel(config.defaultModel);
+      if (d.chat.persona_id) {
+        const personas = await api.get<Persona[]>('/personas');
+        setPersona(personas.find((p) => p.id === d.chat.persona_id) ?? null);
+      }
     } catch (err) {
       toast((err as Error).message, true);
     }
@@ -67,7 +88,6 @@ export default function ChatPage() {
 
   useEffect(() => {
     void load();
-    // ドラフトの復元（§3.2: 送信中のドラフトだけ localStorage に保持）
     setDraft(localStorage.getItem(`draft:${id}`) ?? '');
   }, [id, load]);
 
@@ -85,7 +105,7 @@ export default function ChatPage() {
     return (cid?: string) => (cid ? map.get(cid) : undefined);
   }, [characters]);
 
-  if (!detail) return <main className="page">読み込み中…</main>;
+  if (!detail) return <div className="empty-note">読み込み中…</div>;
   const { chat, messages, gameTime } = detail;
 
   const locName =
@@ -94,7 +114,6 @@ export default function ChatPage() {
     chat.state.location ||
     '—';
 
-  // ⚠ +Xh バッジ（§8.1）: 末尾assistantで24時間超の経過があった場合
   const last = messages[messages.length - 1];
   const prev = messages[messages.length - 2];
   const bigJumpH =
@@ -102,9 +121,13 @@ export default function ChatPage() {
       ? Math.round((last.state_after.time - prev.state_after.time) / 60)
       : 0;
 
+  const titleName =
+    charOf(chat.participant_ids[0])?.name || chat.title || '会話';
+
   const generate = (body: Record<string, unknown>): Promise<DonePayload | null> => {
     setBusy(true);
     setStreaming('');
+    setSheetOpen(false);
     return new Promise((resolve) => {
       void streamGenerate(id!, body, {
         onDelta: (text) => setStreaming((s) => (s ?? '') + text),
@@ -114,14 +137,12 @@ export default function ChatPage() {
           void load();
           if (p.generationStatus === 'stopped') toast('生成を停止しました（ここまでを保存）');
           if (p.fenceMissingStreak >= 3) {
-            toast('⚠ ステート差分が3回連続で欠落しています。モデルの相性を確認してください', true);
+            toast('ステート差分が3回連続で欠落しています。モデルの相性を確認してください', true);
           }
-          for (const e of p.firedEvents) toast(`🎉 イベント発生: ${e}`);
+          for (const e of p.firedEvents) toast(`イベント発生: ${e}`);
           for (const w of p.warnings.slice(0, 2)) toast(w);
           if (p.autoJoinSuggested.length) {
-            const names = p.autoJoinSuggested
-              .map((cid) => charOf(cid)?.name ?? cid)
-              .join('、');
+            const names = p.autoJoinSuggested.map((cid) => charOf(cid)?.name ?? cid).join('、');
             if (confirm(`${names} が発話しました。参加者に追加しますか？`)) {
               void api
                 .put(`/chats/${id}`, {
@@ -143,7 +164,19 @@ export default function ChatPage() {
     });
   };
 
-  // オートプレイ（§8.7）: ループはクライアント側。autoplay_steps を上限に継続判定で自動停止
+  const send = () => {
+    const content = draft.trim();
+    if (!content || busy) return;
+    setDraft('');
+    localStorage.removeItem(draftKey);
+    void generate({ content });
+  };
+
+  const stop = () => {
+    autoplayCancel.current = true;
+    void api.post(`/chats/${id}/stop`).catch(() => {});
+  };
+
   const runAutoplay = async () => {
     if (busy || autoplaying) return;
     setAutoplaying(true);
@@ -163,36 +196,22 @@ export default function ChatPage() {
     }
   };
 
-  const fork = async (m: Message) => {
-    if (!confirm('このメッセージまでを新しいチャットに分岐しますか？')) return;
-    try {
-      const c = await api.post<Chat>(`/chats/${id}/fork`, { message_id: m.id });
-      setMenuFor(null);
-      toast('分岐しました');
-      navigate(`/chats/${c.id}`);
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
-
-  const send = () => {
-    const content = draft.trim();
-    if (!content || busy) return;
-    setDraft('');
-    localStorage.removeItem(draftKey);
-    generate({ content });
-  };
-
-  const stop = () => {
-    autoplayCancel.current = true;
-    void api.post(`/chats/${id}/stop`).catch(() => {});
-  };
-
   const switchVariant = async (m: Message, dir: 1 | -1) => {
     const count = m.variant_count ?? 1;
     const next = (m.active_variant + dir + count) % count;
     try {
       await api.put(`/messages/${m.id}/variant`, { index: next });
+      void load();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
+  const pickModel = async (modelId: string) => {
+    setModelMenu(false);
+    try {
+      await api.put(`/chats/${id}`, { model: modelId });
+      toast(`モデル: ${modelLabel(modelId || defaultModel)}`);
       void load();
     } catch (err) {
       toast((err as Error).message, true);
@@ -206,16 +225,16 @@ export default function ChatPage() {
     void load();
   };
 
-  const copyMessage = (m: Message) => {
-    void navigator.clipboard.writeText(m.content);
+  const fork = async (m: Message) => {
     setMenuFor(null);
-    toast('コピーしました');
-  };
-
-  const startEdit = (m: Message) => {
-    setEditing(m);
-    setEditText(m.content);
-    setMenuFor(null);
+    if (!confirm('このメッセージまでを新しいチャットに分岐しますか？')) return;
+    try {
+      const c = await api.post<Chat>(`/chats/${id}/fork`, { message_id: m.id });
+      toast('分岐しました');
+      navigate(`/chats/${c.id}`);
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
   };
 
   const saveEdit = async () => {
@@ -229,39 +248,24 @@ export default function ChatPage() {
     }
   };
 
-  const isLastAssistant = (m: Message) => m.id === last?.id && m.role === 'assistant';
+  const effModel = chat.model || defaultModel;
   const canRetry = last?.role === 'user' && !busy;
 
   return (
-    <div className="chat-shell">
-      <header className="topbar" style={{ paddingBottom: 8 }}>
-        <button className="btn ghost icon" onClick={() => navigate('/chats')}>
-          ←
+    <div className="chat-shell" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <header className="topbar">
+        <button className="icon-btn" onClick={() => navigate('/chats')} aria-label="戻る">
+          <Icon.back />
         </button>
-        <div style={{ fontWeight: 700, fontSize: 15, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {chat.title || '(無題の会話)'}
+        <div className="title">
+          <b>{titleName}</b>
+          <span className="sub">{chat.narrator_enabled ? 'narrator on' : 'narrator off'}</span>
         </div>
-        <button className="btn ghost icon" title="プロンプトプレビュー" onClick={() => setShowPreview(true)}>
-          🔍
-        </button>
-        <Link className="btn ghost icon" title="あらすじ" to={`/chats/${id}/summary`}>
-          📜
-        </Link>
-        <button className="btn ghost icon" title="書き出し" onClick={() => setShowExport(!showExport)}>
-          ⤓
+        <button className="model-pill" onClick={() => setModelMenu(true)}>
+          <span className="lbl">{modelLabel(effModel)}</span>
+          <Icon.chevD />
         </button>
       </header>
-
-      {showExport && (
-        <div className="row" style={{ padding: '6px 14px', background: 'var(--c-surface-warm)', borderBottom: '1px solid var(--c-border)' }}>
-          <a className="btn small" href={`/api/chats/${id}/export`} download onClick={() => setShowExport(false)}>
-            JSON書き出し（候補含む）
-          </a>
-          <a className="btn small" href={`/api/chats/${id}/export?format=text`} download onClick={() => setShowExport(false)}>
-            テキスト書き出し
-          </a>
-        </div>
-      )}
 
       {/* ステートバー（§10.2）: タップでステート編集へ */}
       <div className="state-bar" onClick={() => navigate(`/chats/${id}/state`)}>
@@ -270,118 +274,192 @@ export default function ChatPage() {
           {String(gameTime.mm).padStart(2, '0')}
         </span>
         <span className="loc">{locName}</span>
-        <span>{WEATHER_ICON[chat.state.weather] ?? chat.state.weather}</span>
+        <span>{chat.state.weather}</span>
         <span className="spacer" />
-        {bigJumpH > 24 && <span className="badge-warn">⚠ +{bigJumpH}h</span>}
-        <span style={{ color: 'var(--c-text-faint)' }}>✏️</span>
+        {bigJumpH > 24 && <span className="tag">+{bigJumpH}H</span>}
+        <Icon.pencil size={14} />
       </div>
 
-      <div className="chat-scroll" ref={scrollRef}>
-        {messages.map((m) => (
-          <MessageView
-            key={m.id}
-            message={m}
-            charOf={charOf}
-            menuOpen={menuFor === m.id}
-            onToggleMenu={() => setMenuFor(menuFor === m.id ? null : m.id)}
-            onDelete={() => void removeMessage(m)}
-            onCopy={() => copyMessage(m)}
-            onEdit={() => startEdit(m)}
-            onFork={() => void fork(m)}
-            variantNav={
-              isLastAssistant(m) && !busy ? (
-                <span className="variant-nav">
-                  {(m.variant_count ?? 1) > 1 && (
-                    <>
-                      <button className="btn ghost small" onClick={() => void switchVariant(m, -1)}>
-                        ‹
-                      </button>
-                      {m.active_variant + 1}/{m.variant_count}
-                      <button className="btn ghost small" onClick={() => void switchVariant(m, 1)}>
-                        ›
-                      </button>
-                    </>
-                  )}
-                  <button
-                    className="btn ghost small"
-                    title="再生成"
-                    onClick={() => generate({ regenerate: true })}
-                  >
-                    🔄
-                  </button>
-                </span>
-              ) : null
-            }
-          />
-        ))}
+      <div className="content" ref={scrollRef} style={{ padding: '14px 0' }}>
+        <div className="messages">
+          {messages.map((m) => (
+            <MessageView
+              key={m.id}
+              message={m}
+              isLast={m.id === last?.id}
+              busy={busy}
+              charOf={charOf}
+              persona={persona}
+              menuOpen={menuFor === m.id}
+              onToggleMenu={() => setMenuFor(menuFor === m.id ? null : m.id)}
+              onDelete={() => void removeMessage(m)}
+              onCopy={() => {
+                void navigator.clipboard.writeText(m.content);
+                setMenuFor(null);
+                toast('コピーしました');
+              }}
+              onEdit={() => {
+                setEditing(m);
+                setEditText(m.content);
+                setMenuFor(null);
+              }}
+              onFork={() => void fork(m)}
+              onRegenerate={() => void generate({ regenerate: true })}
+              onSwitchVariant={(dir) => void switchVariant(m, dir)}
+            />
+          ))}
 
-        {streaming !== null && (
-          <div className="msg-row left">
-            <div className="avatar">💭</div>
-            <div className="bubble-col">
-              <div className="bubble">
-                {streaming || <span className="typing-dots">生成中</span>}
+          {streaming !== null && (
+            <div className="turn-row char">
+              <div className="turn-body">
+                <span className="turn-av">
+                  <Icon.sparkle size={16} />
+                </span>
+                <div className="turn-col">
+                  <div className="bubble">
+                    {streaming}
+                    <span className="caret" />
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {canRetry && (
-          <div style={{ textAlign: 'center' }}>
-            <button className="btn small" onClick={() => generate({ retry: true })}>
-              🔁 応答を再試行
-            </button>
-          </div>
-        )}
+          {canRetry && (
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <button className="pill sm" onClick={() => void generate({ retry: true })}>
+                <Icon.refresh />
+                応答を再試行
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="composer">
-        {last?.role === 'assistant' && !busy && (
-          <button
-            className="send-btn"
-            style={{ background: 'var(--c-primary-soft)', color: 'var(--c-primary-strong)', boxShadow: 'none' }}
-            title="オートプレイ（ユーザー入力なしで進める）"
-            onClick={() => void runAutoplay()}
-            disabled={autoplaying}
-          >
-            ▶▶
-          </button>
-        )}
+      <div className={`composer${sheetOpen ? ' sheet-open' : ''}`}>
+        <button
+          className={`plus${sheetOpen ? ' open' : ''}`}
+          onClick={() => setSheetOpen(!sheetOpen)}
+          aria-label="メニュー"
+        >
+          <Icon.plus />
+        </button>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder="メッセージを入力…"
-          rows={Math.min(6, Math.max(1, draft.split('\n').length))}
+          rows={1}
+          style={{ height: Math.min(160, 44 + (draft.split('\n').length - 1) * 22) }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
           }}
         />
         {busy ? (
-          <button className="send-btn stop" onClick={stop} title="停止">
-            ■
+          <button className="send stop" onClick={stop} aria-label="停止">
+            <Icon.square size={15} />
           </button>
         ) : (
-          <button className="send-btn" onClick={send} disabled={!draft.trim()} title="送信">
-            ➤
+          <button className="send" onClick={send} disabled={!draft.trim()} aria-label="送信">
+            <Icon.send />
           </button>
         )}
       </div>
 
+      {sheetOpen && (
+        <div className="sheet">
+          <button
+            className="srow"
+            onClick={() => void runAutoplay()}
+            disabled={autoplaying || last?.role !== 'assistant'}
+          >
+            <span className="ic">
+              <Icon.forward />
+            </span>
+            <span className="txt">
+              <b>オートプレイ</b>
+              <span>ユーザー入力なしで場面を進める</span>
+            </span>
+          </button>
+          <button className="srow" onClick={() => { setSheetOpen(false); navigate(`/chats/${id}/summary`); }}>
+            <span className="ic">
+              <Icon.scroll />
+            </span>
+            <span className="txt">
+              <b>あらすじ</b>
+              <span>これまでの出来事を確認・編集</span>
+            </span>
+            <span className="chev">
+              <Icon.chevR size={13} />
+            </span>
+          </button>
+          <button className="srow" onClick={() => { setSheetOpen(false); setShowPreview(true); }}>
+            <span className="ic">
+              <Icon.search />
+            </span>
+            <span className="txt">
+              <b>プロンプトを確認</b>
+              <span>組み立て結果とロアの発火状況</span>
+            </span>
+          </button>
+          <a className="srow" href={`/api/chats/${id}/export`} download onClick={() => setSheetOpen(false)}>
+            <span className="ic">
+              <Icon.download />
+            </span>
+            <span className="txt">
+              <b>会話を書き出す</b>
+              <span>候補を含むJSON</span>
+            </span>
+          </a>
+        </div>
+      )}
+
+      {modelMenu && (
+        <>
+          <div className="menu-backdrop" onClick={() => setModelMenu(false)} />
+          <div className="model-menu" style={{ right: 12, top: 'calc(60px + env(safe-area-inset-top))' }}>
+            <button className={`mrow${!chat.model ? ' active' : ''}`} onClick={() => void pickModel('')}>
+              既定（{modelLabel(defaultModel)}）
+              {!chat.model && (
+                <span className="ck">
+                  <Icon.check size={16} />
+                </span>
+              )}
+            </button>
+            {CURATED_MODELS.map((m) => (
+              <button
+                key={m.id}
+                className={`mrow${chat.model === m.id ? ' active' : ''}`}
+                onClick={() => void pickModel(m.id)}
+              >
+                {m.label}
+                {chat.model === m.id && (
+                  <span className="ck">
+                    <Icon.check size={16} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {editing && (
         <div className="modal-overlay" onClick={() => setEditing(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>メッセージを編集（本文のみ。ステートは変わりません）</h3>
+            <h3>メッセージを編集</h3>
+            <p className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+              本文のみ修正します。ステートは変わりません
+            </p>
             <textarea
-              className="textarea"
-              rows={10}
+              className="tall"
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
             />
-            <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={() => setEditing(null)}>
+            <div className="acts">
+              <button className="pill sm" onClick={() => setEditing(null)}>
                 キャンセル
               </button>
-              <button className="btn primary" onClick={() => void saveEdit()}>
+              <button className="pill sm primary" onClick={() => void saveEdit()}>
                 保存
               </button>
             </div>
@@ -394,63 +472,136 @@ export default function ChatPage() {
   );
 }
 
-// ---- 発話単位の描画（1発話 = 1バブル、narratorはバブルなし §10.2） ----
+// ---- 発話単位の描画（1発話 = 1バブル、narratorはハート付きの独立行） ----
 
 function MessageView(props: {
   message: Message;
+  isLast: boolean;
+  busy: boolean;
   charOf: (cid?: string) => Character | undefined;
+  persona: Persona | null;
   menuOpen: boolean;
   onToggleMenu: () => void;
   onDelete: () => void;
   onCopy: () => void;
   onEdit: () => void;
   onFork: () => void;
-  variantNav: React.ReactNode;
+  onRegenerate: () => void;
+  onSwitchVariant: (dir: 1 | -1) => void;
 }) {
   const { message: m } = props;
   const utterances: Utterance[] = m.utterances.length
     ? m.utterances
     : [{ speaker: m.role === 'user' ? 'user' : 'narrator', name: '', text: m.content }];
+  const count = m.variant_count ?? 1;
+  const showVariantNav = props.isLast && m.role === 'assistant' && !props.busy;
 
   return (
-    <div>
+    <div className="msg">
       {utterances.map((u, i) => {
+        const isLastUtterance = i === utterances.length - 1;
+
         if (u.speaker === 'narrator') {
           return (
-            <div key={i} className="narrator-line">
-              {u.text}
+            <div key={i} className="narr-row">
+              <div className="narr-gutter">
+                <span className="narr-heart">
+                  <Icon.heart />
+                </span>
+              </div>
+              <div className="narr-text">{u.text}</div>
+              {isLastUtterance && (
+                <div className="msg-side">
+                  <button className="msgmenu" onClick={props.onToggleMenu} aria-label="操作">
+                    <Icon.dots />
+                  </button>
+                </div>
+              )}
             </div>
           );
         }
-        const right = u.speaker === 'user';
+
+        const isUser = u.speaker === 'user';
         const char = props.charOf(u.characterId);
-        const avatar =
-          u.speaker === 'npc' ? '👤' : right ? '🙂' : char?.avatar || '👤';
+        const avatarValue = isUser ? (props.persona?.avatar ?? '') : (char?.avatar ?? '');
+        const rowClass = isUser ? 'user' : u.speaker === 'npc' ? 'mob' : 'char';
+
         return (
-          <div key={i} className={`msg-row ${right ? 'right' : 'left'}`} style={{ marginBottom: 6 }}>
-            <div className="avatar">{avatar}</div>
-            <div className="bubble-col">
-              {!right && <div className="speaker-name">{u.name}</div>}
-              <div className="bubble">{u.text}</div>
+          <div key={i} className={`turn-row ${rowClass}`}>
+            <div className="turn-body">
+              <Avatar className="turn-av" value={avatarValue} name={u.name} />
+              <div className="turn-col">
+                <span className="turn-name">{u.name}</span>
+                <div className="bubble">
+                  <BubbleText text={u.text} />
+                </div>
+              </div>
             </div>
+            {isLastUtterance && (
+              <div className="msg-side">
+                {showVariantNav && count > 1 && (
+                  <div className="swipe">
+                    <button onClick={() => props.onSwitchVariant(-1)} aria-label="前の候補">
+                      <Icon.chevL />
+                    </button>
+                    {m.active_variant + 1}/{count}
+                    <button onClick={() => props.onSwitchVariant(1)} aria-label="次の候補">
+                      <Icon.chevR size={11} />
+                    </button>
+                  </div>
+                )}
+                <button
+                  className={`msgmenu${props.menuOpen ? ' on' : ''}`}
+                  onClick={props.onToggleMenu}
+                  aria-label="操作"
+                >
+                  <Icon.dots />
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
-      <div className={`msg-tools${m.role === 'user' ? ' right' : ''}`} style={m.role === 'user' ? { justifyContent: 'flex-end' } : {}}>
-        {props.variantNav}
-        <button onClick={props.onToggleMenu}>⋯</button>
-        {props.menuOpen && (
-          <>
-            <button onClick={props.onEdit}>編集</button>
-            <button onClick={props.onCopy}>コピー</button>
-            <button onClick={props.onFork}>ここから分岐</button>
-            <button onClick={props.onDelete} style={{ color: 'var(--c-danger)' }}>
-              削除
+
+      {props.menuOpen && (
+        <>
+          <div className="menu-backdrop" onClick={props.onToggleMenu} />
+          <div className="popover" style={{ right: 14, marginTop: -6, position: 'relative', width: '100%' }}>
+            {showVariantNav && (
+              <button className="prow" onClick={props.onRegenerate}>
+                <span className="ic">
+                  <Icon.refresh size={17} />
+                </span>
+                <span>再生成する</span>
+              </button>
+            )}
+            <button className="prow" onClick={props.onEdit}>
+              <span className="ic">
+                <Icon.pencil size={17} />
+              </span>
+              <span>編集する</span>
             </button>
-          </>
-        )}
-        {m.generation_status === 'stopped' && <span className="chip">停止</span>}
-      </div>
+            <button className="prow" onClick={props.onCopy}>
+              <span className="ic">
+                <Icon.copy size={17} />
+              </span>
+              <span>コピーする</span>
+            </button>
+            <button className="prow" onClick={props.onFork}>
+              <span className="ic">
+                <Icon.fork size={17} />
+              </span>
+              <span>ここから分岐する</span>
+            </button>
+            <button className="prow danger" onClick={props.onDelete}>
+              <span className="ic">
+                <Icon.trash size={17} />
+              </span>
+              <span>削除する</span>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -485,30 +636,27 @@ function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
   return (
     <div className="modal-overlay" onClick={props.onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>🔍 プロンプトプレビュー</h3>
-        {error && <div className="card-sub">{error}</div>}
-        {!data && !error && <div className="card-sub">組み立て中…</div>}
+        <h3>プロンプトの確認</h3>
+        {error && <div className="empty-note">{error}</div>}
+        {!data && !error && <div className="empty-note">組み立て中…</div>}
         {data && (
           <>
-            <div className="row wrap" style={{ marginBottom: 10 }}>
-              <span className="chip">モデル: {data.model}</span>
-              <span className="chip">
-                推定 {data.estimatedTokens.toLocaleString()} / 予算{' '}
-                {data.inputBudget.toLocaleString()} tok
+            <div className="row wrap">
+              <span className="tag mute">{modelLabel(data.model)}</span>
+              <span className="tag mute">
+                {data.estimatedTokens.toLocaleString()} / {data.inputBudget.toLocaleString()} TOK
               </span>
-              {data.trimmed.history > 0 && (
-                <span className="chip">履歴削減 {data.trimmed.history}件</span>
-              )}
-              {data.trimmed.lore > 0 && <span className="chip">ロア削減 {data.trimmed.lore}件</span>}
+              {data.trimmed.history > 0 && <span className="tag">履歴 −{data.trimmed.history}</span>}
+              {data.trimmed.lore > 0 && <span className="tag">ロア −{data.trimmed.lore}</span>}
               {data.trimmed.memories > 0 && (
-                <span className="chip">メモリー削減 {data.trimmed.memories}件</span>
+                <span className="tag">メモリー −{data.trimmed.memories}</span>
               )}
             </div>
-            <div className="section-title">現在の状況ブロック</div>
+            <div className="kicker">現在の状況</div>
             <pre className="pre-block">{data.situationBlock}</pre>
-            <div className="section-title">
-              ロア（発火{data.lore.fired.length} / 採用{data.lore.adopted.length} / 予算超過
-              {data.lore.dropped.length}）
+            <div className="kicker">
+              ロア 発火{data.lore.fired.length} / 採用{data.lore.adopted.length} / 予算超過
+              {data.lore.dropped.length}
             </div>
             <div className="row wrap">
               {data.lore.adopted.map((l) => (
@@ -518,16 +666,16 @@ function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
               ))}
               {data.lore.dropped.map((l) => (
                 <span key={l.id} className="chip">
-                  ✂ {l.title}
+                  {l.title}
                 </span>
               ))}
             </div>
-            <div className="section-title">system</div>
+            <div className="kicker">system</div>
             <pre className="pre-block">{data.system}</pre>
           </>
         )}
-        <div className="row" style={{ marginTop: 14, justifyContent: 'flex-end' }}>
-          <button className="btn" onClick={props.onClose}>
+        <div className="acts">
+          <button className="pill sm" onClick={props.onClose}>
             閉じる
           </button>
         </div>

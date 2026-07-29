@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import type { CalendarConfig } from '@shared/types';
 import { api } from '../api';
+import { Field, Stepper, TopBar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
 
-/** 構造化された部分は個別入力、複雑なテーブルはJSONエディタで編集する */
+/** 構造化された部分は個別入力、複雑なテーブルはJSONで編集する */
 export default function CalendarPage() {
   const { id } = useParams<{ id: string }>();
   const [cfg, setCfg] = useState<CalendarConfig | null>(null);
@@ -28,25 +30,21 @@ export default function CalendarPage() {
       .catch(() => {});
   }, [id]);
 
-  if (!cfg) return <main className="page">読み込み中…</main>;
-
-  const num = (v: string, fb: number) => {
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) ? n : fb;
-  };
+  if (!cfg) return <div className="empty-note">読み込み中…</div>;
 
   const save = async () => {
     try {
-      const seasons = JSON.parse(seasonsJson);
-      const sun = JSON.parse(sunJson);
-      const weather_table = JSON.parse(weatherJson);
-      const weekdays = weekdaysText
-        .split(/[,、，]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const next = { ...cfg, seasons, sun, weather_table, weekdays };
-      const saved = await api.put<CalendarConfig>(`/worlds/${id}/calendar`, next);
-      setCfg(saved);
+      const next = {
+        ...cfg,
+        seasons: JSON.parse(seasonsJson),
+        sun: JSON.parse(sunJson),
+        weather_table: JSON.parse(weatherJson),
+        weekdays: weekdaysText
+          .split(/[,、，]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+      setCfg(await api.put<CalendarConfig>(`/worlds/${id}/calendar`, next));
       toast('暦を保存しました');
     } catch (err) {
       toast(`保存できません: ${(err as Error).message}`, true);
@@ -54,106 +52,108 @@ export default function CalendarPage() {
   };
 
   return (
-    <main className="page">
-      <h1 className="page-title">🗓 暦・天候</h1>
-      <div className="row" style={{ marginBottom: 12 }}>
-        <Link to={`/worlds/${id}`}>← 世界に戻る</Link>
-      </div>
-
-      <div className="card">
-        <div className="grid-2">
-          <div className="field">
-            <label>1年の月数</label>
-            <input
-              className="input"
-              type="number"
+    <>
+      <TopBar title="暦・天候" back={`/worlds/${id}`} />
+      <div className="content form">
+        <div className="section">
+          <span className="kicker">Calendar</span>
+          <div className="setting">
+            <div className="txt">
+              <label>1年の月数</label>
+            </div>
+            <Stepper
               value={cfg.months_per_year}
-              onChange={(e) => setCfg({ ...cfg, months_per_year: num(e.target.value, 12) })}
+              min={1}
+              onChange={(v) => setCfg({ ...cfg, months_per_year: v })}
             />
           </div>
-          <div className="field">
-            <label>1ヶ月の日数</label>
-            <input
-              className="input"
-              type="number"
+          <div className="setting">
+            <div className="txt">
+              <label>1ヶ月の日数</label>
+              <span>28日なら常に第1〜第4週になる</span>
+            </div>
+            <Stepper
               value={cfg.days_per_month}
-              onChange={(e) => setCfg({ ...cfg, days_per_month: num(e.target.value, 28) })}
+              min={1}
+              onChange={(v) => setCfg({ ...cfg, days_per_month: v })}
             />
           </div>
+          <Field label="曜日名（区切り）">
+            <input value={weekdaysText} onChange={(e) => setWeekdaysText(e.target.value)} />
+          </Field>
         </div>
-        <div className="field">
-          <label>曜日名（区切り）</label>
-          <input
-            className="input"
-            value={weekdaysText}
-            onChange={(e) => setWeekdaysText(e.target.value)}
-          />
-        </div>
-        <div className="grid-2">
-          <div className="field">
-            <label>終電（0時からの分。23:00 = 1380）</label>
-            <input
-              className="input"
-              type="number"
+
+        <div className="section">
+          <span className="kicker">Last Train</span>
+          <div className="setting">
+            <div className="txt">
+              <label>終電</label>
+              <span>0時からの分。23:00 = 1380</span>
+            </div>
+            <Stepper
               value={cfg.last_train_min}
-              onChange={(e) => setCfg({ ...cfg, last_train_min: num(e.target.value, 1380) })}
+              step={30}
+              min={0}
+              max={2880}
+              onChange={(v) => setCfg({ ...cfg, last_train_min: v })}
             />
           </div>
-          <div className="field">
-            <label>終電の通知開始（分前）</label>
-            <input
-              className="input"
-              type="number"
+          <div className="setting">
+            <div className="txt">
+              <label>通知を出し始める（分前）</label>
+              <span>この窓の中だけ「終電まで残り◯分」を出す</span>
+            </div>
+            <Stepper
               value={cfg.last_train_notice_min}
-              onChange={(e) => setCfg({ ...cfg, last_train_notice_min: num(e.target.value, 60) })}
+              step={15}
+              min={0}
+              onChange={(v) => setCfg({ ...cfg, last_train_notice_min: v })}
             />
           </div>
+          <Field label="終電後に出す文">
+            <input
+              value={cfg.after_last_train_text}
+              onChange={(e) => setCfg({ ...cfg, after_last_train_text: e.target.value })}
+            />
+          </Field>
         </div>
-        <div className="field">
-          <label>終電後の代替文</label>
-          <input
-            className="input"
-            value={cfg.after_last_train_text}
-            onChange={(e) => setCfg({ ...cfg, after_last_train_text: e.target.value })}
-          />
+
+        <div className="section">
+          <span className="kicker">Seasons</span>
+          <Field label="季節名 → 月番号の配列">
+            <textarea
+              className="mono"
+              value={seasonsJson}
+              onChange={(e) => setSeasonsJson(e.target.value)}
+            />
+          </Field>
+        </div>
+
+        <div className="section">
+          <span className="kicker">Sunrise / Sunset</span>
+          <Field label="月ごとの日出・日没（未定義の月は前後から補間）">
+            <textarea className="mono" value={sunJson} onChange={(e) => setSunJson(e.target.value)} />
+          </Field>
+        </div>
+
+        <div className="section">
+          <span className="kicker">Weather</span>
+          <Field label="季節 → 天候と重み（日付が変わったときに抽選）">
+            <textarea
+              className="mono tall"
+              value={weatherJson}
+              onChange={(e) => setWeatherJson(e.target.value)}
+            />
+          </Field>
         </div>
       </div>
 
-      <div className="section-title">季節（季節名 → 月番号の配列）</div>
-      <div className="card">
-        <textarea
-          className="textarea mono"
-          rows={6}
-          value={seasonsJson}
-          onChange={(e) => setSeasonsJson(e.target.value)}
-        />
-      </div>
-
-      <div className="section-title">日出・日没（月ごと。未定義月は線形補間）</div>
-      <div className="card">
-        <textarea
-          className="textarea mono"
-          rows={6}
-          value={sunJson}
-          onChange={(e) => setSunJson(e.target.value)}
-        />
-      </div>
-
-      <div className="section-title">天候テーブル（季節 → 天候:重み）</div>
-      <div className="card">
-        <textarea
-          className="textarea mono"
-          rows={8}
-          value={weatherJson}
-          onChange={(e) => setWeatherJson(e.target.value)}
-        />
-      </div>
-
-      <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-        <button className="btn primary" onClick={save}>
+      <div className="footbar">
+        <button className="pill primary grow" onClick={save}>
+          <Icon.check />
           保存
         </button>
       </div>
-    </main>
+    </>
   );
 }

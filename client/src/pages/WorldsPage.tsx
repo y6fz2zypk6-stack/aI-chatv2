@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { World } from '@shared/types';
 import { api } from '../api';
+import { Row, TopBar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
 
 export default function WorldsPage() {
@@ -49,24 +51,38 @@ export default function WorldsPage() {
   };
 
   return (
-    <main className="page">
-      <h1 className="page-title">
-        🌍 世界一覧
-        <span className="spacer" />
-        <button className="btn small" onClick={importWorld}>
-          取込
-        </button>
-        <button className="btn primary small" onClick={create}>
-          ＋ 新しい世界
-        </button>
-      </h1>
-      {worlds.length === 0 && <div className="empty-note">世界がまだありません</div>}
-      {worlds.map((w) => (
-        <div key={w.id} className="card clickable" onClick={() => navigate(`/worlds/${w.id}`)}>
-          <div className="card-title">{w.name}</div>
-          {w.description && <div className="card-sub">{w.description}</div>}
+    <>
+      <TopBar
+        title="世界"
+        back="/chats"
+        actions={
+          <button className="icon-btn accent" onClick={importWorld} title="取り込み">
+            <Icon.upload />
+          </button>
+        }
+      />
+      <div className="content">
+        {worlds.map((w) => (
+          <Row
+            key={w.id}
+            avatar={<Icon.globe size={20} />}
+            avatarTinted
+            name={w.name}
+            desc={w.description}
+            onClick={() => navigate(`/worlds/${w.id}`)}
+            chevron
+          />
+        ))}
+        <div className="chatrow add tappable" onClick={create}>
+          <span className="av">
+            <Icon.plus size={20} />
+          </span>
+          <div className="body">
+            <span className="nm">世界を追加</span>
+          </div>
         </div>
-      ))}
-    </main>
+        {worlds.length === 0 && <div className="empty-note">世界がまだありません</div>}
+      </div>
+    </>
   );
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import type { Character, Chat, Persona, Scenario, World } from '@shared/types';
 import { api } from '../api';
+import { Avatar, Field, Modal, Row, TopBar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
 
 type WorldWithUsage = World & {
@@ -35,7 +37,7 @@ export default function WorldDetailPage() {
 
   useEffect(load, [load]);
 
-  if (!world) return <main className="page">読み込み中…</main>;
+  if (!world) return <div className="empty-note">読み込み中…</div>;
 
   const saveWorld = async () => {
     try {
@@ -87,9 +89,7 @@ export default function WorldDetailPage() {
   };
 
   const addScenario = async () => {
-    const s = await api.post<Scenario>(`/worlds/${world.id}/scenarios`, {
-      title: '新しいシナリオ',
-    });
+    const s = await api.post<Scenario>(`/worlds/${world.id}/scenarios`, { title: '新しいシナリオ' });
     load();
     setEditingScenario(s);
   };
@@ -109,149 +109,175 @@ export default function WorldDetailPage() {
     load();
   };
 
-  const removeCharacter = async (c: Character) => {
-    if (!confirm(`「${c.name}」を削除しますか？メモリーも削除されます`)) return;
-    try {
-      await api.del(`/characters/${c.id}`);
-      load();
-    } catch (err) {
-      toast((err as Error).message, true);
-    }
-  };
-
   return (
-    <main className="page">
-      <h1 className="page-title">
-        🌍 {world.name}
-        <span className="spacer" />
-        <button className="btn danger small" onClick={removeWorld}>
-          世界を削除
-        </button>
-      </h1>
+    <>
+      <TopBar
+        title={world.name}
+        back="/worlds"
+        actions={
+          <a className="icon-btn accent" href={`/api/worlds/${world.id}/export`} download title="書き出し">
+            <Icon.download />
+          </a>
+        }
+      />
+      <div className="content">
+        <div className="section">
+          <Row
+            avatar={<Icon.book size={19} />}
+            avatarTinted
+            name="ロアブック"
+            desc={`${world.usage.lorebook}件`}
+            onClick={() => navigate(`/worlds/${world.id}/lorebook`)}
+            chevron
+          />
+          <Row
+            avatar={<Icon.pin2 size={19} />}
+            avatarTinted
+            name="場所"
+            desc={`${world.usage.locations}件`}
+            onClick={() => navigate(`/worlds/${world.id}/locations`)}
+            chevron
+          />
+          <Row
+            avatar={<Icon.calendar size={19} />}
+            avatarTinted
+            name="暦・天候"
+            onClick={() => navigate(`/worlds/${world.id}/calendar`)}
+            chevron
+          />
+          <Row
+            avatar={<Icon.sparkle size={19} />}
+            avatarTinted
+            name="イベント"
+            desc={`${world.usage.events}件`}
+            onClick={() => navigate(`/worlds/${world.id}/events`)}
+            chevron
+          />
+        </div>
 
-      <div className="row wrap" style={{ marginBottom: 18 }}>
-        <Link className="btn small" to={`/worlds/${world.id}/lorebook`}>
-          📖 ロアブック({world.usage.lorebook})
-        </Link>
-        <Link className="btn small" to={`/worlds/${world.id}/locations`}>
-          📍 場所({world.usage.locations})
-        </Link>
-        <Link className="btn small" to={`/worlds/${world.id}/calendar`}>
-          🗓 暦・天候
-        </Link>
-        <Link className="btn small" to={`/worlds/${world.id}/events`}>
-          🎉 イベント({world.usage.events})
-        </Link>
-        <a className="btn small" href={`/api/worlds/${world.id}/export`} download>
-          ⤓ 世界を書き出し
-        </a>
-      </div>
-
-      <div className="card">
-        <div className="field">
-          <label>名前</label>
-          <input
-            className="input"
-            value={world.name}
-            onChange={(e) => setWorld({ ...world, name: e.target.value })}
-          />
-        </div>
-        <div className="field">
-          <label>説明</label>
-          <textarea
-            className="textarea"
-            value={world.description}
-            onChange={(e) => setWorld({ ...world, description: e.target.value })}
-          />
-        </div>
-        <div className="field">
-          <label>世界のシステムプロンプト（文体・世界観・許可される表現）</label>
-          <textarea
-            className="textarea"
-            rows={5}
-            value={world.system_prompt}
-            onChange={(e) => setWorld({ ...world, system_prompt: e.target.value })}
-          />
-        </div>
-        <div className="field">
-          <label>ナレーターの指示</label>
-          <textarea
-            className="textarea"
-            value={world.narrator_prompt}
-            onChange={(e) => setWorld({ ...world, narrator_prompt: e.target.value })}
-          />
-        </div>
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button className="btn primary" onClick={saveWorld}>
-            保存
-          </button>
-        </div>
-      </div>
-
-      <div className="section-title">
-        👥 キャラクター
-        <span className="spacer" />
-        <button className="btn small" onClick={importCharacter}>
-          V2カード取込
-        </button>
-        <button className="btn primary small" onClick={addCharacter}>
-          ＋ 追加
-        </button>
-      </div>
-      {characters.map((c) => (
-        <div key={c.id} className="card clickable" onClick={() => navigate(`/characters/${c.id}`)}>
-          <div className="row">
-            <span style={{ fontSize: 22 }}>{c.avatar || '👤'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="card-title">
-                {c.name}
-                {c.is_npc_pool === 1 && <span className="chip"> 準レギュラー</span>}
-              </div>
-              {c.aliases.length > 0 && <div className="card-sub">別名: {c.aliases.join('、')}</div>}
+        <div className="section">
+          <div className="head">
+            <span className="kicker">Characters</span>
+            <div className="row">
+              <button className="pill sm" onClick={importCharacter}>
+                <Icon.upload size={14} />
+                V2取込
+              </button>
             </div>
-            <button
-              className="btn danger small"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeCharacter(c);
-              }}
-            >
-              削除
-            </button>
+          </div>
+          {characters.map((c) => (
+            <Row
+              key={c.id}
+              avatar={<Avatar value={c.avatar} name={c.name} />}
+              avatarTinted={!c.avatar}
+              name={
+                <>
+                  {c.name} {c.is_npc_pool === 1 && <span className="tag mute">準レギュラー</span>}
+                </>
+              }
+              desc={c.aliases.length ? `別名: ${c.aliases.join('、')}` : c.persona}
+              onClick={() => navigate(`/characters/${c.id}`)}
+              chevron
+            />
+          ))}
+          <div className="chatrow add tappable" onClick={addCharacter}>
+            <span className="av">
+              <Icon.castAdd size={19} />
+            </span>
+            <div className="body">
+              <span className="nm">キャラクターを追加</span>
+            </div>
           </div>
         </div>
-      ))}
-      {characters.length === 0 && <div className="empty-note">キャラクターがいません</div>}
 
-      <div className="section-title">
-        🎬 シナリオ
-        <span className="spacer" />
-        <button className="btn primary small" onClick={addScenario}>
-          ＋ 追加
-        </button>
-      </div>
-      {scenarios.map((s) => (
-        <div key={s.id} className="card">
-          <div className="row">
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="card-title">{s.title}</div>
-              {s.description && <div className="card-sub">{s.description}</div>}
+        <div className="section">
+          <div className="head">
+            <span className="kicker">Scenarios</span>
+          </div>
+          {scenarios.map((s) => (
+            <Row
+              key={s.id}
+              avatar={<Icon.bubble size={19} />}
+              avatarTinted
+              name={s.title}
+              desc={s.description}
+              actions={
+                <>
+                  <button
+                    className="icon-btn accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void startChat(s);
+                    }}
+                    title="この設定で開始"
+                  >
+                    <Icon.play size={17} />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    style={{ color: 'var(--danger)' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void removeScenario(s);
+                    }}
+                    title="削除"
+                  >
+                    <Icon.trash />
+                  </button>
+                </>
+              }
+              onClick={() => setEditingScenario({ ...s })}
+            />
+          ))}
+          <div className="chatrow add tappable" onClick={addScenario}>
+            <span className="av">
+              <Icon.plus size={19} />
+            </span>
+            <div className="body">
+              <span className="nm">シナリオを追加</span>
             </div>
-            <button className="btn primary small" onClick={() => startChat(s)}>
-              ▶ 開始
-            </button>
-            <button className="btn small" onClick={() => setEditingScenario({ ...s })}>
-              編集
-            </button>
-            <button className="btn danger small" onClick={() => removeScenario(s)}>
-              削除
-            </button>
           </div>
         </div>
-      ))}
-      {scenarios.length === 0 && (
-        <div className="empty-note">シナリオを作ると会話を開始できます</div>
-      )}
+
+        <div className="section">
+          <div className="head">
+            <span className="kicker">World</span>
+          </div>
+          <Field label="名前">
+            <input value={world.name} onChange={(e) => setWorld({ ...world, name: e.target.value })} />
+          </Field>
+          <Field label="説明">
+            <textarea
+              value={world.description}
+              onChange={(e) => setWorld({ ...world, description: e.target.value })}
+            />
+          </Field>
+          <Field label="世界のシステムプロンプト（文体・世界観・許可される表現）">
+            <textarea
+              className="tall"
+              value={world.system_prompt}
+              onChange={(e) => setWorld({ ...world, system_prompt: e.target.value })}
+            />
+          </Field>
+          <Field label="ナレーターの指示">
+            <textarea
+              value={world.narrator_prompt}
+              onChange={(e) => setWorld({ ...world, narrator_prompt: e.target.value })}
+            />
+          </Field>
+        </div>
+      </div>
+
+      <div className="footbar">
+        <button className="pill danger" onClick={removeWorld}>
+          <Icon.trash />
+          削除
+        </button>
+        <button className="pill primary grow" onClick={saveWorld}>
+          <Icon.check />
+          保存
+        </button>
+      </div>
 
       {editingScenario && (
         <ScenarioEditor
@@ -266,7 +292,7 @@ export default function WorldDetailPage() {
           }}
         />
       )}
-    </main>
+    </>
   );
 }
 
@@ -313,47 +339,43 @@ function ScenarioEditor(props: {
   };
 
   return (
-    <div className="modal-overlay" onClick={props.onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>シナリオを編集</h3>
-        <div className="field">
-          <label>タイトル</label>
-          <input
-            className="input"
-            value={s.title}
-            onChange={(e) => setS({ ...s, title: e.target.value })}
-          />
+    <Modal
+      title="シナリオ"
+      onClose={props.onClose}
+      actions={
+        <button className="pill sm primary" onClick={save}>
+          保存
+        </button>
+      }
+    >
+      <Field label="タイトル">
+        <input value={s.title} onChange={(e) => setS({ ...s, title: e.target.value })} />
+      </Field>
+      <Field label="状況設定（プロンプトに入ります）">
+        <textarea
+          value={s.description}
+          onChange={(e) => setS({ ...s, description: e.target.value })}
+        />
+      </Field>
+      <Field label="参加キャラ">
+        <div className="row wrap">
+          {props.characters.map((c) => (
+            <span
+              key={c.id}
+              className={`chip${s.participant_ids.includes(c.id) ? ' on' : ''}`}
+              onClick={() => toggleParticipant(c.id)}
+            >
+              {c.name}
+            </span>
+          ))}
+          {props.characters.length === 0 && (
+            <span className="empty-note">先にキャラクターを作成してください</span>
+          )}
         </div>
-        <div className="field">
-          <label>状況設定（プロンプトに入ります）</label>
-          <textarea
-            className="textarea"
-            value={s.description}
-            onChange={(e) => setS({ ...s, description: e.target.value })}
-          />
-        </div>
-        <div className="field">
-          <label>参加キャラ</label>
-          <div className="row wrap">
-            {props.characters.map((c) => (
-              <span
-                key={c.id}
-                className={`chip${s.participant_ids.includes(c.id) ? ' on' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => toggleParticipant(c.id)}
-              >
-                {c.avatar || '👤'} {c.name}
-              </span>
-            ))}
-            {props.characters.length === 0 && (
-              <span className="card-sub">先にキャラクターを作成してください</span>
-            )}
-          </div>
-        </div>
-        <div className="field">
-          <label>既定ペルソナ</label>
+      </Field>
+      <Field label="既定ペルソナ">
+        <div className="select-wrap">
           <select
-            className="select"
             value={s.default_persona_id ?? ''}
             onChange={(e) => setS({ ...s, default_persona_id: e.target.value || null })}
           >
@@ -365,41 +387,33 @@ function ScenarioEditor(props: {
             ))}
           </select>
         </div>
-        <div className="field">
-          <label>冒頭の応答文（話者ラベル付き。例「ナレーター: 雨の午後…」）</label>
-          <textarea
-            className="textarea"
-            rows={5}
-            value={s.opening}
-            onChange={(e) => setS({ ...s, opening: e.target.value })}
-          />
-        </div>
+      </Field>
+      <Field label="冒頭の応答文（話者ラベル付き）">
+        <textarea
+          className="tall"
+          value={s.opening}
+          onChange={(e) => setS({ ...s, opening: e.target.value })}
+          placeholder="ナレーター: 午後の雨が窓を叩いている。"
+        />
+      </Field>
 
-        <div className="section-title" style={{ marginTop: 10 }}>
-          初期ステート
-        </div>
-        <div className="grid-2">
-          <div className="field">
-            <label>開始時刻（暦元期からの通算分）</label>
-            <input
-              className="input"
-              type="number"
-              value={s.initial_state.time}
-              onChange={(e) =>
-                setS({
-                  ...s,
-                  initial_state: {
-                    ...s.initial_state,
-                    time: parseInt(e.target.value, 10) || 0,
-                  },
-                })
-              }
-            />
-          </div>
-          <div className="field">
-            <label>場所</label>
+      <div className="kicker">初期ステート</div>
+      <div className="grid-2">
+        <Field label="開始時刻（暦元期からの通算分）">
+          <input
+            type="number"
+            value={s.initial_state.time}
+            onChange={(e) =>
+              setS({
+                ...s,
+                initial_state: { ...s.initial_state, time: parseInt(e.target.value, 10) || 0 },
+              })
+            }
+          />
+        </Field>
+        <Field label="場所">
+          <div className="select-wrap">
             <select
-              className="select"
               value={s.initial_state.location}
               onChange={(e) =>
                 setS({ ...s, initial_state: { ...s.initial_state, location: e.target.value } })
@@ -413,50 +427,43 @@ function ScenarioEditor(props: {
               ))}
             </select>
           </div>
-          <div className="field">
-            <label>天候</label>
-            <input
-              className="input"
-              value={s.initial_state.weather}
-              onChange={(e) =>
-                setS({ ...s, initial_state: { ...s.initial_state, weather: e.target.value } })
-              }
-            />
-          </div>
-        </div>
-        <div className="field">
-          <label>開始時の在席キャラ</label>
-          <div className="row wrap">
-            {props.characters.map((c) => (
-              <span
-                key={c.id}
-                className={`chip${s.initial_state.present.includes(c.id) ? ' on' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => togglePresent(c.id)}
-              >
-                {c.name}
-              </span>
-            ))}
-          </div>
-        </div>
-        <label className="checkbox-row">
+        </Field>
+        <Field label="天候">
           <input
-            type="checkbox"
-            checked={s.narrator_enabled === 1}
-            onChange={(e) => setS({ ...s, narrator_enabled: e.target.checked ? 1 : 0 })}
+            value={s.initial_state.weather}
+            onChange={(e) =>
+              setS({ ...s, initial_state: { ...s.initial_state, weather: e.target.value } })
+            }
           />
-          ナレーターを有効にする
-        </label>
-
-        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-          <button className="btn ghost" onClick={props.onClose}>
-            キャンセル
-          </button>
-          <button className="btn primary" onClick={save}>
-            保存
-          </button>
-        </div>
+        </Field>
       </div>
-    </div>
+      <Field label="開始時の在席キャラ">
+        <div className="row wrap">
+          {props.characters.map((c) => (
+            <span
+              key={c.id}
+              className={`chip${s.initial_state.present.includes(c.id) ? ' on' : ''}`}
+              onClick={() => togglePresent(c.id)}
+            >
+              {c.name}
+            </span>
+          ))}
+        </div>
+      </Field>
+      <div className="setting">
+        <div className="txt">
+          <label>ナレーター</label>
+          <span>情景描写を地の文として入れる</span>
+        </div>
+        <button
+          className={`toggle${s.narrator_enabled === 1 ? ' on' : ''}`}
+          onClick={() => setS({ ...s, narrator_enabled: s.narrator_enabled ? 0 : 1 })}
+          role="switch"
+          aria-checked={s.narrator_enabled === 1}
+        >
+          <span className="knob" />
+        </button>
+      </div>
+    </Modal>
   );
 }

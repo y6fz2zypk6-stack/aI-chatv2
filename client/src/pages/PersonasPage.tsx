@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Persona } from '@shared/types';
 import { api } from '../api';
+import { Avatar, AvatarPicker, Field, Row, TopBar } from '../components';
+import { Icon } from '../icons';
 import { useApp } from '../store';
 
 export default function PersonasPage() {
@@ -38,89 +40,105 @@ export default function PersonasPage() {
   const remove = async (p: Persona) => {
     if (!confirm(`「${p.name}」を削除しますか？`)) return;
     await api.del(`/personas/${p.id}`);
+    setEditing(null);
     load();
   };
 
-  return (
-    <main className="page">
-      <h1 className="page-title">
-        🙋 ペルソナ
-        <span className="spacer" />
-        <button className="btn primary small" onClick={create}>
-          ＋ 追加
-        </button>
-      </h1>
-      {personas.map((p) => (
-        <div key={p.id} className="card">
-          <div className="row">
-            <span style={{ fontSize: 22 }}>{p.avatar || '🙂'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="card-title">
-                {p.name} {p.is_default === 1 && <span className="chip on">既定</span>}
-              </div>
-              {p.description && <div className="card-sub">{p.description}</div>}
-            </div>
-            <button className="btn small" onClick={() => setEditing({ ...p })}>
-              編集
-            </button>
-            <button className="btn danger small" onClick={() => remove(p)}>
-              削除
-            </button>
+  if (editing) {
+    return (
+      <>
+        <TopBar title="ペルソナ編集" back="/personas" />
+        <div className="content form">
+          <div className="id-row">
+            <AvatarPicker
+              value={editing.avatar}
+              name={editing.name}
+              onChange={(avatar) => setEditing({ ...editing, avatar })}
+            />
+            <input
+              className="id-name"
+              value={editing.name}
+              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              placeholder="名前"
+            />
           </div>
-        </div>
-      ))}
-      {personas.length === 0 && (
-        <div className="empty-note">ペルソナ（あなたの分身）を作成してください</div>
-      )}
 
-      {editing && (
-        <div className="modal-overlay" onClick={() => setEditing(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>ペルソナを編集</h3>
-            <div className="field">
-              <label>名前</label>
-              <input
-                className="input"
-                value={editing.name}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-              />
+          <Field label="アイコン（絵文字・画像URL。上の枠から画像も選べます）">
+            <input
+              value={editing.avatar.startsWith('data:') ? '' : editing.avatar}
+              onChange={(e) => setEditing({ ...editing, avatar: e.target.value })}
+              placeholder={editing.avatar.startsWith('data:') ? '画像を設定済み' : '🙂 または https://…'}
+            />
+          </Field>
+
+          <Field label="説明（プロンプトに入ります）">
+            <textarea
+              className="tall"
+              value={editing.description}
+              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+            />
+          </Field>
+
+          <div className="setting">
+            <div className="txt">
+              <label>既定のペルソナ</label>
+              <span>新しい会話で最初に選ばれる</span>
             </div>
-            <div className="field">
-              <label>アイコン（絵文字）</label>
-              <input
-                className="input"
-                value={editing.avatar}
-                onChange={(e) => setEditing({ ...editing, avatar: e.target.value })}
-                placeholder="🙂"
-              />
-            </div>
-            <div className="field">
-              <label>説明（プロンプトに入ります）</label>
-              <textarea
-                className="textarea"
-                value={editing.description}
-                onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-              />
-            </div>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={editing.is_default === 1}
-                onChange={(e) => setEditing({ ...editing, is_default: e.target.checked ? 1 : 0 })}
-              />
-              既定のペルソナにする
-            </label>
-            <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={() => setEditing(null)}>
-                キャンセル
-              </button>
-              <button className="btn primary" onClick={save}>
-                保存
-              </button>
-            </div>
+            <button
+              className={`toggle${editing.is_default === 1 ? ' on' : ''}`}
+              onClick={() => setEditing({ ...editing, is_default: editing.is_default ? 0 : 1 })}
+              role="switch"
+              aria-checked={editing.is_default === 1}
+            >
+              <span className="knob" />
+            </button>
           </div>
         </div>
-      )}
-    </main>
+        <div className="footbar">
+          <button className="pill danger" onClick={() => remove(editing)}>
+            <Icon.trash />
+            削除
+          </button>
+          <button className="pill primary grow" onClick={save}>
+            <Icon.check />
+            保存
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <TopBar title="ペルソナ" back="/chats" />
+      <div className="content">
+        {personas.map((p) => (
+          <Row
+            key={p.id}
+            avatar={<Avatar value={p.avatar} name={p.name} />}
+            avatarTinted={!p.avatar}
+            name={
+              <>
+                {p.name} {p.is_default === 1 && <span className="tag">DEFAULT</span>}
+              </>
+            }
+            desc={p.description}
+            onClick={() => setEditing({ ...p })}
+            chevron
+          />
+        ))}
+        <div className="chatrow add tappable" onClick={create}>
+          <span className="av">
+            <Icon.plus size={20} />
+          </span>
+          <div className="body">
+            <span className="nm">ペルソナを追加</span>
+          </div>
+        </div>
+        {personas.length === 0 && (
+          <div className="empty-note">あなたの分身となるペルソナを作成してください</div>
+        )}
+      </div>
+    </>
   );
 }
