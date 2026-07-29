@@ -1,8 +1,24 @@
 import { Router } from 'express';
 import { db, toJson } from '../db/index.js';
 import { getCalendar } from '../db/repo/calendars.js';
-import { deleteChat, getChat, listChats, setChatState, updateChat } from '../db/repo/chats.js';
-import { lastMessage, listMessages, listVariants, updateMessageActive } from '../db/repo/messages.js';
+import {
+  createChat,
+  deleteChat,
+  getChat,
+  listChats,
+  setChatState,
+  updateChat,
+} from '../db/repo/chats.js';
+import {
+  getMessage,
+  insertMessage,
+  insertVariant,
+  lastMessage,
+  listMessages,
+  listMessagesUpTo,
+  listVariants,
+  updateMessageActive,
+} from '../db/repo/messages.js';
 import { getSettings } from '../db/repo/settings.js';
 import {
   deleteSummaries,
@@ -60,6 +76,80 @@ chatsRouter.delete('/chats/:id', (req, res) => {
   }
   deleteChat(req.params.id);
   res.json({ ok: true });
+});
+
+// ---- 分岐（§8.5）----
+// 指定メッセージまでをコピーした新チャットを作り、そのメッセージの state_after を
+// 新チャットの chats.state にコピーする。variant_index 指定時はその候補を active として分岐
+// （過去メッセージの候補切替の確定操作は fork に統一）。
+chatsRouter.post('/chats/:id/fork', (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  const messageId = String(req.body?.message_id ?? '');
+  const target = getMessage(messageId);
+  if (!target || target.chat_id !== chat.id) {
+    res.status(404).json({ error: '分岐元メッセージが見つかりません' });
+    return;
+  }
+  const variantIndex = req.body?.variant_index as number | undefined;
+  let forkContent = target.content;
+  let forkUtterances = target.utterances;
+  let forkState = target.state_after;
+  let forkActive = target.active_variant;
+  if (variantIndex !== undefined) {
+    const v = listVariants(target.id).find((x) => x.index === Number(variantIndex));
+    if (!v) {
+      res.status(404).json({ error: '指定の候補がありません' });
+      return;
+    }
+    forkContent = v.content;
+    forkUtterances = v.utterances;
+    forkState = v.state_after;
+    forkActive = v.index;
+  }
+
+  const newChat = createChat({
+    world_id: chat.world_id,
+    scenario_id: chat.scenario_id,
+    title: `${chat.title || '無題'}（分岐）`,
+    persona_id: chat.persona_id,
+    participant_ids: [...chat.participant_ids],
+    model: chat.model,
+    narrator_enabled: chat.narrator_enabled,
+    state: forkState,
+  });
+
+  // メッセージと候補を昇順にコピー（ULIDは新規発行なので順序が保たれる）
+  for (const m of listMessagesUpTo(chat.id, target.id)) {
+    const isTarget = m.id === target.id;
+    const copied = insertMessage({
+      chat_id: newChat.id,
+      role: m.role,
+      content: isTarget ? forkContent : m.content,
+      utterances: isTarget ? forkUtterances : m.utterances,
+      state_after: isTarget ? forkState : m.state_after,
+      generation_status: m.generation_status,
+    });
+    const variants = listVariants(m.id);
+    for (const v of variants) {
+      insertVariant({
+        message_id: copied.id,
+        index: v.index,
+        content: v.content,
+        utterances: v.utterances,
+        state_delta: v.state_delta,
+        state_after: v.state_after,
+      });
+    }
+    if (variants.length && (isTarget ? forkActive : m.active_variant) !== 0) {
+      updateMessageActive(copied.id, { active_variant: isTarget ? forkActive : m.active_variant });
+    }
+  }
+
+  res.status(201).json(getChat(newChat.id));
 });
 
 // ---- ステート（§10.3）----

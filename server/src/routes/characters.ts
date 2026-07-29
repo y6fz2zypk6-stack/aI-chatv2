@@ -127,10 +127,21 @@ charactersRouter.post('/worlds/:id/characters/import', (req, res) => {
   }
   const d = card.data;
   const persona = [d.description, d.personality].filter(Boolean).join('\n\n');
+  // 本アプリで書き出したカードの拡張（aliases / avatar / 口調 / 準レギュラー）を復元
+  const ext = (d.extensions?.character_chat ?? {}) as {
+    aliases?: string[];
+    avatar?: string;
+    speech_style?: string;
+    is_npc_pool?: number;
+  };
   const character = createCharacter(req.params.id, {
     name: d.name,
     persona,
     example_dialogue: d.mes_example || '',
+    aliases: Array.isArray(ext.aliases) ? ext.aliases : [],
+    avatar: ext.avatar || '',
+    speech_style: ext.speech_style || '',
+    is_npc_pool: ext.is_npc_pool ? 1 : 0,
   });
   let loreCount = 0;
   for (const e of d.character_book?.entries ?? []) {

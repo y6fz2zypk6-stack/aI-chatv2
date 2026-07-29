@@ -50,6 +50,14 @@ export function getMessage(id: string): Message | undefined {
   return row ? toApi(row) : undefined;
 }
 
+/** fork用: 指定メッセージまで（含む）を昇順で返す */
+export function listMessagesUpTo(chatId: string, messageId: string): Message[] {
+  const rows = db
+    .prepare('SELECT * FROM messages WHERE chat_id = ? AND id <= ? ORDER BY id ASC')
+    .all(chatId, messageId) as Row[];
+  return rows.map(toApi);
+}
+
 /** 指定メッセージの直前のメッセージ */
 export function previousMessage(chatId: string, beforeId: string): Message | undefined {
   const row = db
