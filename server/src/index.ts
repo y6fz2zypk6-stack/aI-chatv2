@@ -13,6 +13,8 @@ import { seedIfEmpty } from './db/seed.js';
 import { authRouter, requireAuth } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
 import { chatsRouter } from './routes/chats.js';
+import { eventsRouter } from './routes/events.js';
+import { exportsRouter } from './routes/exports.js';
 import { locationsRouter } from './routes/locations.js';
 import { lorebookRouter } from './routes/lorebook.js';
 import { messagesRouter } from './routes/messages.js';
@@ -35,6 +37,8 @@ app.use('/api', authRouter);
 app.use('/api', requireAuth);
 
 app.use('/api', settingsRouter);
+app.use('/api', exportsRouter);
+app.use('/api', eventsRouter);
 app.use('/api', worldsRouter);
 app.use('/api', charactersRouter);
 app.use('/api', scenariosRouter);
