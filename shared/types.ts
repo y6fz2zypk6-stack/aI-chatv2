@@ -296,3 +296,30 @@ export interface ModelInfo {
   name: string;
   context_length: number;
 }
+
+/** モデル選択に出す候補（チャットヘッダー・設定で共通利用） */
+export interface CuratedModel {
+  id: string;
+  label: string;
+}
+
+export const CURATED_MODELS: CuratedModel[] = [
+  { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
+  { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },
+  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
+  { id: 'anthropic/claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
+  { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  { id: 'moonshotai/kimi-k3', label: 'Kimi K3' },
+  { id: 'qwen/qwen3.7-plus', label: 'Qwen3.7 Plus' },
+];
+
+/** モデルIDを短い表示名にする。未知のIDはスラッシュ以降をそのまま出す */
+export function modelLabel(id: string): string {
+  if (!id) return '既定';
+  const found = CURATED_MODELS.find((m) => m.id === id);
+  const label = found ? found.label : id.split('/').pop()!;
+  return label.replace(/^Claude\s+/i, '');
+}

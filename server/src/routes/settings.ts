@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { CURATED_MODELS } from '../../../shared/types.js';
 import { getSettings, updateSettings } from '../db/repo/settings.js';
 import { listModels } from '../llm/openrouter.js';
 
@@ -22,6 +23,12 @@ settingsRouter.get('/config', (_req, res) => {
   });
 });
 
+// 選択候補（モデルピル・設定のプルダウン用）。OpenRouterに繋がらなくても返せる
+settingsRouter.get('/models/curated', (_req, res) => {
+  res.json(CURATED_MODELS);
+});
+
+// OpenRouterの全モデル一覧（設定画面の自由入力の補完用）
 settingsRouter.get('/models', async (_req, res) => {
   try {
     res.json(await listModels());
