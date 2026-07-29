@@ -1,0 +1,164 @@
+import type { CalendarConfig, GameTime } from '../../../shared/types.js';
+
+// 時刻の演算・変換はこのモジュールに一本化する。
+// それ以外の場所で時刻演算を書くことを禁止する（§4.12）。
+// 内部表現は「暦元期（1年1月1日 00:00）からの通算分（整数）」のみ。
+
+export const MIN_PER_DAY = 1440;
+
+/** §4.12 の既定暦 + §8.2 の既定天候テーブル */
+export const DEFAULT_CALENDAR: CalendarConfig = {
+  months_per_year: 12,
+  days_per_month: 28,
+  weekdays: ['日', '月', '火', '水', '木', '金', '土'],
+  seasons: { 春: [3, 4], 夏: [5, 6], 秋: [7, 8, 9], 冬: [10, 11, 12, 1, 2] },
+  sun: {
+    '1': { rise: '08:10', set: '16:20' },
+    '7': { rise: '05:20', set: '20:40' },
+  },
+  last_train_min: 1380,
+  last_train_notice_min: 60,
+  after_last_train_text: '終電は終了。帰りは徒歩か辻馬車になる。',
+  weather_table: {
+    春: { 霧: 40, 雨: 30, 曇: 20, 晴: 10 },
+    夏: { 晴: 50, 曇: 30, 雨: 20 },
+    秋: { 晴: 50, 曇: 30, 雨: 20 },
+    冬: { 雨: 30, みぞれ: 25, 曇: 25, 雪: 10, 晴: 10 },
+  },
+};
+
+export function normalizeCalendar(partial: Partial<CalendarConfig> | null | undefined): CalendarConfig {
+  return { ...DEFAULT_CALENDAR, ...(partial ?? {}) };
+}
+
+function minutesPerYear(cfg: CalendarConfig): number {
+  return cfg.months_per_year * cfg.days_per_month * MIN_PER_DAY;
+}
+
+/** 通算分 → 通算日 */
+export function toTotalDay(time: number): number {
+  return Math.floor(time / MIN_PER_DAY);
+}
+
+/** 月番号から季節名を返す */
+export function seasonOfMonth(cfg: CalendarConfig, month: number): string {
+  for (const [name, months] of Object.entries(cfg.seasons)) {
+    if (months.includes(month)) return name;
+  }
+  return '';
+}
+
+/** 通算分 → 表示用構造体 */
+export function toGameTime(cfg: CalendarConfig, time: number): GameTime {
+  const t = Math.max(0, Math.floor(time));
+  const totalDay = toTotalDay(t);
+  const daysPerYear = cfg.months_per_year * cfg.days_per_month;
+  const year = Math.floor(totalDay / daysPerYear) + 1;
+  const dayOfYear = totalDay % daysPerYear;
+  const month = Math.floor(dayOfYear / cfg.days_per_month) + 1;
+  const day = (dayOfYear % cfg.days_per_month) + 1;
+  const weekday = cfg.weekdays[totalDay % cfg.weekdays.length];
+  const week = Math.ceil(day / 7);
+  const minOfDay = t % MIN_PER_DAY;
+  return {
+    year,
+    month,
+    day,
+    weekday,
+    week,
+    season: seasonOfMonth(cfg, month),
+    hh: Math.floor(minOfDay / 60),
+    mm: minOfDay % 60,
+  };
+}
+
+/** 年月日時分 → 通算分 */
+export function toMinutes(
+  cfg: CalendarConfig,
+  y: number,
+  month: number,
+  day: number,
+  hh: number,
+  mm: number,
+): number {
+  const totalDay =
+    (y - 1) * cfg.months_per_year * cfg.days_per_month + (month - 1) * cfg.days_per_month + (day - 1);
+  return totalDay * MIN_PER_DAY + hh * 60 + mm;
+}
+
+/** "HH:MM" → 0時からの分 */
+export function hhmmToMin(s: string): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
+  if (!m) return 0;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+export function minToHhmm(min: number): string {
+  const m = ((min % MIN_PER_DAY) + MIN_PER_DAY) % MIN_PER_DAY;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * 月ごとの日出・日没。未定義の月は前後の定義済み月から線形補間する。
+ * 補間は年をまたいでラップアラウンドする（12月→1月も両者の間で補間）。
+ */
+export function sunTimes(cfg: CalendarConfig, month: number): { riseMin: number; setMin: number } {
+  const defined = Object.entries(cfg.sun)
+    .map(([m, v]) => ({ month: parseInt(m, 10), rise: hhmmToMin(v.rise), set: hhmmToMin(v.set) }))
+    .filter((e) => Number.isFinite(e.month))
+    .sort((a, b) => a.month - b.month);
+  if (defined.length === 0) return { riseMin: 6 * 60, setMin: 18 * 60 };
+  const exact = defined.find((e) => e.month === month);
+  if (exact) return { riseMin: exact.rise, setMin: exact.set };
+  if (defined.length === 1) return { riseMin: defined[0].rise, setMin: defined[0].set };
+
+  const mpy = cfg.months_per_year;
+  // 前後の定義済み月（ラップアラウンド）を探す
+  let prev = defined[defined.length - 1];
+  let next = defined[0];
+  for (const e of defined) {
+    if (e.month < month) prev = e;
+  }
+  for (let i = defined.length - 1; i >= 0; i--) {
+    if (defined[i].month > month) next = defined[i];
+  }
+  const span = (next.month - prev.month + mpy) % mpy || mpy;
+  const pos = (month - prev.month + mpy) % mpy;
+  const ratio = pos / span;
+  return {
+    riseMin: Math.round(prev.rise + (next.rise - prev.rise) * ratio),
+    setMin: Math.round(prev.set + (next.set - prev.set) * ratio),
+  };
+}
+
+export type Daylight = '日の出前' | '日中' | '日没後';
+
+export function daylightOf(cfg: CalendarConfig, time: number): Daylight {
+  const gt = toGameTime(cfg, time);
+  const { riseMin, setMin } = sunTimes(cfg, gt.month);
+  const minOfDay = time % MIN_PER_DAY;
+  if (minOfDay < riseMin) return '日の出前';
+  if (minOfDay < setMin) return '日中';
+  return '日没後';
+}
+
+/** 天候テーブルから重み付き抽選 */
+export function drawWeather(cfg: CalendarConfig, season: string, rand: () => number = Math.random): string {
+  const table = cfg.weather_table[season] ?? Object.values(cfg.weather_table)[0];
+  if (!table) return '晴';
+  const entries = Object.entries(table).filter(([, w]) => w > 0);
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  if (total <= 0) return '晴';
+  let r = rand() * total;
+  for (const [name, w] of entries) {
+    r -= w;
+    if (r <= 0) return name;
+  }
+  return entries[entries.length - 1][0];
+}
+
+/** 「秋・第2週の水曜日 18:40」形式 */
+export function formatGameTime(gt: GameTime): string {
+  return `${gt.season}・第${gt.week}週の${gt.weekday}曜日 ${String(gt.hh).padStart(2, '0')}:${String(gt.mm).padStart(2, '0')}`;
+}
+
