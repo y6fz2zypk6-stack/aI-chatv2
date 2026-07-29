@@ -13,7 +13,13 @@ import type {
   Summary,
   World,
 } from '../../../shared/types.js';
-import { daylightOf, formatGameTime, toGameTime } from '../domain/calendar.js';
+import {
+  daylightOf,
+  formatGameTime,
+  lastTrainLine,
+  openStatusOf,
+  toGameTime,
+} from '../domain/calendar.js';
 import { fireLorebook, type LoreFireResult } from '../domain/lorebook.js';
 import type { ChatMessage } from './openrouter.js';
 
@@ -86,6 +92,21 @@ export function buildSituationBlock(input: SituationInput): string {
   // 行2: 日照状態
   lines.push(`${daylightOf(calendar, state.time)}。`);
 
+  // 行3: 現在地と同じ area の店の営業状況（location_note 使用中・該当なしは省略）
+  if (!state.location_note && loc?.area) {
+    const statuses = locations
+      .filter((l) => l.area === loc.area && l.id !== loc.id)
+      .map((l) => ({ name: l.name, status: openStatusOf(l.open_min, l.close_min, state.time) }))
+      .filter((x): x is { name: string; status: NonNullable<ReturnType<typeof openStatusOf>> } => x.status !== null);
+    if (statuses.length) {
+      lines.push(statuses.map((x) => `${x.name}は${x.status}`).join('。') + '。');
+    }
+  }
+
+  // 行4: 終電の状況（通知窓の中でだけ表示 §6.4）
+  const trainLine = lastTrainLine(calendar, state.time);
+  if (trainLine) lines.push(trainLine);
+
   // 行5: 在席者（ペルソナのみなら省略）
   const allChars = [...input.participants, ...input.npcPool];
   const presentNames = state.present
@@ -135,6 +156,10 @@ export interface AssembleInput {
   dayChanged: boolean;
   /** モデルのコンテキスト長 */
   contextLength: number;
+  /** pendingイベントの注入文（「現在の状況」ブロックの直後 §8.6） */
+  eventInjects?: string[];
+  /** オートプレイ: ユーザー入力なしで場面を続ける指示を添える（§8.7） */
+  autoContinueNudge?: boolean;
 }
 
 export interface AssembleResult {
@@ -196,7 +221,10 @@ export function assembleContext(input: AssembleInput): AssembleResult {
 
   // ---- system の構成順序（§6.1） ----
   const required: string[] = [];
-  required.push(formatInstructions(settings.state_enabled === 1));
+  // separate_call モードでは本文にフェンスを書かせない（抽出は別コール §5.7）
+  required.push(
+    formatInstructions(settings.state_enabled === 1 && settings.state_extraction_mode === 'fenced'),
+  );
   required.push(SETTINGS_HANDLING);
   if (settings.system_prompt) required.push(settings.system_prompt);
   if (input.world.system_prompt) required.push(input.world.system_prompt);
@@ -221,7 +249,7 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     ? `# これまでのあらすじ\n${input.summary.content}`
     : '';
 
-  const situationBlock = buildSituationBlock({
+  let situationBlock = buildSituationBlock({
     calendar: input.calendar,
     state: input.baseState,
     locations: input.locations,
@@ -230,6 +258,14 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     persona: input.persona,
     dayChanged: input.dayChanged,
   });
+  // pendingイベントは「現在の状況」ブロックの直後に注入（§8.6）
+  if (input.eventInjects?.length) {
+    situationBlock += `\n\n${input.eventInjects.join('\n')}`;
+  }
+  if (input.autoContinueNudge) {
+    situationBlock +=
+      '\n\nユーザーの発言を待たず、場面の続きを描写すること。ユーザーの発言を代弁してはならない。';
+  }
 
   const personaName = input.persona?.name || 'あなた';
   const historyToMessages = (history: Message[]): ChatMessage[] =>

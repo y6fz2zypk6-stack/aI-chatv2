@@ -23,12 +23,15 @@ import { getScenario } from '../db/repo/scenarios.js';
 import { getSettings } from '../db/repo/settings.js';
 import { latestSummary } from '../db/repo/summaries.js';
 import { getWorld } from '../db/repo/worlds.js';
+import type { WorldEvent } from '../db/repo/events.js';
 import { toGameTime, toTotalDay } from '../domain/calendar.js';
+import { evaluateEvents, recordEventFires } from '../domain/events.js';
 import { scopeEntries } from '../domain/lorebook.js';
 import { runExtract } from '../domain/memory.js';
 import { applyDelta } from '../domain/state.js';
 import { maybeSummarize } from '../domain/summary.js';
-import { contextLengthOf, streamChat } from '../llm/openrouter.js';
+import { extractStateSeparate } from '../llm/extract.js';
+import { completeText, contextLengthOf, streamChat } from '../llm/openrouter.js';
 import {
   FENCE_OPEN,
   fallbackDelta,
@@ -54,6 +57,7 @@ export interface GatherResult {
   parseCtx: ParseContext;
   personaName: string;
   model: string;
+  firedEvents: WorldEvent[];
 }
 
 export async function gatherContext(
@@ -106,8 +110,19 @@ export async function gatherContext(
   const model = chat.model || settings.default_model;
   const contextLength = await contextLengthOf(model, settings.fallback_context_length);
 
+  // pendingイベントの発火判定（§8.6）。記録は生成保存時に行う
+  const firedEvents = evaluateEvents({
+    worldId: chat.world_id,
+    chatId,
+    state: baseState,
+    calendar,
+    locations,
+  });
+
   return {
+    firedEvents,
     input: {
+      eventInjects: firedEvents.map((e) => e.inject),
       settings,
       world,
       scenario,
@@ -168,10 +183,6 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     return;
   }
   const mode = modes[0];
-  if (mode === 'autoContinue') {
-    res.status(400).json({ error: 'オートプレイは未実装です（Phase 6）' });
-    return;
-  }
 
   const settings = getSettings();
   const last = lastMessage(chatId);
@@ -212,10 +223,17 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     target = last;
     const prev = previousMessage(chatId, last.id);
     baseState = prev?.state_after ?? chat.state;
-  } else {
+  } else if (mode === 'retry') {
     // retry: 末尾userへの応答再試行。userは追加保存しない（§5.6）
     if (!last || last.role !== 'user') {
       res.status(400).json({ error: 'retry はチャット末尾がuserの場合のみ可能です' });
+      return;
+    }
+    baseState = last.state_after;
+  } else {
+    // autoContinue: ユーザー入力なしでターンを進める（§8.7）。基準は現在の最後のメッセージ
+    if (!last || last.role !== 'assistant') {
+      res.status(400).json({ error: 'autoContinue はチャット末尾がassistantの場合のみ可能です' });
       return;
     }
     baseState = last.state_after;
@@ -229,6 +247,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     res.status(500).json({ error: (err as Error).message });
     return;
   }
+  if (mode === 'autoContinue') gathered.input.autoContinueNudge = true;
   const assembled = assembleContext(gathered.input);
   if (assembled.overBudget) {
     // 必須項目だけで上限超過（§6.5）
@@ -307,6 +326,22 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
   } else if (aborted) {
     // §5.8: 停止時は elapsed 0 のフォールバック。停止操作でゲーム内時間を進めない
     delta = fallbackDelta(0);
+  } else if (settings.state_extraction_mode === 'separate_call') {
+    // §5.7-3: 本文生成後に軽量モデルで差分だけ抽出する
+    const extracted = await extractStateSeparate({
+      model: settings.utility_model || settings.default_model,
+      body: text,
+      baseState,
+      locations: gathered.input.locations,
+      characters: [...gathered.input.participants, ...gathered.input.npcPool],
+    });
+    if (extracted) {
+      delta = extracted;
+      fenceMissStreak.set(chatId, 0);
+    } else {
+      delta = fallbackDelta(10);
+      fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
+    }
   } else {
     const parsed = parseStateDelta(fence);
     if (parsed) {
@@ -332,7 +367,11 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
   );
 
   const status = aborted ? 'stopped' : 'complete';
-  const stateDeltaLog = fence ?? `(fallback) elapsed_minutes: ${delta.elapsed_minutes}`;
+  const stateDeltaLog =
+    fence ??
+    (delta.fallback
+      ? `(fallback) elapsed_minutes: ${delta.elapsed_minutes}`
+      : `(separate_call) ${JSON.stringify(delta)}`);
 
   let messageId: string;
   if (target) {
@@ -377,12 +416,23 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
 
   setChatState(chatId, applied.state);
 
+  // pendingイベントの発火を記録（§4.13。ゲーム内時刻 = 基準ステートの時刻）
+  if (gathered.firedEvents.length) {
+    recordEventFires(gathered.firedEvents, chatId, baseState.time);
+  }
+
   // 要約・知識抽出はバックグラウンド（§8.3・§8.4）
   const { needed: needsSummary } = maybeSummarize(chatId, settings);
   if (needsSummary && settings.auto_extract === 1) {
     runExtract(chatId, settings).catch((err) =>
       console.error('[memory] 自動抽出に失敗:', (err as Error).message),
     );
+  }
+
+  // オートプレイの継続判定（§8.7）: 区切りが良ければ自動停止
+  let autoplayShouldStop = false;
+  if (mode === 'autoContinue' && settings.autoplay_judge === 1 && !aborted) {
+    autoplayShouldStop = await judgeAutoplayStop(content, settings);
   }
 
   send('done', {
@@ -392,15 +442,38 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     state: applied.state,
     gameTime: toGameTime(gathered.input.calendar, applied.state.time),
     needsSummary,
-    firedEvents: [],
+    firedEvents: gathered.firedEvents.map((e) => e.title),
     warnings: [...parseResult.warnings, ...applied.warnings],
     stateWarnings: applied.warnings,
     fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,
     autoJoinSuggested: parseResult.autoJoinCharacterIds,
     generationStatus: status,
+    autoplayShouldStop,
   });
   res.end();
 });
+
+/** CONTINUE/STOP の継続判定（§8.7）。判定不能時は継続 */
+async function judgeAutoplayStop(
+  lastResponse: string,
+  settings: ReturnType<typeof getSettings>,
+): Promise<boolean> {
+  try {
+    const raw = await completeText({
+      model: settings.utility_model || settings.default_model,
+      messages: [
+        {
+          role: 'user',
+          content: `以下はロールプレイの直近の応答である。場面が区切り（会話の一段落・場面転換・ユーザーの判断が必要な地点）に達しているか判定し、CONTINUE か STOP のどちらか1語のみを出力せよ。\n\n${lastResponse.slice(-2000)}`,
+        },
+      ],
+      maxTokens: 8,
+    });
+    return raw.trim().toUpperCase().includes('STOP');
+  } catch {
+    return false;
+  }
+}
 
 // ---- 停止（§5.8）: クライアントabortではなくサーバ側AbortController ----
 messagesRouter.post('/chats/:id/stop', (req, res) => {

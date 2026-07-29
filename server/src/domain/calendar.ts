@@ -157,6 +157,52 @@ export function drawWeather(cfg: CalendarConfig, season: string, rand: () => num
   return entries[entries.length - 1][0];
 }
 
+// ---- 営業時間・終電（Phase 5） ----
+
+export type OpenStatus = '営業中' | '開店前' | '閉店済み' | null;
+
+/**
+ * 営業状況の判定。open/close 未設定は判定対象外（null）。
+ * 閉店が翌日の場合は 1440 超（例: 26:00 = 1560）で表現される。
+ */
+export function openStatusOf(
+  openMin: number | null,
+  closeMin: number | null,
+  time: number,
+): OpenStatus {
+  if (openMin == null || closeMin == null) return null;
+  const m = time % MIN_PER_DAY;
+  if (closeMin > MIN_PER_DAY) {
+    // 深夜営業: 当日 open〜24:00 と翌日 0:00〜close-1440
+    if (m >= openMin || m < closeMin - MIN_PER_DAY) return '営業中';
+    return m < openMin ? '開店前' : '閉店済み';
+  }
+  if (m < openMin) return '開店前';
+  if (m < closeMin) return '営業中';
+  return '閉店済み';
+}
+
+/**
+ * 終電行（§6.4）。通知窓の中でだけ表示する。
+ * - 終電の notice 分前〜終電: 「終電まで残り◯分。」
+ * - 終電後〜翌日の日の出まで: after_last_train_text
+ * - それ以外: null（行を出さない）
+ */
+export function lastTrainLine(cfg: CalendarConfig, time: number): string | null {
+  const m = time % MIN_PER_DAY;
+  const last = cfg.last_train_min;
+  const notice = cfg.last_train_notice_min;
+  if (m >= last - notice && m < last) {
+    return `終電まで残り${last - m}分。`;
+  }
+  const gt = toGameTime(cfg, time);
+  const { riseMin } = sunTimes(cfg, gt.month);
+  if (m >= last || m < riseMin) {
+    return cfg.after_last_train_text || null;
+  }
+  return null;
+}
+
 /** 「秋・第2週の水曜日 18:40」形式 */
 export function formatGameTime(gt: GameTime): string {
   return `${gt.season}・第${gt.week}週の${gt.weekday}曜日 ${String(gt.hh).padStart(2, '0')}:${String(gt.mm).padStart(2, '0')}`;
