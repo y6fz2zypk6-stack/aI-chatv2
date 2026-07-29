@@ -15,6 +15,8 @@ React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
 | 6 | 再生成・候補・編集・分岐（fork）/ オートプレイ / 書き出し・取り込み | ✅ |
 | 7 | pendingイベント / PWA | ✅ |
 
+- チャット内でモデルを切替（ヘッダーのピル）。候補は `shared/types.ts` の `CURATED_MODELS`
+- キャラクター・ペルソナのアイコンは画像をアップロード可能（丸枠のカメラバッジから）
 - 書き出し: 世界一式（独自JSON・往復可）/ キャラクター（Character Card V2）/
   ロアブック（V2 character_book）/ 会話（JSON: 候補含む・テキスト）
 - オートプレイ: `▶▶` ボタン。`autoplay_steps` 上限、`autoplay_judge` ONで
@@ -69,8 +71,21 @@ server/src/
   routes/             APIルート
 client/src/
   pages/              画面（URLベースルーティング）
-  public/fonts/       Zen Maru Gothic 自前ホスト（unicode-range分割woff2 / OFL）
+  theme.css           デザイントークン（配色・角丸・チャット13変数）
+  icons.tsx           Lucide準拠のインラインSVG。絵文字は使わない
+  components.tsx      アバター・トップバー・トグル・ステッパー等の共通部品
+  public/fonts/       Zen Maru Gothic / Noto Sans JP / Archivo（unicode-range分割woff2 / OFL）
 ```
+
+## デザイン
+
+見出し・UIは Zen Maru Gothic、本文は Noto Sans JP、数字とラベルは Archivo。
+白ベースに淡い暖色の面（`--surface-2`）を重ね、枠線はヘアラインのみ。アクセントは
+オレンジ（`--accent: #e9834b`）で、ユーザー吹き出しと主要ボタンにだけ使う。
+アイコンは全て線画のインラインSVG。ナレーションは吹き出しを持たず、ハート付きの独立行にする。
+
+アバター画像はクライアント側で正方形に切り出し320pxへ縮小、WebPのdata URLとして
+`avatar` 列に保存する（DBを1ファイルに保ち、書き出しにも画像が含まれる）。
 
 ## 初期データ
 
