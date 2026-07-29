@@ -1,0 +1,86 @@
+import type { CalendarConfig, Character, ChatState, Location, StateDelta } from '../../../shared/types.js';
+import { drawWeather, toGameTime, toTotalDay } from './calendar.js';
+
+export interface ApplyResult {
+  state: ChatState;
+  dayChanged: boolean;
+  warnings: string[];
+}
+
+/**
+ * ステート差分の適用（§8.1）。
+ * 基準ステートは呼び出し側が「直前メッセージの state_after」を渡すこと。
+ */
+export function applyDelta(
+  cfg: CalendarConfig,
+  base: ChatState,
+  delta: StateDelta,
+  locations: Location[],
+  characters: Character[],
+  rand: () => number = Math.random,
+): ApplyResult {
+  const warnings: string[] = [];
+  const state: ChatState = { ...base, present: [...base.present] };
+
+  // elapsed_minutes < 0 は 0 として扱う。> 1440 はそのまま適用し、UI側でバッジ表示
+  let elapsed = Math.floor(delta.elapsed_minutes);
+  if (!Number.isFinite(elapsed) || elapsed < 0) elapsed = 0;
+  if (elapsed > 1440) warnings.push(`elapsed_minutes が ${elapsed} 分（24時間超）`);
+
+  // 場所: ID一致 → 表示名一致 → location_note へ退避
+  if (delta.location) {
+    const byId = locations.find((l) => l.id === delta.location);
+    const byName = byId ? undefined : locations.find((l) => l.name === delta.location);
+    const loc = byId ?? byName;
+    if (loc) {
+      state.location = loc.id;
+      state.location_note = '';
+    } else if (delta.location !== base.location && delta.location !== base.location_note) {
+      // 未登録の場所 → location は変更せず note に退避
+      state.location_note = delta.location;
+      warnings.push(`未登録の場所「${delta.location}」を location_note に退避`);
+    }
+  }
+
+  // present: (present ∪ add) − remove。未登録IDは aliases で名寄せ、それでも駄目なら無視
+  const resolveCharId = (idOrName: string): string | null => {
+    const byId = characters.find((c) => c.id === idOrName);
+    if (byId) return byId.id;
+    const byName = characters.find((c) => c.name === idOrName || c.aliases.includes(idOrName));
+    return byName ? byName.id : null;
+  };
+  const present = new Set(state.present);
+  for (const raw of delta.present_add) {
+    const id = resolveCharId(raw);
+    if (id) present.add(id);
+    else warnings.push(`present_add の「${raw}」を解決できず無視`);
+  }
+  for (const raw of delta.present_remove) {
+    const id = resolveCharId(raw);
+    if (id) present.delete(id);
+    else warnings.push(`present_remove の「${raw}」を解決できず無視`);
+  }
+  state.present = [...present];
+
+  // 時間適用と日替わり判定 → 天候は日付が変わったときのみ抽選（§8.2）
+  const newTime = base.time + elapsed;
+  const dayChanged = toTotalDay(newTime) !== toTotalDay(base.time);
+  if (dayChanged) {
+    const season = toGameTime(cfg, newTime).season;
+    state.weather = drawWeather(cfg, season, rand);
+  }
+  state.time = newTime;
+
+  return { state, dayChanged, warnings };
+}
+
+/** ステート編集パネルからの手動更新用の正規化 */
+export function normalizeState(input: Partial<ChatState>, base: ChatState): ChatState {
+  return {
+    time: Number.isFinite(input.time) ? Math.max(0, Math.floor(input.time!)) : base.time,
+    location: input.location ?? base.location,
+    location_note: input.location_note ?? base.location_note,
+    weather: input.weather ?? base.weather,
+    present: Array.isArray(input.present) ? input.present : base.present,
+  };
+}
