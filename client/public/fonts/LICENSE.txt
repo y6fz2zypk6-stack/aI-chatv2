@@ -1,4 +1,7 @@
-Zen Maru Gothic
-Copyright 2021 The Zen Project Authors (https://github.com/googlefonts/zen-marugothic)
-Licensed under the SIL Open Font License, Version 1.1
-https://openfontlicense.org
+このディレクトリのフォントは SIL Open Font License 1.1 で配布されています。
+
+- Zen Maru Gothic (c) 2021 The Zen Project Authors — https://github.com/googlefonts/zen-marugothic
+- Noto Sans JP (c) 2014-2021 Adobe — https://github.com/notofonts/noto-cjk
+- Archivo (c) 2019 The Archivo Project Authors — https://github.com/Omnibus-Type/Archivo
+
+ライセンス全文: https://openfontlicense.org
