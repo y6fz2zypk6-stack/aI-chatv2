@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS chats (
   model TEXT NOT NULL DEFAULT '',
   narrator_enabled INTEGER NOT NULL DEFAULT 1,
   state TEXT NOT NULL DEFAULT '{}',
+  -- Chat作成時にシナリオからコピーした初期ステート（§4.6）。以後変更しない。
+  -- 先頭メッセージの再生成の基準、および全メッセージ削除時の復元に使う。
+  initial_state TEXT NOT NULL DEFAULT '{}',
   extracted_up_to TEXT,
   extracted_up_to_seq INTEGER,
   archived INTEGER NOT NULL DEFAULT 0,

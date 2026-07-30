@@ -1,0 +1,559 @@
+// ステート・variant・再生成・分岐のテストスイート
+import { api, check, generate, getChat, hhmm, note, reply, setQueue, suite } from './harness.mjs';
+
+// 3年8月10日 18:00 = 877日 * 1440分 + 18時間
+export const T1800 = 877 * 1440 + 18 * 60;
+
+/** テスト用の世界・キャラを用意する */
+export async function setupWorld(label) {
+  const world = (await api('POST', '/worlds', { name: label })).json;
+  const p = `${label}_`;
+  await api('POST', `/worlds/${world.id}/locations`, { id: `${p}shop`, name: '本屋', indoor: 1, area: 'center' });
+  await api('POST', `/worlds/${world.id}/locations`, { id: `${p}cafe`, name: 'カフェ', indoor: 1, area: 'center' });
+  const ashley = (await api('POST', `/worlds/${world.id}/characters`, { name: 'アシュリー' })).json;
+  const luna = (await api('POST', `/worlds/${world.id}/characters`, { name: 'ルナ' })).json;
+  return { world, ashley, luna, shop: `${p}shop`, cafe: `${p}cafe` };
+}
+
+/** シナリオとチャットを作る */
+export async function newChat(w, opts = {}) {
+  const scenario = (
+    await api('POST', `/worlds/${w.world.id}/scenarios`, {
+      title: 'test',
+      participant_ids: [w.ashley.id, w.luna.id],
+      opening: opts.opening ?? 'ナレーター: 開始。',
+      initial_state: {
+        time: opts.time ?? T1800,
+        location: opts.location ?? w.shop,
+        location_note: '',
+        weather: '晴',
+        present: opts.present ?? [w.ashley.id],
+      },
+    })
+  ).json;
+  const chat = (await api('POST', `/scenarios/${scenario.id}/chats`, {})).json;
+  return { scenario, chat };
+}
+
+// ===========================================================================
+export async function normalFlow(w) {
+  suite('正常系: ステート・候補・再生成・分岐');
+  const { chat } = await newChat(w);
+
+  let d = await getChat(chat.id);
+  check('初期状態が 18:00 / 本屋', hhmm(d.chat.state.time) === '18:00' && d.chat.state.location === w.shop,
+    `${hhmm(d.chat.state.time)} / ${d.chat.state.location}`);
+
+  // 応答A: 20分・カフェへ
+  setQueue([{ text: reply({ char: '「行きましょうか」', elapsed: 20, location: w.cafe }) }]);
+  check('通常送信が成功', !!(await generate(chat.id, { content: 'こんばんは' })).done);
+  d = await getChat(chat.id);
+  check('A: 18:20 / カフェ', hhmm(d.chat.state.time) === '18:20' && d.chat.state.location === w.cafe,
+    `${hhmm(d.chat.state.time)} / ${d.chat.state.location}`);
+
+  // 応答B: 30分・本屋のまま（再生成）
+  setQueue([{ text: reply({ char: '「まだここにいます」', elapsed: 30, location: w.shop }) }]);
+  check('再生成が成功', !!(await generate(chat.id, { regenerate: true })).done);
+  d = await getChat(chat.id);
+  const msg = d.messages[d.messages.length - 1];
+  check('B: 18:30（18:50に累積しない）', hhmm(d.chat.state.time) === '18:30', hhmm(d.chat.state.time));
+  check('B: 本屋のまま', d.chat.state.location === w.shop, d.chat.state.location);
+  check('候補が2件・activeが1', msg.variant_count === 2 && msg.active_variant === 1,
+    `${msg.variant_count}件 / active=${msg.active_variant}`);
+
+  // 候補切替でステートが連動する
+  await api('PUT', `/messages/${msg.id}/variant`, { index: 0 });
+  d = await getChat(chat.id);
+  check('→A: 18:20 / カフェ / 本文もA',
+    hhmm(d.chat.state.time) === '18:20' && d.chat.state.location === w.cafe &&
+      d.messages[d.messages.length - 1].content.includes('行きましょうか'),
+    `${hhmm(d.chat.state.time)} / ${d.chat.state.location}`);
+  await api('PUT', `/messages/${msg.id}/variant`, { index: 1 });
+  d = await getChat(chat.id);
+  check('→B: 18:30 / 本屋 / 本文もB',
+    hhmm(d.chat.state.time) === '18:30' && d.chat.state.location === w.shop &&
+      d.messages[d.messages.length - 1].content.includes('まだここに'),
+    `${hhmm(d.chat.state.time)} / ${d.chat.state.location}`);
+
+  // 何度再生成しても基準は user メッセージの state_after（18:00）
+  const seen = [];
+  for (const mins of [15, 45, 5]) {
+    setQueue([{ text: reply({ char: `「${mins}分」`, elapsed: mins, location: w.shop }) }]);
+    await generate(chat.id, { regenerate: true });
+    seen.push(hhmm((await getChat(chat.id)).chat.state.time));
+  }
+  check('再生成を繰り返しても累積しない', seen.join(',') === '18:15,18:45,18:05', seen.join(','));
+
+  const variants = (await api('GET', `/messages/${msg.id}/variants`)).json;
+  check('候補 index が 0..4 で重複なし',
+    JSON.stringify(variants.map((v) => v.index)) === '[0,1,2,3,4]',
+    JSON.stringify(variants.map((v) => v.index)));
+
+  // 数ターン進めてから、過去の候補を選んで分岐する
+  for (const i of [1, 2, 3]) {
+    setQueue([{ text: reply({ char: `「${i}ターン目」`, elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: `ターン${i}` });
+  }
+  const before = await getChat(chat.id);
+  const targetBefore = before.messages.find((m) => m.id === msg.id);
+  const pick = variants.find((v) => v.content.includes('まだここに'));
+
+  const fork = (await api('POST', `/chats/${chat.id}/fork`, { message_id: msg.id, variant_index: pick.index })).json;
+  check('分岐が作成される', !!fork?.id);
+
+  const after = await getChat(chat.id);
+  check('元Chatのメッセージ数が変わらない', after.messages.length === before.messages.length,
+    `${after.messages.length} vs ${before.messages.length}`);
+  check('元Chatの現在ステートが変わらない',
+    JSON.stringify(after.chat.state) === JSON.stringify(before.chat.state));
+  const targetAfter = after.messages.find((m) => m.id === msg.id);
+  check('元Chatの表示中候補が変わらない',
+    targetAfter.active_variant === targetBefore.active_variant &&
+      targetAfter.content === targetBefore.content);
+
+  const fd = await getChat(fork.id);
+  check('分岐先に対象より後のメッセージが無い', fd.messages.length === targetBefore.seq,
+    `${fd.messages.length}件 / 対象seq=${targetBefore.seq}`);
+  const forkLast = fd.messages[fd.messages.length - 1];
+  check('分岐先の末尾が選んだ候補の本文', forkLast.content === pick.content);
+  check('分岐先のステートが選んだ候補の state_after と一致',
+    JSON.stringify(fd.chat.state) === JSON.stringify(pick.state_after),
+    `${hhmm(fd.chat.state.time)} / ${fd.chat.state.location}`);
+  check('分岐先の末尾メッセージの state_after も一致',
+    JSON.stringify(forkLast.state_after) === JSON.stringify(pick.state_after));
+  check('分岐先に候補もコピーされる', forkLast.variant_count === variants.length,
+    `${forkLast.variant_count} vs ${variants.length}`);
+  check('分岐先の seq が1から連番',
+    JSON.stringify(fd.messages.map((m) => m.seq)) === JSON.stringify(fd.messages.map((_, i) => i + 1)),
+    JSON.stringify(fd.messages.map((m) => m.seq)));
+
+  // 再起動後の比較用
+  return {
+    chatId: chat.id,
+    forkId: fork.id,
+    orig: { state: after.chat.state, count: after.messages.length },
+    fork: { state: fd.chat.state, count: fd.messages.length, lastContent: forkLast.content },
+  };
+}
+
+// ===========================================================================
+export async function restored(snapshot) {
+  suite('再起動後の復元');
+  const orig = await getChat(snapshot.chatId);
+  const fork = await getChat(snapshot.forkId);
+  check('元Chat: ステート一致', JSON.stringify(orig.chat.state) === JSON.stringify(snapshot.orig.state));
+  check('元Chat: メッセージ数一致', orig.messages.length === snapshot.orig.count);
+  check('分岐: ステート一致', JSON.stringify(fork.chat.state) === JSON.stringify(snapshot.fork.state));
+  check('分岐: メッセージ数一致', fork.messages.length === snapshot.fork.count);
+  check('分岐: 末尾本文一致',
+    fork.messages[fork.messages.length - 1].content === snapshot.fork.lastContent);
+  check('分岐: gameTime が state.time と整合',
+    `${String(fork.gameTime.hh).padStart(2, '0')}:${String(fork.gameTime.mm).padStart(2, '0')}` ===
+      hhmm(fork.chat.state.time),
+    JSON.stringify(fork.gameTime));
+}
+
+// ===========================================================================
+export async function regressionInitialState(w) {
+  suite('回帰: Chatの初期ステート（先頭再生成の累積・全削除後の復元）');
+
+  // 先頭メッセージを繰り返し再生成しても累積しない
+  {
+    const { chat } = await newChat(w);
+    const seen = [];
+    for (const i of [1, 2, 3]) {
+      setQueue([{ text: reply({ char: `「${i}回目」`, elapsed: 20, location: w.shop }) }]);
+      const g = await generate(chat.id, { regenerate: true });
+      if (!g.done) {
+        check(`先頭の再生成 ${i}回目`, false, g.error ?? `http=${g.httpStatus}`);
+        break;
+      }
+      seen.push(hhmm((await getChat(chat.id)).chat.state.time));
+    }
+    note(`先頭を elapsed=20 で3回再生成 → ${seen.join(' , ')}`);
+    check('先頭の再生成が累積しない（毎回18:20）', seen.every((t) => t === '18:20'), seen.join(' , '));
+
+    // その後の通常送信にも持ち越されない
+    setQueue([{ text: reply({ char: '「続き」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'つぎ' });
+    check('先頭再生成の後の通常送信が 18:30',
+      hhmm((await getChat(chat.id)).chat.state.time) === '18:30',
+      hhmm((await getChat(chat.id)).chat.state.time));
+  }
+
+  // シナリオを後から編集しても、全削除後は「作成時」の初期ステートに戻る
+  {
+    const { scenario, chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「進みます」', elapsed: 30, location: w.shop }) }]);
+    await generate(chat.id, { content: 't' });
+    await api('PUT', `/scenarios/${scenario.id}`, {
+      initial_state: { time: 877 * 1440 + 9 * 60, location: w.cafe, location_note: '', weather: '雪', present: [] },
+    });
+    let d = await getChat(chat.id);
+    check('シナリオ編集は進行中のChatに影響しない', hhmm(d.chat.state.time) === '18:30', hhmm(d.chat.state.time));
+    for (const m of [...d.messages]) await api('DELETE', `/messages/${m.id}`);
+    d = await getChat(chat.id);
+    check('全削除後は作成時の初期ステートに戻る（編集後のシナリオを拾わない）',
+      hhmm(d.chat.state.time) === '18:00' && d.chat.state.location === w.shop && d.chat.state.weather === '晴',
+      `${hhmm(d.chat.state.time)} / ${d.chat.state.location} / ${d.chat.state.weather}`);
+  }
+
+  // シナリオを削除しても、全削除後は初期ステートに戻る
+  {
+    const { scenario, chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「進みます」', elapsed: 45, location: w.shop }) }]);
+    await generate(chat.id, { content: 't' });
+    await api('DELETE', `/scenarios/${scenario.id}`);
+    let d = await getChat(chat.id);
+    check('シナリオ削除で scenario_id が NULL', d.chat.scenario_id === null, String(d.chat.scenario_id));
+    for (const m of [...d.messages]) await api('DELETE', `/messages/${m.id}`);
+    d = await getChat(chat.id);
+    check('シナリオ削除後も全削除で初期ステートに戻る',
+      hhmm(d.chat.state.time) === '18:00', hhmm(d.chat.state.time));
+  }
+
+  // 初期ステートは書き換えられない
+  {
+    const { chat } = await newChat(w);
+    await api('PUT', `/chats/${chat.id}`, {
+      initial_state: { time: 0, location: '', location_note: '', weather: '', present: [] },
+    });
+    const d = await getChat(chat.id);
+    check('PUT /chats/:id では初期ステートを変更できない',
+      hhmm(d.chat.initial_state.time) === '18:00' && d.chat.initial_state.location === w.shop,
+      JSON.stringify(d.chat.initial_state));
+  }
+
+  // 分岐先も同じ初期ステートを引き継ぐ
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「1」', elapsed: 25, location: w.cafe }) }]);
+    await generate(chat.id, { content: 'A' });
+    const d = await getChat(chat.id);
+    const fork = (await api('POST', `/chats/${chat.id}/fork`, {
+      message_id: d.messages[d.messages.length - 1].id,
+    })).json;
+    const fd = await getChat(fork.id);
+    check('分岐先の初期ステートが元Chatと同じ',
+      JSON.stringify(fd.chat.initial_state) === JSON.stringify(d.chat.initial_state),
+      JSON.stringify(fd.chat.initial_state));
+    // 分岐先で先頭を再生成しても累積しない
+    for (const m of [...fd.messages].slice(1)) await api('DELETE', `/messages/${m.id}`);
+    const seen = [];
+    for (const i of [1, 2]) {
+      setQueue([{ text: reply({ char: `「${i}」`, elapsed: 20, location: w.shop }) }]);
+      await generate(fork.id, { regenerate: true });
+      seen.push(hhmm((await getChat(fork.id)).chat.state.time));
+    }
+    check('分岐先でも先頭の再生成が累積しない', seen.every((t) => t === '18:20'), seen.join(' , '));
+  }
+}
+
+// ===========================================================================
+export async function abnormal(w) {
+  suite('異常系');
+
+  // 生成途中で停止
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「'.padEnd(60, 'あ') + '」', elapsed: 40, location: w.cafe }), gapMs: 30 }]);
+    const p = generate(chat.id, { content: 'テスト' });
+    await new Promise((r) => setTimeout(r, 500));
+    const stopRes = await api('POST', `/chats/${chat.id}/stop`);
+    const g = await p;
+    check('停止: /stop が 200', stopRes.status === 200, String(stopRes.status));
+    check('停止: stopped として保存される', g.done?.generationStatus === 'stopped', g.done?.generationStatus);
+    const d = await getChat(chat.id);
+    check('停止: ゲーム内時間が進まない', hhmm(d.chat.state.time) === '18:00', hhmm(d.chat.state.time));
+    check('停止: 場所も変わらない', d.chat.state.location === w.shop, d.chat.state.location);
+    const last = d.messages[d.messages.length - 1];
+    check('停止: 途中までの本文と state_after が残る',
+      last.content.length > 0 && last.state_after.time === T1800, `${last.content.length}文字`);
+  }
+
+  // STATEフェンスが欠落
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「フェンスなし」', fence: false }) }]);
+    const g = await generate(chat.id, { content: 'テスト' });
+    let d = await getChat(chat.id);
+    check('フェンス欠落: 10分のフォールバック', hhmm(d.chat.state.time) === '18:10', hhmm(d.chat.state.time));
+    check('フェンス欠落: 場所は変わらない', d.chat.state.location === w.shop);
+    check('フェンス欠落: streak が 1', g.done?.fenceMissingStreak === 1, String(g.done?.fenceMissingStreak));
+    for (const i of [2, 3]) {
+      setQueue([{ text: reply({ char: `「${i}」`, fence: false }) }]);
+      const r = await generate(chat.id, { content: `t${i}` });
+      if (i === 3) check('フェンス欠落: 3回連続で streak=3', r.done?.fenceMissingStreak === 3,
+        String(r.done?.fenceMissingStreak));
+    }
+    setQueue([{ text: reply({ char: '「復帰」', elapsed: 5, location: w.shop }) }]);
+    const r = await generate(chat.id, { content: 'ok' });
+    check('フェンス欠落: 復帰で streak が 0', r.done?.fenceMissingStreak === 0, String(r.done?.fenceMissingStreak));
+  }
+
+  // STATEフェンスが途中で切れる
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: `アシュリー: 「途中で切れます」\n\n@@@STATE\nelapsed_minutes: 25\nlocation: ${w.cafe.slice(0, -2)}` }]);
+    const g = await generate(chat.id, { content: 'テスト' });
+    const d = await getChat(chat.id);
+    check('フェンス切断: elapsed は読める', hhmm(d.chat.state.time) === '18:25', hhmm(d.chat.state.time));
+    check('フェンス切断: 壊れた location は location_note へ退避',
+      d.chat.state.location === w.shop && d.chat.state.location_note !== '',
+      `${d.chat.state.location} / note=${d.chat.state.location_note}`);
+    check('フェンス切断: 本文に @@@ が混入しない',
+      !d.messages[d.messages.length - 1].content.includes('@@@'));
+    check('フェンス切断: 画面に流す差分にも @@@ が出ない', !g.deltas.includes('@@@'));
+  }
+
+  // 不正な location ID
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「路地裏へ」', elapsed: 10, location: '存在しない場所' }) }]);
+    await generate(chat.id, { content: 't' });
+    let d = await getChat(chat.id);
+    check('不正な場所: location は変わらない', d.chat.state.location === w.shop, d.chat.state.location);
+    check('不正な場所: location_note へ退避', d.chat.state.location_note === '存在しない場所',
+      d.chat.state.location_note);
+    setQueue([{ text: reply({ char: '「戻ります」', elapsed: 10, location: w.cafe }) }]);
+    await generate(chat.id, { content: 't2' });
+    d = await getChat(chat.id);
+    check('不正な場所: 登録場所に戻ると note がクリアされる',
+      d.chat.state.location === w.cafe && d.chat.state.location_note === '',
+      `${d.chat.state.location} / note="${d.chat.state.location_note}"`);
+    setQueue([{ text: reply({ char: '「本屋へ」', elapsed: 5, location: '本屋' }) }]);
+    await generate(chat.id, { content: 't3' });
+    check('不正な場所: 表示名でも場所IDに解決する',
+      (await getChat(chat.id)).chat.state.location === w.shop);
+  }
+
+  // present_add と present_remove に同じ人物（仕様§8.1の式どおり remove が勝つ）
+  {
+    const { chat } = await newChat(w, { present: [w.ashley.id, w.luna.id] });
+    setQueue([{ text: reply({ char: '「両方指定」', elapsed: 10, add: w.luna.id, remove: w.luna.id }) }]);
+    await generate(chat.id, { content: 't' });
+    const d = await getChat(chat.id);
+    note(`present = ${JSON.stringify(d.chat.state.present)}`);
+    check('add/remove 同一人物: present が重複しない',
+      new Set(d.chat.state.present).size === d.chat.state.present.length,
+      JSON.stringify(d.chat.state.present));
+    check('add/remove 同一人物: remove が優先される（不在になる）',
+      !d.chat.state.present.includes(w.luna.id), JSON.stringify(d.chat.state.present));
+  }
+
+  // 生成の連打
+  {
+    const { chat } = await newChat(w);
+    setQueue([
+      { text: reply({ char: '「1本目」', elapsed: 10, location: w.shop }), gapMs: 25 },
+      { text: reply({ char: '「2本目」', elapsed: 99, location: w.cafe }) },
+    ]);
+    const rs = await Promise.all([
+      generate(chat.id, { content: '連打1' }),
+      new Promise((r) => setTimeout(r, 120)).then(() => generate(chat.id, { content: '連打2' })),
+      new Promise((r) => setTimeout(r, 160)).then(() => generate(chat.id, { content: '連打3' })),
+    ]);
+    check('連打: 後続が 409 で弾かれる', rs.filter((r) => r.httpStatus === 409).length === 2,
+      JSON.stringify(rs.map((r) => r.httpStatus)));
+    const d = await getChat(chat.id);
+    check('連打: 409 の分の user メッセージが残らない',
+      d.messages.filter((m) => m.role === 'user').length === 1,
+      JSON.stringify(d.messages.filter((m) => m.role === 'user').map((m) => m.content)));
+    check('連打: 時刻が二重適用されない', hhmm(d.chat.state.time) === '18:10', hhmm(d.chat.state.time));
+  }
+
+  // 分岐中に別端末からメッセージが追加される
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「1」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'A' });
+    const target = (await getChat(chat.id)).messages.slice(-1)[0];
+    setQueue([{ text: reply({ char: '「2」', elapsed: 10, location: w.cafe }), gapMs: 10 }]);
+    const [forkRes, genRes] = await Promise.all([
+      api('POST', `/chats/${chat.id}/fork`, { message_id: target.id }),
+      generate(chat.id, { content: 'B（別端末）' }),
+    ]);
+    check('分岐中の追加: 分岐が成功', forkRes.status === 201, String(forkRes.status));
+    check('分岐中の追加: 別端末の生成も成功', !!genRes.done, genRes.error ?? `http=${genRes.httpStatus}`);
+    const fd = await getChat(forkRes.json.id);
+    check('分岐中の追加: 分岐先に後発メッセージが混入しない',
+      fd.messages.length === target.seq && !fd.messages.some((m) => m.content.includes('別端末')),
+      `${fd.messages.length}件 / 対象seq=${target.seq}`);
+    check('分岐中の追加: 分岐先ステートが対象の state_after と一致',
+      JSON.stringify(fd.chat.state) === JSON.stringify(target.state_after));
+  }
+
+  // 候補 index の重複
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「v0」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't' });
+    const mid = (await getChat(chat.id)).messages.slice(-1)[0].id;
+    setQueue([1, 2, 3].map((n) => ({ text: reply({ char: `「v${n}」`, elapsed: 10 + n, location: w.shop }) })));
+    await Promise.all([
+      generate(chat.id, { regenerate: true }),
+      generate(chat.id, { regenerate: true }),
+      generate(chat.id, { regenerate: true }),
+    ]);
+    for (const n of [4, 5]) {
+      setQueue([{ text: reply({ char: `「v${n}」`, elapsed: 10 + n, location: w.shop }) }]);
+      await generate(chat.id, { regenerate: true });
+    }
+    const idx = (await api('GET', `/messages/${mid}/variants`)).json.map((v) => v.index);
+    check('候補index: 重複しない', new Set(idx).size === idx.length, JSON.stringify(idx));
+    check('候補index: 0から連番', JSON.stringify(idx) === JSON.stringify(idx.map((_, i) => i)), JSON.stringify(idx));
+    const m = (await getChat(chat.id)).messages.find((x) => x.id === mid);
+    check('候補index: active_variant が実在する', idx.includes(m.active_variant),
+      `active=${m.active_variant} / ${JSON.stringify(idx)}`);
+  }
+
+  // 過去メッセージの削除とステート復元
+  {
+    const { chat } = await newChat(w);
+    for (const [i, mins] of [20, 30, 40].entries()) {
+      setQueue([{ text: reply({ char: `「${i}」`, elapsed: mins, location: i === 1 ? w.cafe : w.shop }) }]);
+      await generate(chat.id, { content: `t${i}` });
+    }
+    let d = await getChat(chat.id);
+    const prevState = d.messages[d.messages.length - 2].state_after;
+    await api('DELETE', `/messages/${d.messages[d.messages.length - 1].id}`);
+    d = await getChat(chat.id);
+    check('削除: 末尾削除で直前の state_after に戻る',
+      JSON.stringify(d.chat.state) === JSON.stringify(prevState), hhmm(d.chat.state.time));
+
+    const expected = d.messages[d.messages.length - 1].state_after;
+    await api('DELETE', `/messages/${d.messages[2].id}`);
+    d = await getChat(chat.id);
+    check('削除: 中間削除後は末尾の state_after が現在ステート',
+      JSON.stringify(d.chat.state) === JSON.stringify(expected), hhmm(d.chat.state.time));
+    note(`seq に欠番が出る（順序のみに使うため無害）: ${JSON.stringify(d.messages.map((m) => m.seq))}`);
+
+    for (const m of [...d.messages]) await api('DELETE', `/messages/${m.id}`);
+    d = await getChat(chat.id);
+    check('削除: 全削除で初期ステートに戻る',
+      hhmm(d.chat.state.time) === '18:00' && d.messages.length === 0,
+      `${hhmm(d.chat.state.time)} / ${d.messages.length}件`);
+    setQueue([{ text: reply({ char: '「再開」', elapsed: 10, location: w.shop }) }]);
+    check('削除: 全削除後も生成できる', !!(await generate(chat.id, { content: '再開' })).done);
+    check('削除: seq が 1 から振り直される',
+      JSON.stringify((await getChat(chat.id)).messages.map((m) => m.seq)) === '[1,2]');
+  }
+
+  // 過去メッセージへの確定操作は拒否される
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「1」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'A' });
+    const past = (await getChat(chat.id)).messages.slice(-1)[0];
+    setQueue([{ text: reply({ char: '「2」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'B' });
+    check('拒否: 過去メッセージの候補切替は 409',
+      (await api('PUT', `/messages/${past.id}/variant`, { index: 0 })).status === 409);
+    check('拒否: 末尾が assistant のときの retry は 400',
+      (await generate(chat.id, { retry: true })).httpStatus === 400);
+    check('拒否: 複数モードの同時指定は 400',
+      (await api('POST', `/chats/${chat.id}/messages`, { content: 'x', regenerate: true })).status === 400);
+  }
+}
+
+// ===========================================================================
+export async function edges(w) {
+  suite('境界');
+
+  // メッセージ0件のチャット
+  {
+    const { chat } = await newChat(w, { opening: '' });
+    check('冒頭なし: メッセージ0件', (await getChat(chat.id)).messages.length === 0);
+    setQueue([{ text: reply({ char: '「はじめまして」', elapsed: 20, location: w.shop }) }]);
+    check('冒頭なし: 生成できる', !!(await generate(chat.id, { content: 'こんばんは' })).done);
+    const d = await getChat(chat.id);
+    check('冒頭なし: 18:20 / seq が 1,2',
+      hhmm(d.chat.state.time) === '18:20' && JSON.stringify(d.messages.map((m) => m.seq)) === '[1,2]',
+      `${hhmm(d.chat.state.time)} / ${JSON.stringify(d.messages.map((m) => m.seq))}`);
+  }
+
+  // elapsed_minutes の異常値
+  {
+    const { chat: c1 } = await newChat(w);
+    setQueue([{ text: reply({ char: '「マイナス」', elapsed: -50, location: w.shop }) }]);
+    await generate(c1.id, { content: 't' });
+    check('elapsed: 負値は0として扱う', hhmm((await getChat(c1.id)).chat.state.time) === '18:00');
+
+    const { chat: c2 } = await newChat(w);
+    setQueue([{ text: reply({ char: '「24時間超」', elapsed: 2000, location: w.shop }) }]);
+    const g = await generate(c2.id, { content: 't' });
+    const d = await getChat(c2.id);
+    check('elapsed: 24時間超はそのまま適用', d.messages.slice(-1)[0].state_after.time - T1800 === 2000);
+    check('elapsed: 24時間超で警告が返る',
+      (g.done?.warnings ?? []).some((x) => x.includes('elapsed_minutes')), JSON.stringify(g.done?.warnings));
+
+    const { chat: c3 } = await newChat(w);
+    setQueue([{ text: 'アシュリー: 「数値でない」\n\n@@@STATE\nelapsed_minutes: たくさん\n@@@END' }]);
+    await generate(c3.id, { content: 't' });
+    check('elapsed: 数値でなければ既定10分', hhmm((await getChat(c3.id)).chat.state.time) === '18:10');
+  }
+
+  // 分岐の異常入力
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「1」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'A' });
+    const d = await getChat(chat.id);
+    const mid = d.messages.slice(-1)[0].id;
+    check('分岐: 存在しない variant_index は 404',
+      (await api('POST', `/chats/${chat.id}/fork`, { message_id: mid, variant_index: 99 })).status === 404);
+    check('分岐: 存在しない message_id は 404',
+      (await api('POST', `/chats/${chat.id}/fork`, { message_id: 'NOPE' })).status === 404);
+    check('分岐: message_id 未指定は 404',
+      (await api('POST', `/chats/${chat.id}/fork`, {})).status === 404);
+    const other = await newChat(w);
+    check('分岐: 別チャットの message_id は 404',
+      (await api('POST', `/chats/${chat.id}/fork`,
+        { message_id: (await getChat(other.chat.id)).messages[0].id })).status === 404);
+
+    // user メッセージからの分岐 → 末尾が user なので retry できる
+    const userMsg = d.messages.find((m) => m.role === 'user');
+    const fork = await api('POST', `/chats/${chat.id}/fork`, { message_id: userMsg.id });
+    check('分岐: user メッセージからも分岐できる', fork.status === 201, String(fork.status));
+    const fd = await getChat(fork.json.id);
+    check('分岐: 分岐先ステートがその user の state_after',
+      JSON.stringify(fd.chat.state) === JSON.stringify(userMsg.state_after));
+    setQueue([{ text: reply({ char: '「分岐後の応答」', elapsed: 15, location: w.shop }) }]);
+    check('分岐: 分岐先で retry できる', !!(await generate(fork.json.id, { retry: true })).done);
+    check('分岐: retry 後は 18:15（分岐時点が基準）',
+      hhmm((await getChat(fork.json.id)).chat.state.time) === '18:15');
+  }
+
+  // 手動編集と候補切替の相互作用
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「v0」', elapsed: 20, location: w.shop }) }]);
+    await generate(chat.id, { content: 'A' });
+    setQueue([{ text: reply({ char: '「v1」', elapsed: 30, location: w.cafe }) }]);
+    await generate(chat.id, { regenerate: true });
+    const mid = (await getChat(chat.id)).messages.slice(-1)[0].id;
+    await api('PUT', `/chats/${chat.id}/state`, { weather: '雨' });
+    let d = await getChat(chat.id);
+    check('手動編集: 反映され、末尾の state_after にも入る',
+      d.chat.state.weather === '雨' && d.messages.slice(-1)[0].state_after.weather === '雨');
+    await api('PUT', `/messages/${mid}/variant`, { index: 0 });
+    d = await getChat(chat.id);
+    check('手動編集: 候補切替でその候補の state_after になる（仕様どおり上書き）',
+      hhmm(d.chat.state.time) === '18:20' && d.chat.state.location === w.shop,
+      `${hhmm(d.chat.state.time)} / ${d.chat.state.location} / ${d.chat.state.weather}`);
+  }
+
+  // 日付をまたぐ
+  {
+    const { chat } = await newChat(w, { time: 877 * 1440 + 23 * 60 + 30, opening: 'ナレーター: 深夜。' });
+    setQueue([{ text: reply({ char: '「日付をまたぎます」', elapsed: 60, location: w.shop }) }]);
+    await generate(chat.id, { content: 't' });
+    const d = await getChat(chat.id);
+    check('日跨ぎ: 00:30 になり日が進む', hhmm(d.chat.state.time) === '00:30' && d.gameTime.day === 11,
+      `${hhmm(d.chat.state.time)} / day=${d.gameTime.day}`);
+    check('日跨ぎ: 天候が設定される', !!d.chat.state.weather, d.chat.state.weather);
+    const pv = (await api('GET', `/chats/${chat.id}/prompt-preview`)).json;
+    check('日跨ぎ: 次ターンの状況ブロックに日付変更の一文が入る',
+      pv.situationBlock.includes('日付が変わり'));
+  }
+}

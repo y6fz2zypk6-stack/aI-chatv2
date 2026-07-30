@@ -63,6 +63,11 @@ scenariosRouter.post('/scenarios/:id/chats', (req, res) => {
     null;
   const persona = personaId ? getPersona(personaId) : undefined;
 
+  // §4.6: 初期ステートはここでコピーした値が正。以後シナリオを編集しても影響しない
+  const initialState = {
+    ...scenario.initial_state,
+    present: [...scenario.initial_state.present],
+  };
   const chat = createChat({
     world_id: scenario.world_id,
     scenario_id: scenario.id,
@@ -70,7 +75,8 @@ scenariosRouter.post('/scenarios/:id/chats', (req, res) => {
     participant_ids: [...scenario.participant_ids],
     model: (req.body?.model as string | undefined) || '',
     narrator_enabled: scenario.narrator_enabled,
-    state: { ...scenario.initial_state, present: [...scenario.initial_state.present] },
+    state: initialState,
+    initial_state: initialState,
   });
 
   // 冒頭の応答文（話者ラベル付きの生テキスト）を最初のassistantとして保存

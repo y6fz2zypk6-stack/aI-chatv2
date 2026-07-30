@@ -39,6 +39,16 @@ npm run dev
 # client: http://localhost:5173 (Vite dev server、/api はプロキシ)
 ```
 
+### テスト
+
+```bash
+npm test
+```
+
+ステート・候補（variant）・再生成・分岐を重点的に検証します。OpenRouter互換のモックを
+立てて応答内容（経過分・場所・STATEフェンスの欠落や切断）を決定論的に与え、実APIを
+叩いて確認します。実行には `OPENROUTER_API_KEY` は不要で、既存のDBには触りません。
+
 ### 本番（VPS）
 
 ```bash
@@ -111,6 +121,9 @@ V2カード（`chara_card_v2`）/ V2 `character_book` JSON を取り込んでく
 - 世界取り込み時、場所IDが既存と衝突する場合は `_2` 等の接尾辞を付けて自動リマップ
 - 会話の順序は `messages.seq`（チャット内連番）が正で、ULIDの時系列性には依存しない。
   `UNIQUE(chat_id, seq)` と `UNIQUE(message_id, index)` をDB側で保証している
+- `chats.initial_state` にChat作成時の初期ステートを保持する。先頭メッセージの再生成の
+  基準と、全メッセージ削除時の復元に使う（シナリオを参照しないので、シナリオを編集・
+  削除しても既存Chatの挙動が変わらない）
 - 要約・知識抽出の境界は `up_to_seq` / `extracted_up_to_seq` で持つ（境界のメッセージを
   削除しても範囲が壊れない）
 - pendingイベントの発火記録は `generation_status = complete` のときのみ。途中で停止した

@@ -69,6 +69,28 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       }
     },
   },
+  {
+    // Chat作成時の初期ステートを保持する（§4.6）。
+    // これが無いと、直前メッセージが存在しない再生成（＝先頭メッセージ）の基準が
+    // chats.state になり、再生成のたびにゲーム内時間が累積してしまう（§8.1違反）。
+    version: 2,
+    up: (d) => {
+      if (hasColumn(d, 'chats', 'initial_state')) return;
+      d.exec("ALTER TABLE chats ADD COLUMN initial_state TEXT NOT NULL DEFAULT '{}'");
+      // 既存Chatは最善の推定で埋める:
+      //   ① 先頭メッセージの index 0 の候補（先頭を再生成しても元の値が残っている）
+      //   ② 先頭メッセージの state_after
+      //   ③ 現在のステート
+      d.exec(`UPDATE chats SET initial_state = COALESCE(
+                (SELECT v.state_after FROM messages m
+                   JOIN message_variants v ON v.message_id = m.id AND v."index" = 0
+                  WHERE m.chat_id = chats.id
+                  ORDER BY m.seq ASC LIMIT 1),
+                (SELECT m.state_after FROM messages m
+                  WHERE m.chat_id = chats.id ORDER BY m.seq ASC LIMIT 1),
+                chats.state)`);
+    },
+  },
 ];
 
 const applied = new Set(

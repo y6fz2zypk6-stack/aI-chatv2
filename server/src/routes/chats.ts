@@ -120,6 +120,8 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
     model: chat.model,
     narrator_enabled: chat.narrator_enabled,
     state: forkState,
+    // 分岐は先頭からコピーするので、初期ステートは元Chatと同じものを引き継ぐ
+    initial_state: chat.initial_state,
   });
 
   // メッセージと候補を昇順にコピー（seq は新チャット内で1から振り直される）

@@ -115,6 +115,8 @@ export interface Chat {
   model: string;
   narrator_enabled: number;
   state: ChatState;
+  /** Chat作成時にシナリオからコピーした初期ステート。以後変更しない（§4.6） */
+  initial_state: ChatState;
   extracted_up_to: string | null;
   /** 知識抽出済み範囲の境界。null なら未抽出 */
   extracted_up_to_seq: number | null;

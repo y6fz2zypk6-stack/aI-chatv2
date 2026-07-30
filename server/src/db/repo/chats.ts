@@ -3,9 +3,10 @@ import { ulid } from '../../util/ulid.js';
 import type { Chat, ChatState } from '../../../../shared/types.js';
 import { EMPTY_STATE } from './scenarios.js';
 
-interface Row extends Omit<Chat, 'participant_ids' | 'state'> {
+interface Row extends Omit<Chat, 'participant_ids' | 'state' | 'initial_state'> {
   participant_ids: string;
   state: string;
+  initial_state: string;
 }
 
 function toApi(row: Row): Chat {
@@ -13,6 +14,7 @@ function toApi(row: Row): Chat {
     ...row,
     participant_ids: fromJson<string[]>(row.participant_ids, []),
     state: { ...EMPTY_STATE, ...fromJson<Partial<ChatState>>(row.state, {}) },
+    initial_state: { ...EMPTY_STATE, ...fromJson<Partial<ChatState>>(row.initial_state, {}) },
   };
 }
 
@@ -47,6 +49,8 @@ export function createChat(input: {
   model?: string;
   narrator_enabled: number;
   state: ChatState;
+  /** 省略時は state をそのまま初期ステートとする */
+  initial_state?: ChatState;
 }): Chat {
   const t = now();
   const c: Chat = {
@@ -59,6 +63,7 @@ export function createChat(input: {
     model: input.model || '',
     narrator_enabled: input.narrator_enabled,
     state: input.state,
+    initial_state: input.initial_state ?? input.state,
     extracted_up_to: null,
     extracted_up_to_seq: null,
     archived: 0,
@@ -66,12 +71,12 @@ export function createChat(input: {
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, state, extracted_up_to, extracted_up_to_seq, archived, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, state, initial_state, extracted_up_to, extracted_up_to_seq, archived, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     c.id, c.world_id, c.scenario_id, c.title, c.persona_id, toJson(c.participant_ids),
-    c.model, c.narrator_enabled, toJson(c.state), c.extracted_up_to, c.extracted_up_to_seq,
-    c.archived, c.created_at, c.updated_at,
+    c.model, c.narrator_enabled, toJson(c.state), toJson(c.initial_state),
+    c.extracted_up_to, c.extracted_up_to_seq, c.archived, c.created_at, c.updated_at,
   );
   return c;
 }
@@ -84,6 +89,8 @@ export function updateChat(id: string, patch: Partial<Chat>): Chat | undefined {
     ...patch,
     id,
     world_id: cur.world_id,
+    // 初期ステートは作成時に確定させ、以後は書き換えない
+    initial_state: cur.initial_state,
     state: patch.state ? { ...cur.state, ...patch.state } : cur.state,
     updated_at: now(),
   };

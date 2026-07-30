@@ -221,7 +221,9 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     }
     target = last;
     const prev = previousMessage(chatId, last.seq);
-    baseState = prev?.state_after ?? chat.state;
+    // 直前が無い（＝先頭メッセージの再生成）場合はChatの初期ステートを基準にする。
+    // chats.state を使うと再生成のたびに経過時間が積み重なる（§8.1）。
+    baseState = prev?.state_after ?? chat.initial_state;
   } else if (mode === 'retry') {
     // retry: 末尾userへの応答再試行。userは追加保存しない（§5.6）
     if (!last || last.role !== 'user') {
@@ -530,12 +532,9 @@ messagesRouter.delete('/messages/:id', (req, res) => {
   const chat = getChat(msg.chat_id);
   if (chat) {
     const last = lastMessage(chat.id);
-    if (last) {
-      setChatState(chat.id, last.state_after);
-    } else if (chat.scenario_id) {
-      const scenario = getScenario(chat.scenario_id);
-      if (scenario) setChatState(chat.id, scenario.initial_state);
-    }
+    // 全て消えた場合はChat作成時の初期ステートへ戻す。
+    // シナリオを参照しないのは、編集・削除された場合に値が変わってしまうため（§4.6）
+    setChatState(chat.id, last ? last.state_after : chat.initial_state);
   }
   res.json({ ok: true });
 });
