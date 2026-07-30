@@ -2,7 +2,7 @@ import type { Message, Settings } from '../../../shared/types.js';
 import { getCalendar } from '../db/repo/calendars.js';
 import { getChat } from '../db/repo/chats.js';
 import { insertSummary, latestSummary } from '../db/repo/summaries.js';
-import { unsummarizedMessages } from '../db/repo/messages.js';
+import { messagesAfterSeq } from '../db/repo/messages.js';
 import { toGameTime } from './calendar.js';
 import { completeText } from '../llm/openrouter.js';
 
@@ -25,7 +25,7 @@ export async function runSummarize(chatId: string, settings: Settings): Promise<
   const chat = getChat(chatId);
   if (!chat) return null;
   const prev = latestSummary(chatId);
-  const unsummarized = unsummarizedMessages(chatId, prev?.up_to_message_id ?? null);
+  const unsummarized = messagesAfterSeq(chatId, prev?.up_to_seq ?? 0);
   if (unsummarized.length === 0) return prev?.content ?? null;
 
   const retain = retainWindow(unsummarized.length);
@@ -61,8 +61,8 @@ ${lines}
   ).trim();
   if (!content) return prev?.content ?? null;
 
-  const upTo = targets[targets.length - 1].id;
-  insertSummary(chatId, upTo, content);
+  const upTo = targets[targets.length - 1];
+  insertSummary(chatId, upTo.id, upTo.seq, content);
   return content;
 }
 
@@ -70,7 +70,7 @@ ${lines}
 export function maybeSummarize(chatId: string, settings: Settings): { needed: boolean } {
   if (!settings.auto_summarize) return { needed: false };
   const prev = latestSummary(chatId);
-  const count = unsummarizedMessages(chatId, prev?.up_to_message_id ?? null).length;
+  const count = messagesAfterSeq(chatId, prev?.up_to_seq ?? 0).length;
   const needed = count >= settings.summary_interval;
   if (needed) {
     runSummarize(chatId, settings).catch((err) =>

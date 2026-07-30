@@ -94,7 +94,6 @@ scenariosRouter.post('/scenarios/:id/chats', (req, res) => {
     });
     insertVariant({
       message_id: msg.id,
-      index: 0,
       content: msg.content,
       utterances: parsed.utterances,
       state_delta: '(opening)',

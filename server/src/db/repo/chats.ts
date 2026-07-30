@@ -60,17 +60,18 @@ export function createChat(input: {
     narrator_enabled: input.narrator_enabled,
     state: input.state,
     extracted_up_to: null,
+    extracted_up_to_seq: null,
     archived: 0,
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, state, extracted_up_to, archived, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, state, extracted_up_to, extracted_up_to_seq, archived, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     c.id, c.world_id, c.scenario_id, c.title, c.persona_id, toJson(c.participant_ids),
-    c.model, c.narrator_enabled, toJson(c.state), c.extracted_up_to, c.archived,
-    c.created_at, c.updated_at,
+    c.model, c.narrator_enabled, toJson(c.state), c.extracted_up_to, c.extracted_up_to_seq,
+    c.archived, c.created_at, c.updated_at,
   );
   return c;
 }
@@ -87,11 +88,11 @@ export function updateChat(id: string, patch: Partial<Chat>): Chat | undefined {
     updated_at: now(),
   };
   db.prepare(
-    `UPDATE chats SET scenario_id=?, title=?, persona_id=?, participant_ids=?, model=?, narrator_enabled=?, state=?, extracted_up_to=?, archived=?, updated_at=? WHERE id=?`,
+    `UPDATE chats SET scenario_id=?, title=?, persona_id=?, participant_ids=?, model=?, narrator_enabled=?, state=?, extracted_up_to=?, extracted_up_to_seq=?, archived=?, updated_at=? WHERE id=?`,
   ).run(
     next.scenario_id, next.title, next.persona_id, toJson(next.participant_ids), next.model,
-    next.narrator_enabled, toJson(next.state), next.extracted_up_to, next.archived,
-    next.updated_at, id,
+    next.narrator_enabled, toJson(next.state), next.extracted_up_to, next.extracted_up_to_seq,
+    next.archived, next.updated_at, id,
   );
   return next;
 }

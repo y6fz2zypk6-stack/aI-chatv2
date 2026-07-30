@@ -62,14 +62,18 @@ CREATE TABLE IF NOT EXISTS chats (
   narrator_enabled INTEGER NOT NULL DEFAULT 1,
   state TEXT NOT NULL DEFAULT '{}',
   extracted_up_to TEXT,
+  extracted_up_to_seq INTEGER,
   archived INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 
+-- seq はチャット内の連番。会話の順序（履歴窓・未要約範囲・fork・前後取得）は
+-- すべて seq を基準にする。ULIDの時系列性には依存しない。
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL DEFAULT '',
   utterances TEXT NOT NULL DEFAULT '[]',
@@ -78,7 +82,8 @@ CREATE TABLE IF NOT EXISTS messages (
   generation_status TEXT CHECK (generation_status IN ('complete', 'stopped', 'failed')),
   created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
+-- messages(chat_id, seq) / message_variants(message_id, index) の一意インデックスは
+-- 既存DBへの列追加のあとに張る必要があるため、migrate 側で作成する。
 
 CREATE TABLE IF NOT EXISTS message_variants (
   id TEXT PRIMARY KEY,
@@ -90,7 +95,6 @@ CREATE TABLE IF NOT EXISTS message_variants (
   state_after TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_variants_message ON message_variants(message_id, "index");
 
 CREATE TABLE IF NOT EXISTS lorebook_entries (
   id TEXT PRIMARY KEY,
@@ -149,10 +153,13 @@ CREATE TABLE IF NOT EXISTS event_fires (
   game_time INTEGER NOT NULL
 );
 
+-- up_to_seq が範囲判定の正。up_to_message_id は参照・表示用に残す
+-- （境界のメッセージが削除されても範囲が壊れないようにするため）
 CREATE TABLE IF NOT EXISTS summaries (
   id TEXT PRIMARY KEY,
   chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   up_to_message_id TEXT NOT NULL,
+  up_to_seq INTEGER NOT NULL DEFAULT 0,
   content TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );

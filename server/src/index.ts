@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import './db/index.js';
 import { seedIfEmpty } from './db/seed.js';
 
-import { authRouter, requireAuth } from './routes/auth.js';
+import { authRouter, cookieSecure, requireAuth } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
 import { chatsRouter } from './routes/chats.js';
 import { eventsRouter } from './routes/events.js';
@@ -28,6 +28,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 seedIfEmpty();
 
 const app = express();
+
+// リバースプロキシ配下では X-Forwarded-* を信頼する必要がある
+// （req.ip がログイン制限に、req.protocol が https 判定に効く）。
+// TRUST_PROXY に段数（例 1）または 'true' を設定する。既定は無効。
+const trustProxy = process.env.TRUST_PROXY;
+if (trustProxy) {
+  const n = Number(trustProxy);
+  app.set('trust proxy', Number.isFinite(n) && trustProxy.trim() !== '' ? n : trustProxy);
+}
+
 app.use(compression());
 app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser());
@@ -86,5 +96,14 @@ app.listen(port, () => {
   }
   if (!process.env.APP_PASSWORD) {
     console.warn('[server] 警告: APP_PASSWORD が未設定のため認証が無効です（公開VPSでは必須）');
+  } else if (!cookieSecure()) {
+    console.warn(
+      '[server] 警告: 認証Cookieに secure が付いていません。HTTPS運用時は APP_URL を https:// にするか COOKIE_SECURE=1 を設定してください',
+    );
+  }
+  if (cookieSecure() && !trustProxy) {
+    console.warn(
+      '[server] 注意: リバースプロキシ経由の場合は TRUST_PROXY=1 を設定してください（未設定だとIP判定が正しく働きません）',
+    );
   }
 });

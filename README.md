@@ -47,8 +47,12 @@ npm start              # Expressが client/dist を静的配信
 ```
 
 `.env` の `APP_PASSWORD` を必ず設定してください（未設定だと認証が無効になります）。
+HTTPSで公開する場合は `COOKIE_SECURE=1`、リバースプロキシ配下なら併せて `TRUST_PROXY=1` を
+設定してください（未設定だと起動時に警告が出ます）。ログインは同一IPから5回失敗すると
+15分ロックされます。
+
 DBは `DB_PATH`（既定 `./data/app.sqlite`）の1ファイルです。バックアップはこのファイルの
-コピーで完了します。
+コピーで完了します。スキーマは起動時に自動マイグレーションされます。
 
 ### 環境変数
 
@@ -57,6 +61,8 @@ DBは `DB_PATH`（既定 `./data/app.sqlite`）の1ファイルです。バッ�
 | `OPENROUTER_API_KEY` | 必須。サーバ側のみが保持しブラウザには渡さない |
 | `APP_PASSWORD` | 公開VPSでは必須。単一パスワード + httpOnly Cookieセッション |
 | `SESSION_SECRET` | ランダムな長い文字列 |
+| `COOKIE_SECURE` | 認証Cookieに `Secure` を付ける。未設定なら `APP_URL` が https:// のときだけ有効 |
+| `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
 | `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5` / `anthropic/claude-sonnet-5` |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 任意 |
 
@@ -103,3 +109,9 @@ V2カード（`chara_card_v2`）/ V2 `character_book` JSON を取り込んでく
 - 過去メッセージの候補閲覧（めくり）は未対応。過去分の確定操作は「ここから分岐」に集約
 - イベント発火履歴はチャット単位で記録。regenerate では既発火イベントは再注入されない
 - 世界取り込み時、場所IDが既存と衝突する場合は `_2` 等の接尾辞を付けて自動リマップ
+- 会話の順序は `messages.seq`（チャット内連番）が正で、ULIDの時系列性には依存しない。
+  `UNIQUE(chat_id, seq)` と `UNIQUE(message_id, index)` をDB側で保証している
+- 要約・知識抽出の境界は `up_to_seq` / `extracted_up_to_seq` で持つ（境界のメッセージを
+  削除しても範囲が壊れない）
+- pendingイベントの発火記録は `generation_status = complete` のときのみ。途中で停止した
+  生成では記録せず、次のターンで改めて発火判定する

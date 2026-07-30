@@ -116,6 +116,8 @@ export interface Chat {
   narrator_enabled: number;
   state: ChatState;
   extracted_up_to: string | null;
+  /** 知識抽出済み範囲の境界。null なら未抽出 */
+  extracted_up_to_seq: number | null;
   archived: number;
   created_at: number;
   updated_at: number;
@@ -126,6 +128,8 @@ export type GenerationStatus = 'complete' | 'stopped' | 'failed';
 export interface Message {
   id: string;
   chat_id: string;
+  /** チャット内の連番。会話の順序はこれが正（idの時系列性には依存しない） */
+  seq: number;
   role: 'user' | 'assistant';
   content: string;
   utterances: Utterance[];
@@ -204,6 +208,8 @@ export interface Summary {
   id: string;
   chat_id: string;
   up_to_message_id: string;
+  /** 要約済み範囲の境界（この seq 以下が要約済み） */
+  up_to_seq: number;
   content: string;
   created_at: number;
 }

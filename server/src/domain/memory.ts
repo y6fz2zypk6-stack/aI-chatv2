@@ -2,7 +2,7 @@ import type { Settings } from '../../../shared/types.js';
 import { getChat, updateChat } from '../db/repo/chats.js';
 import { getCharacters } from '../db/repo/characters.js';
 import { createMemory, listMemories } from '../db/repo/memories.js';
-import { unsummarizedMessages } from '../db/repo/messages.js';
+import { messagesAfterSeq } from '../db/repo/messages.js';
 import { completeText } from '../llm/openrouter.js';
 
 /**
@@ -12,7 +12,7 @@ import { completeText } from '../llm/openrouter.js';
 export async function runExtract(chatId: string, settings: Settings): Promise<number> {
   const chat = getChat(chatId);
   if (!chat) return 0;
-  const targets = unsummarizedMessages(chatId, chat.extracted_up_to);
+  const targets = messagesAfterSeq(chatId, chat.extracted_up_to_seq ?? 0);
   if (targets.length === 0) return 0;
 
   const participants = getCharacters(chat.participant_ids).filter((c) => !c.is_npc_pool);
@@ -57,6 +57,6 @@ ${convo}
   }
 
   const last = targets[targets.length - 1];
-  updateChat(chatId, { extracted_up_to: last.id });
+  updateChat(chatId, { extracted_up_to: last.id, extracted_up_to_seq: last.seq });
   return added;
 }

@@ -14,7 +14,6 @@ import {
   insertVariant,
   lastMessage,
   listVariants,
-  nextVariantIndex,
   previousMessage,
   updateMessageActive,
 } from '../db/repo/messages.js';
@@ -85,7 +84,7 @@ export async function gatherContext(
     ...npcPool.map((c) => c.id),
   ]);
   const summary = latestSummary(chatId) ?? null;
-  let history = historyWindow(chatId, summary?.up_to_message_id ?? null, settings.history_window);
+  let history = historyWindow(chatId, summary?.up_to_seq ?? 0, settings.history_window);
   if (excludeMessageId) history = history.filter((m) => m.id !== excludeMessageId);
 
   // ロアのキーワード走査窓（§7.2）: 履歴窓とは独立に直近 lore_scan_window 件
@@ -221,7 +220,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
       return;
     }
     target = last;
-    const prev = previousMessage(chatId, last.id);
+    const prev = previousMessage(chatId, last.seq);
     baseState = prev?.state_after ?? chat.state;
   } else if (mode === 'retry') {
     // retry: 末尾userへの応答再試行。userは追加保存しない（§5.6）
@@ -376,10 +375,8 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
   let messageId: string;
   if (target) {
     // regenerate: 対象メッセージに候補を追加し、表示中コピーを差し替える（§4.8）
-    const idx = nextVariantIndex(target.id);
-    insertVariant({
+    const v = insertVariant({
       message_id: target.id,
-      index: idx,
       content,
       utterances,
       state_delta: stateDeltaLog,
@@ -389,7 +386,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
       content,
       utterances,
       state_after: applied.state,
-      active_variant: idx,
+      active_variant: v.index,
       generation_status: status,
     });
     messageId = target.id;
@@ -405,7 +402,6 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     });
     insertVariant({
       message_id: msg.id,
-      index: 0,
       content,
       utterances,
       state_delta: stateDeltaLog,
@@ -416,8 +412,9 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
 
   setChatState(chatId, applied.state);
 
-  // pendingイベントの発火を記録（§4.13。ゲーム内時刻 = 基準ステートの時刻）
-  if (gathered.firedEvents.length) {
+  // pendingイベントの発火記録は生成が完走したときだけ（§4.13）。
+  // 途中で停止した場合は記録せず、次のターンで改めて発火判定させる。
+  if (status === 'complete' && gathered.firedEvents.length) {
     recordEventFires(gathered.firedEvents, chatId, baseState.time);
   }
 
@@ -442,7 +439,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     state: applied.state,
     gameTime: toGameTime(gathered.input.calendar, applied.state.time),
     needsSummary,
-    firedEvents: gathered.firedEvents.map((e) => e.title),
+    firedEvents: status === 'complete' ? gathered.firedEvents.map((e) => e.title) : [],
     warnings: [...parseResult.warnings, ...applied.warnings],
     stateWarnings: applied.warnings,
     fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,

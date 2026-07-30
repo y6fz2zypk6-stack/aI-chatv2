@@ -12,10 +12,10 @@ import {
 import {
   getMessage,
   insertMessage,
-  insertVariant,
+  insertVariantAt,
   lastMessage,
   listMessages,
-  listMessagesUpTo,
+  listMessagesUpToSeq,
   listVariants,
   updateMessageActive,
 } from '../db/repo/messages.js';
@@ -122,8 +122,8 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
     state: forkState,
   });
 
-  // メッセージと候補を昇順にコピー（ULIDは新規発行なので順序が保たれる）
-  for (const m of listMessagesUpTo(chat.id, target.id)) {
+  // メッセージと候補を昇順にコピー（seq は新チャット内で1から振り直される）
+  for (const m of listMessagesUpToSeq(chat.id, target.seq)) {
     const isTarget = m.id === target.id;
     const copied = insertMessage({
       chat_id: newChat.id,
@@ -135,7 +135,7 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
     });
     const variants = listVariants(m.id);
     for (const v of variants) {
-      insertVariant({
+      insertVariantAt({
         message_id: copied.id,
         index: v.index,
         content: v.content,
@@ -272,7 +272,7 @@ chatsRouter.put('/chats/:id/summary', (req, res) => {
       res.status(400).json({ error: 'メッセージがないため要約を保存できません' });
       return;
     }
-    res.json(insertSummary(chat.id, last.id, content));
+    res.json(insertSummary(chat.id, last.id, last.seq, content));
   }
 });
 

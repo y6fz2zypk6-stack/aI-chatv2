@@ -19,10 +19,56 @@ db.pragma('journal_mode = WAL');
 const schemaPath = path.join(__dirname, 'schema.sql');
 db.exec(fs.readFileSync(schemaPath, 'utf-8'));
 
+function hasColumn(d: Database.Database, table: string, column: string): boolean {
+  const rows = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return rows.some((r) => r.name === column);
+}
+
 // ---- 番号管理マイグレーション ----
 // 型変更・列削除にも対応できるよう、番号付きで migrations 配列に追記していく。
 const migrations: { version: number; up: (d: Database.Database) => void }[] = [
-  // { version: 1, up: (d) => d.exec('ALTER TABLE ...') },
+  {
+    // 会話の順序を ULID ではなくチャット内連番 seq で表す。
+    // 併せて候補番号の一意性をDBで保証する。
+    version: 1,
+    up: (d) => {
+      if (!hasColumn(d, 'messages', 'seq')) {
+        d.exec('ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0');
+        // 既存データはチャットごとに id 昇順（＝これまでの表示順）で採番する
+        const chatIds = (
+          d.prepare('SELECT DISTINCT chat_id FROM messages').all() as { chat_id: string }[]
+        ).map((r) => r.chat_id);
+        const pick = d.prepare('SELECT id FROM messages WHERE chat_id = ? ORDER BY id ASC, rowid ASC');
+        const setSeq = d.prepare('UPDATE messages SET seq = ? WHERE id = ?');
+        for (const chatId of chatIds) {
+          let n = 0;
+          for (const row of pick.all(chatId) as { id: string }[]) setSeq.run(++n, row.id);
+        }
+      }
+      d.exec('DROP INDEX IF EXISTS idx_messages_chat');
+      d.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_chat_seq ON messages(chat_id, seq)');
+
+      // 一意インデックスを張る前に、万一の重複候補を古い1件だけ残して掃除する
+      d.exec(`DELETE FROM message_variants WHERE rowid NOT IN (
+                SELECT MIN(rowid) FROM message_variants GROUP BY message_id, "index"
+              )`);
+      d.exec('DROP INDEX IF EXISTS idx_variants_message');
+      d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_variants_message_index
+                ON message_variants(message_id, "index")`);
+
+      // 要約・抽出の境界も seq で持つ（境界メッセージが削除されても範囲が壊れない）
+      if (!hasColumn(d, 'summaries', 'up_to_seq')) {
+        d.exec('ALTER TABLE summaries ADD COLUMN up_to_seq INTEGER NOT NULL DEFAULT 0');
+        d.exec(`UPDATE summaries SET up_to_seq = COALESCE(
+                  (SELECT m.seq FROM messages m WHERE m.id = summaries.up_to_message_id), 0)`);
+      }
+      if (!hasColumn(d, 'chats', 'extracted_up_to_seq')) {
+        d.exec('ALTER TABLE chats ADD COLUMN extracted_up_to_seq INTEGER');
+        d.exec(`UPDATE chats SET extracted_up_to_seq =
+                  (SELECT m.seq FROM messages m WHERE m.id = chats.extracted_up_to)`);
+      }
+    },
+  },
 ];
 
 const applied = new Set(

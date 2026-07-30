@@ -9,16 +9,23 @@ export function latestSummary(chatId: string): Summary | undefined {
     .get(chatId) as Summary | undefined;
 }
 
-export function insertSummary(chatId: string, upToMessageId: string, content: string): Summary {
+export function insertSummary(
+  chatId: string,
+  upToMessageId: string,
+  upToSeq: number,
+  content: string,
+): Summary {
   const s: Summary = {
     id: ulid(),
     chat_id: chatId,
     up_to_message_id: upToMessageId,
+    up_to_seq: upToSeq,
     content,
     created_at: now(),
   };
   db.prepare(
-    'INSERT INTO summaries (id, chat_id, up_to_message_id, content, created_at) VALUES (@id, @chat_id, @up_to_message_id, @content, @created_at)',
+    `INSERT INTO summaries (id, chat_id, up_to_message_id, up_to_seq, content, created_at)
+     VALUES (@id, @chat_id, @up_to_message_id, @up_to_seq, @content, @created_at)`,
   ).run(s);
   return s;
 }
