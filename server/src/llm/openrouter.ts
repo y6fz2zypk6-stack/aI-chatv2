@@ -1,6 +1,7 @@
 import type { ModelInfo } from '../../../shared/types.js';
 
-const BASE = 'https://openrouter.ai/api/v1';
+// 既定はOpenRouter。OPENROUTER_BASE_URL で差し替えられる（テスト用のモックを挟むため）
+const BASE = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 
 function headers(): Record<string, string> {
   const key = process.env.OPENROUTER_API_KEY;
