@@ -109,7 +109,7 @@ export function v2EntryToLore(e: V2BookEntry): Partial<LorebookEntry> {
     enabled: e.enabled === false ? 0 : 1,
     always: e.constant ? 1 : 0,
     priority: e.insertion_order ?? e.priority ?? 0,
-    category: (['世界観', '人物', '用語', 'イベント', 'その他'].includes(category ?? '')
+    category: (['世界観', '用語', '人物', '場所', 'イベント', 'その他'].includes(category ?? '')
       ? category
       : 'その他') as LorebookEntry['category'],
   };

@@ -6,7 +6,7 @@ import { Field, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
-const CATEGORIES: LoreCategory[] = ['世界観', '人物', '用語', 'イベント', 'その他'];
+const CATEGORIES: LoreCategory[] = ['世界観', '用語', '人物', '場所', 'イベント', 'その他'];
 const SEASONS = ['春', '夏', '秋', '冬'];
 
 export default function LorebookPage() {
@@ -16,6 +16,7 @@ export default function LorebookPage() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [editing, setEditing] = useState<LorebookEntry | null>(null);
   const [filter, setFilter] = useState('');
+  const [category, setCategory] = useState<LoreCategory | ''>('');
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
@@ -63,11 +64,14 @@ export default function LorebookPage() {
 
   const filtered = entries.filter(
     (e) =>
-      !filter ||
-      e.title.includes(filter) ||
-      e.content.includes(filter) ||
-      e.keys.some((k) => k.includes(filter)),
+      (!category || e.category === category) &&
+      (!filter ||
+        e.title.includes(filter) ||
+        e.content.includes(filter) ||
+        e.keys.some((k) => k.includes(filter))),
   );
+
+  const countOf = (c: LoreCategory) => entries.filter((e) => e.category === c).length;
 
   return (
     <>
@@ -86,14 +90,30 @@ export default function LorebookPage() {
         }
       />
       <div className="content">
-        <div className="field" style={{ marginBottom: 12 }}>
+        <div className="field" style={{ marginBottom: 10 }}>
           <input placeholder="検索" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        </div>
+        {/* カテゴリフィルター */}
+        <div className="row wrap" style={{ marginBottom: 8 }}>
+          <span
+            className={`chip${category === '' ? ' on' : ''}`}
+            onClick={() => setCategory('')}
+          >
+            すべて {entries.length}
+          </span>
+          {CATEGORIES.map((c) => (
+            <span
+              key={c}
+              className={`chip${category === c ? ' on' : ''}`}
+              onClick={() => setCategory(category === c ? '' : c)}
+            >
+              {c} {countOf(c)}
+            </span>
+          ))}
         </div>
         {filtered.map((e) => (
           <Row
             key={e.id}
-            avatar={<Icon.book size={18} />}
-            avatarTinted
             name={
               <>
                 {e.title} {e.always === 1 && <span className="tag">常時</span>}

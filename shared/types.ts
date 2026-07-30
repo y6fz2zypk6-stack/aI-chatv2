@@ -148,7 +148,7 @@ export interface MessageVariant {
   created_at: number;
 }
 
-export type LoreCategory = '世界観' | '人物' | '用語' | 'イベント' | 'その他';
+export type LoreCategory = '世界観' | '用語' | '人物' | '場所' | 'イベント' | 'その他';
 
 export interface LorebookEntry {
   id: string;

@@ -22,20 +22,44 @@ interface Detail {
   gameTime: GameTime;
 }
 
-/** 地の文とセリフを分けて描画する（セリフ=基準サイズ、地の文=一段小さく淡色） */
+/** 地の文の強調記号（* や _ で囲む書き方）を表示上は外す */
+const stripMarks = (s: string) =>
+  s
+    .replace(/\*+/g, '')
+    .replace(/(^|[\s「（(])_(?=\S)|(?<=\S)_(?=[\s」）)、。,.!?！？]|$)/g, '$1');
+
+/**
+ * 吹き出し内: 「」で囲まれた部分がセリフ(dlg)、それ以外は地の文(act)。
+ * 各セグメントを別ブロックにするので、UI側で自然に改行される。
+ * 表示の際は「」そのものは消す。
+ */
 function BubbleText({ text }: { text: string }) {
-  // 「」で囲まれた塊をセリフ、それ以外を地の文として段落単位で分ける
-  const blocks = text.split(/\n{2,}/);
+  const t = stripMarks(text);
+  const parts: { dlg: boolean; text: string }[] = [];
+  const re = /「[^」]*」?/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) {
+    if (m.index > last) {
+      const a = t.slice(last, m.index).trim();
+      if (a) parts.push({ dlg: false, text: a });
+    }
+    const d = m[0].replace(/^「/, '').replace(/」$/, '').trim();
+    if (d) parts.push({ dlg: true, text: d });
+    last = re.lastIndex;
+  }
+  if (last < t.length) {
+    const a = t.slice(last).trim();
+    if (a) parts.push({ dlg: false, text: a });
+  }
+  if (!parts.length) parts.push({ dlg: true, text: t.trim() });
   return (
     <>
-      {blocks.map((block, i) => {
-        const isDialogue = /^\s*[「『]/.test(block);
-        return (
-          <span key={i} className={isDialogue ? 'dlg' : 'act'}>
-            {block}
-          </span>
-        );
-      })}
+      {parts.map((p, i) => (
+        <span key={i} className={p.dlg ? 'dlg' : 'act'}>
+          {p.text}
+        </span>
+      ))}
     </>
   );
 }
@@ -196,9 +220,15 @@ export default function ChatPage() {
     }
   };
 
+  // ‹›で候補を移動。末尾で「次へ」なら再生成（参照アプリと同じ挙動）
   const switchVariant = async (m: Message, dir: 1 | -1) => {
     const count = m.variant_count ?? 1;
-    const next = (m.active_variant + dir + count) % count;
+    const next = m.active_variant + dir;
+    if (next < 0) return;
+    if (next >= count) {
+      void generate({ regenerate: true });
+      return;
+    }
     try {
       await api.put(`/messages/${m.id}/variant`, { index: next });
       void load();
@@ -317,11 +347,14 @@ export default function ChatPage() {
                 </span>
                 <div className="turn-col">
                   <div className="bubble">
-                    {streaming}
-                    <span className="caret" />
+                    <span className="dlg">
+                      {streaming}
+                      <span className="caret" />
+                    </span>
                   </div>
                 </div>
               </div>
+              <div className="msg-side" />
             </div>
           )}
 
@@ -494,12 +527,43 @@ function MessageView(props: {
     ? m.utterances
     : [{ speaker: m.role === 'user' ? 'user' : 'narrator', name: '', text: m.content }];
   const count = m.variant_count ?? 1;
-  const showVariantNav = props.isLast && m.role === 'assistant' && !props.busy;
+  const showSwipe = props.isLast && m.role === 'assistant' && !props.busy;
+
+  // 操作列は最後の行にだけ付ける（1メッセージ＝複数吹き出しでも操作は1つ）。
+  // それ以外の行にも空の列を置き、全ての吹き出し幅を揃える
+  const side = (
+    <div className="msg-side">
+      {showSwipe && (
+        <div className="swipe">
+          <button
+            onClick={() => props.onSwitchVariant(-1)}
+            disabled={m.active_variant === 0}
+            aria-label="前の候補"
+          >
+            <Icon.chevL />
+          </button>
+          {m.active_variant + 1}/{count}
+          <button onClick={() => props.onSwitchVariant(1)} aria-label="次の候補／再生成">
+            <Icon.chevR size={11} />
+          </button>
+        </div>
+      )}
+      <button
+        className={`msgmenu${props.menuOpen ? ' on' : ''}`}
+        onClick={props.onToggleMenu}
+        aria-label="操作"
+      >
+        <Icon.dots />
+      </button>
+    </div>
+  );
+  const emptySide = <div className="msg-side" />;
 
   return (
     <div className="msg">
       {utterances.map((u, i) => {
         const isLastUtterance = i === utterances.length - 1;
+        const rowSide = isLastUtterance ? side : emptySide;
 
         if (u.speaker === 'narrator') {
           return (
@@ -509,14 +573,8 @@ function MessageView(props: {
                   <Icon.heart />
                 </span>
               </div>
-              <div className="narr-text">{u.text}</div>
-              {isLastUtterance && (
-                <div className="msg-side">
-                  <button className="msgmenu" onClick={props.onToggleMenu} aria-label="操作">
-                    <Icon.dots />
-                  </button>
-                </div>
-              )}
+              <div className="narr-text">{stripMarks(u.text.trim())}</div>
+              {rowSide}
             </div>
           );
         }
@@ -537,28 +595,7 @@ function MessageView(props: {
                 </div>
               </div>
             </div>
-            {isLastUtterance && (
-              <div className="msg-side">
-                {showVariantNav && count > 1 && (
-                  <div className="swipe">
-                    <button onClick={() => props.onSwitchVariant(-1)} aria-label="前の候補">
-                      <Icon.chevL />
-                    </button>
-                    {m.active_variant + 1}/{count}
-                    <button onClick={() => props.onSwitchVariant(1)} aria-label="次の候補">
-                      <Icon.chevR size={11} />
-                    </button>
-                  </div>
-                )}
-                <button
-                  className={`msgmenu${props.menuOpen ? ' on' : ''}`}
-                  onClick={props.onToggleMenu}
-                  aria-label="操作"
-                >
-                  <Icon.dots />
-                </button>
-              </div>
-            )}
+            {rowSide}
           </div>
         );
       })}
@@ -567,7 +604,7 @@ function MessageView(props: {
         <>
           <div className="menu-backdrop" onClick={props.onToggleMenu} />
           <div className="popover" style={{ right: 14, marginTop: -6, position: 'relative', width: '100%' }}>
-            {showVariantNav && (
+            {showSwipe && (
               <button className="prow" onClick={props.onRegenerate}>
                 <span className="ic">
                   <Icon.refresh size={17} />
