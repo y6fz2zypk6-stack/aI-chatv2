@@ -1,5 +1,19 @@
 import { Router, type Response } from 'express';
-import type { ChatState, Message, StateDelta, Utterance } from '../../../shared/types.js';
+import type {
+  CalendarConfig,
+  Character,
+  Chat,
+  ChatState,
+  EventEvalRow,
+  Location,
+  Message,
+  Settings,
+  StateDelta,
+  Utterance,
+  VarSchemaEntry,
+  WorldEvent,
+} from '../../../shared/types.js';
+import { db, toJson } from '../db/index.js';
 import { getCalendar } from '../db/repo/calendars.js';
 import { getChat, setChatState, updateChat } from '../db/repo/chats.js';
 import { getCharacters, listCharacters } from '../db/repo/characters.js';
@@ -13,18 +27,29 @@ import {
   insertMessage,
   insertVariant,
   lastMessage,
+  listMessages,
   listVariants,
   previousMessage,
   updateMessageActive,
 } from '../db/repo/messages.js';
 import { getDefaultPersona, getPersona } from '../db/repo/personas.js';
 import { getScenario } from '../db/repo/scenarios.js';
-import { getSettings } from '../db/repo/settings.js';
+import { getSettings, resolveFlag } from '../db/repo/settings.js';
 import { latestSummary } from '../db/repo/summaries.js';
 import { getWorld } from '../db/repo/worlds.js';
-import type { WorldEvent } from '../db/repo/events.js';
+import {
+  deleteFiresFromSeq,
+  deleteFiresOfMessage,
+  firesAtMessage,
+  firesOf,
+  getEvent,
+  listEvents,
+  recordFire,
+} from '../db/repo/events.js';
 import { toGameTime, toTotalDay } from '../domain/calendar.js';
-import { evaluateEvents, recordEventFires } from '../domain/events.js';
+import { buildEventBlocks, runEventPipeline } from '../domain/events.js';
+import { applyVarOps, buildVarsBlock, varsInstruction } from '../domain/vars.js';
+import { seededRand } from '../util/random.js';
 import { scopeEntries } from '../domain/lorebook.js';
 import { runExtract } from '../domain/memory.js';
 import { applyDelta } from '../domain/state.js';
@@ -56,7 +81,17 @@ export interface GatherResult {
   parseCtx: ParseContext;
   personaName: string;
   model: string;
-  firedEvents: WorldEvent[];
+  /** 判定パイプラインで使う文脈（生成完了後に走らせる） */
+  pipeline: {
+    chat: Chat;
+    settings: Settings;
+    calendar: CalendarConfig;
+    locations: Location[];
+    varsSchema: VarSchemaEntry[];
+    varsEnabled: boolean;
+    eventsEnabled: boolean;
+    characters: Character[];
+  };
 }
 
 export async function gatherContext(
@@ -109,19 +144,35 @@ export async function gatherContext(
   const model = chat.model || settings.default_model;
   const contextLength = await contextLengthOf(model, settings.fallback_context_length);
 
-  // pendingイベントの発火判定（§8.6）。記録は生成保存時に行う
-  const firedEvents = evaluateEvents({
-    worldId: chat.world_id,
-    chatId,
-    state: baseState,
-    calendar,
-    locations,
-  });
+  // 有効化スイッチの3段解決（v1.5.3 §1.1）
+  const varsEnabled = resolveFlag(chat.vars_enabled, scenario?.vars_enabled, settings.vars_enabled);
+  const eventsEnabled = resolveFlag(
+    chat.events_enabled,
+    scenario?.events_enabled,
+    settings.events_enabled,
+  );
+
+  // イベントの注入は「前のターンに採用された分」を載せる（v1.5.3 §6）。
+  // 判定は生成完了後に走るため、このターンのプロンプトには直前の結果が入る
+  const prevMessage = history[history.length - 1];
+  let eventFacts = '';
+  let eventInstructions = '';
+  if (eventsEnabled && prevMessage) {
+    const fires = firesAtMessage(chatId, prevMessage.id);
+    const fired = fires
+      .map((f) => getEvent(f.event_id))
+      .filter((e): e is WorldEvent => !!e && !!e.inject);
+    const blocks = buildEventBlocks(fired);
+    eventFacts = blocks.facts;
+    eventInstructions = blocks.instructions;
+  }
 
   return {
-    firedEvents,
     input: {
-      eventInjects: firedEvents.map((e) => e.inject),
+      varsBlock: varsEnabled ? buildVarsBlock(world.vars_schema, baseState.vars) : '',
+      varsInstruction: varsEnabled ? varsInstruction(world.vars_schema) : '',
+      eventFacts,
+      eventInstructions,
       settings,
       world,
       scenario,
@@ -143,7 +194,49 @@ export async function gatherContext(
     parseCtx: { participants, npcPool, personaName: persona?.name || 'あなた' },
     personaName: persona?.name || 'あなた',
     model,
+    pipeline: {
+      chat,
+      settings,
+      calendar,
+      locations,
+      varsSchema: world.vars_schema,
+      varsEnabled,
+      eventsEnabled,
+      characters: [...participants, ...npcPool],
+    },
   };
+}
+
+/** そのチャットの発火履歴を event_id ごとにまとめる */
+function groupFires(chatId: string) {
+  const map = new Map<string, ReturnType<typeof firesOf>>();
+  for (const e of listEvents(getChat(chatId)!.world_id)) {
+    map.set(e.id, firesOf(chatId, e.id));
+  }
+  return map;
+}
+
+/** 表示中候補の state_after を書き戻す（§6.4） */
+function updateVariantState(variantId: string, state: ChatState): void {
+  db.prepare('UPDATE message_variants SET state_after = ? WHERE id = ?').run(toJson(state), variantId);
+}
+
+/**
+ * once_per_visit の訪問ID（v1.5.3 §6.1）。
+ * 「その場所へ入った契機となる最新の location 変更メッセージID」。
+ * initial_state の場所から一度も移動していない場合は chat_id + ":initial"。
+ * location_note 使用中は訪問IDを作らない（対象外になる）。
+ */
+export function visitIdOf(chatId: string, state: ChatState): string | null {
+  if (state.location_note) return null;
+  const msgs = listMessages(chatId);
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const cur = msgs[i].state_after;
+    if (cur.location !== state.location) break;
+    const prev = i > 0 ? msgs[i - 1].state_after : null;
+    if (!prev || prev.location !== cur.location) return msgs[i].id;
+  }
+  return `${chatId}:initial`;
 }
 
 // ---- SSEヘルパ ----
@@ -359,12 +452,19 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
   const content = text;
   const utterances: Utterance[] = parseResult.utterances;
 
+  const pl = gathered.pipeline;
   const applied = applyDelta(
     gathered.input.calendar,
     baseState,
     delta,
     gathered.input.locations,
-    [...gathered.input.participants, ...gathered.input.npcPool],
+    pl.characters,
+    {
+      // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる
+      rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + delta.elapsed_minutes) / 1440)}`),
+      varsSchema: pl.varsSchema,
+      varsEnabled: pl.varsEnabled,
+    },
   );
 
   const status = aborted ? 'stopped' : 'complete';
@@ -376,6 +476,8 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
 
   let messageId: string;
   if (target) {
+    // 作り直す候補の分は判定をやり直すので、このメッセージの発火履歴を消す（v1.5.3）
+    deleteFiresOfMessage(chatId, target.id);
     // regenerate: 対象メッセージに候補を追加し、表示中コピーを差し替える（§4.8）
     const v = insertVariant({
       message_id: target.id,
@@ -412,13 +514,61 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     messageId = msg.id;
   }
 
-  setChatState(chatId, applied.state);
+  // ---- 判定パイプライン（v1.5.3 §6）----
+  // assistant の state_after が確定した直後にのみ走る。注入は次ターンのプロンプトへ。
+  // 途中で停止した場合は走らせず、次のターンで改めて判定させる。
+  let finalState = applied.state;
+  const firedTitles: string[] = [];
+  let eventRows: EventEvalRow[] = [];
+  if (status === 'complete' && pl.eventsEnabled) {
+    const result = runEventPipeline({
+      chatId,
+      events: listEvents(chat.world_id),
+      baseState,
+      newState: applied.state,
+      calendar: gathered.input.calendar,
+      locations: gathered.input.locations,
+      varsSchema: pl.varsSchema,
+      varsEnabled: pl.varsEnabled,
+      baseMessageId: lastMessage(chatId)?.id ?? chatId,
+      visitId: visitIdOf(chatId, applied.state),
+      firesByEvent: groupFires(chatId),
+      maxPerTurn: Math.max(1, pl.settings.event_max_per_turn),
+    });
+    eventRows = result.rows;
 
-  // pendingイベントの発火記録は生成が完走したときだけ（§4.13）。
-  // 途中で停止した場合は記録せず、次のターンで改めて発火判定させる。
-  if (status === 'complete' && gathered.firedEvents.length) {
-    recordEventFires(gathered.firedEvents, chatId, baseState.time);
+    // set_vars の適用と発火記録は1トランザクションで揃える（§6.4）
+    const commit = db.transaction(() => {
+      let state = applied.state;
+      for (const { event, scopeKey } of result.adopted) {
+        if (pl.varsEnabled && event.set_vars.length) {
+          const r = applyVarOps(pl.varsSchema, state.vars, event.set_vars);
+          state = { ...state, vars: r.vars };
+          applied.warnings.push(...r.warnings);
+        }
+        recordFire({
+          chat_id: chatId,
+          event_id: event.id,
+          message_id: messageId,
+          fired_at_time: applied.state.time,
+          scope_key: scopeKey,
+        });
+        firedTitles.push(event.title);
+      }
+      if (state !== applied.state) {
+        // 確定済みの state_after を書き戻す。表示中の候補も必ず揃える（§6.4）
+        updateMessageActive(messageId, { state_after: state });
+        const active = listVariants(messageId).find(
+          (v) => v.index === (getMessage(messageId)?.active_variant ?? 0),
+        );
+        if (active) updateVariantState(active.id, state);
+      }
+      finalState = state;
+    });
+    commit();
   }
+
+  setChatState(chatId, finalState);
 
   // 要約・知識抽出はバックグラウンド（§8.3・§8.4）
   const { needed: needsSummary } = maybeSummarize(chatId, settings);
@@ -438,10 +588,11 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     messageId,
     content,
     utterances,
-    state: applied.state,
-    gameTime: toGameTime(gathered.input.calendar, applied.state.time),
+    state: finalState,
+    gameTime: toGameTime(gathered.input.calendar, finalState.time),
     needsSummary,
-    firedEvents: status === 'complete' ? gathered.firedEvents.map((e) => e.title) : [],
+    firedEvents: firedTitles,
+    eventRows,
     warnings: [...parseResult.warnings, ...applied.warnings],
     stateWarnings: applied.warnings,
     fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,
@@ -528,6 +679,8 @@ messagesRouter.delete('/messages/:id', (req, res) => {
     res.status(404).json({ error: 'メッセージが見つかりません' });
     return;
   }
+  // そのメッセージ以降の発火履歴も消す（v1.5.3 §8）
+  deleteFiresFromSeq(msg.chat_id, msg.seq);
   deleteMessage(msg.id);
   const chat = getChat(msg.chat_id);
   if (chat) {

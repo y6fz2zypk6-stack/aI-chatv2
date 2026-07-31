@@ -8,6 +8,7 @@ export const EMPTY_STATE: ChatState = {
   location_note: '',
   weather: '晴',
   present: [],
+  vars: {},
 };
 
 interface Row extends Omit<Scenario, 'participant_ids' | 'initial_state'> {
@@ -47,15 +48,18 @@ export function createScenario(worldId: string, input: Partial<Scenario>): Scena
     opening: input.opening || '',
     initial_state: { ...EMPTY_STATE, ...(input.initial_state ?? {}) },
     narrator_enabled: input.narrator_enabled ?? 1,
+    events_enabled: input.events_enabled ?? null,
+    vars_enabled: input.vars_enabled ?? null,
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO scenarios (id, world_id, title, description, participant_ids, default_persona_id, opening, initial_state, narrator_enabled, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO scenarios (id, world_id, title, description, participant_ids, default_persona_id, opening, initial_state, narrator_enabled, events_enabled, vars_enabled, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     s.id, s.world_id, s.title, s.description, toJson(s.participant_ids), s.default_persona_id,
-    s.opening, toJson(s.initial_state), s.narrator_enabled, s.created_at, s.updated_at,
+    s.opening, toJson(s.initial_state), s.narrator_enabled, s.events_enabled, s.vars_enabled,
+    s.created_at, s.updated_at,
   );
   return s;
 }
@@ -72,10 +76,11 @@ export function updateScenario(id: string, patch: Partial<Scenario>): Scenario |
     updated_at: now(),
   };
   db.prepare(
-    `UPDATE scenarios SET title=?, description=?, participant_ids=?, default_persona_id=?, opening=?, initial_state=?, narrator_enabled=?, updated_at=? WHERE id=?`,
+    `UPDATE scenarios SET title=?, description=?, participant_ids=?, default_persona_id=?, opening=?, initial_state=?, narrator_enabled=?, events_enabled=?, vars_enabled=?, updated_at=? WHERE id=?`,
   ).run(
     next.title, next.description, toJson(next.participant_ids), next.default_persona_id,
-    next.opening, toJson(next.initial_state), next.narrator_enabled, next.updated_at, id,
+    next.opening, toJson(next.initial_state), next.narrator_enabled,
+    next.events_enabled, next.vars_enabled, next.updated_at, id,
   );
   return next;
 }

@@ -25,7 +25,24 @@ export const DEFAULT_SETTINGS: Settings = {
   state_extraction_mode: 'fenced',
   history_window: 48,
   active_persona_id: '',
+  events_enabled: 1,
+  vars_enabled: 0,
+  event_max_per_turn: 2,
 };
+
+/**
+ * 有効化スイッチの3段解決（v1.5.3 §1.1）。
+ * チャットの値 → シナリオの値 → 全体設定 の順に、先に見つかった非NULLを採用する。
+ */
+export function resolveFlag(
+  chatValue: number | null | undefined,
+  scenarioValue: number | null | undefined,
+  globalValue: number,
+): boolean {
+  if (chatValue !== null && chatValue !== undefined) return chatValue === 1;
+  if (scenarioValue !== null && scenarioValue !== undefined) return scenarioValue === 1;
+  return globalValue === 1;
+}
 
 export function getSettings(): Settings {
   const rows = db.prepare('SELECT key, value FROM settings').all() as {

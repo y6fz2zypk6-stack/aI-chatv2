@@ -156,8 +156,14 @@ export interface AssembleInput {
   dayChanged: boolean;
   /** モデルのコンテキスト長 */
   contextLength: number;
-  /** pendingイベントの注入文（「現在の状況」ブロックの直後 §8.6） */
-  eventInjects?: string[];
+  /** 進行状況ブロック（v1.5.3 §3.3）。vars_enabled = 1 のときのみ */
+  varsBlock?: string;
+  /** 進行フラグの更新指示（v1.5.3 §3.1） */
+  varsInstruction?: string;
+  /** 「発生中の出来事」（inject_mode = fact） */
+  eventFacts?: string;
+  /** 「今回の演出指示」（inject_mode = instruction） */
+  eventInstructions?: string;
   /** オートプレイ: ユーザー入力なしで場面を続ける指示を添える（§8.7） */
   autoContinueNudge?: boolean;
 }
@@ -220,27 +226,33 @@ export function assembleContext(input: AssembleInput): AssembleResult {
   }
 
   // ---- system の構成順序（§6.1） ----
-  const required: string[] = [];
+  // 1〜6（フォーマット〜参加キャラ）→ 7 準レギュラー → 8〜9（ナレーター・ペルソナ）
+  // の順にそのまま並べる。削減対象にしない部分を required としてまとめる
+  const sysHead: string[] = [];
   // separate_call モードでは本文にフェンスを書かせない（抽出は別コール §5.7）
-  required.push(
+  sysHead.push(
     formatInstructions(settings.state_enabled === 1 && settings.state_extraction_mode === 'fenced'),
   );
-  required.push(SETTINGS_HANDLING);
-  if (settings.system_prompt) required.push(settings.system_prompt);
-  if (input.world.system_prompt) required.push(input.world.system_prompt);
-  if (input.scenario?.description) required.push(`# シナリオ設定\n${input.scenario.description}`);
-  for (const c of input.participants) required.push(characterDef(c));
+  // 進行フラグの更新指示は、機能が有効で書き込み可能なキーがあるときだけ出す（§1.2）
+  if (input.varsInstruction) sysHead.push(input.varsInstruction);
+  sysHead.push(SETTINGS_HANDLING);
+  if (settings.system_prompt) sysHead.push(settings.system_prompt);
+  if (input.world.system_prompt) sysHead.push(input.world.system_prompt);
+  if (input.scenario?.description) sysHead.push(`# シナリオ設定\n${input.scenario.description}`);
+  for (const c of input.participants) sysHead.push(characterDef(c));
 
   const optionalNpcDefs = activeNpcPool.map(characterDef);
 
+  const sysTail: string[] = [];
   if (input.chat.narrator_enabled) {
-    required.push(input.world.narrator_prompt || DEFAULT_NARRATOR_PROMPT);
+    sysTail.push(input.world.narrator_prompt || DEFAULT_NARRATOR_PROMPT);
   }
   if (input.persona) {
-    required.push(
+    sysTail.push(
       `# 対話相手（ユーザーの分身）\n名前: ${input.persona.name}\n${input.persona.description}`,
     );
   }
+  const required = [...sysHead, ...sysTail];
 
   let memories = memoryBlocks.map(
     (b) => `# ${b.charName}が記憶している事実\n${b.items.map((m) => `- ${m.content}`).join('\n')}`,
@@ -258,9 +270,15 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     persona: input.persona,
     dayChanged: input.dayChanged,
   });
-  // pendingイベントは「現在の状況」ブロックの直後に注入（§8.6）
-  if (input.eventInjects?.length) {
-    situationBlock += `\n\n${input.eventInjects.join('\n')}`;
+  // 末尾systemのブロック順序は固定（v1.5.3 §6.3）:
+  //   現在の状況 → 進行状況 → 発生中の出来事 → 今回の演出指示
+  // 後ろほど強く参照されるので、事実を読ませてから「どう出すか」の指示を当てる
+  for (const block of [
+    input.varsBlock,
+    input.eventFacts,
+    input.eventInstructions,
+  ]) {
+    if (block) situationBlock += `\n\n${block}`;
   }
   if (input.autoContinueNudge) {
     situationBlock +=
@@ -327,17 +345,12 @@ export function assembleContext(input: AssembleInput): AssembleResult {
   const overBudget = overBudgetNow() && history.length <= 2;
 
   // ---- 最終組み立て（§6.1の順序） ----
-  const sys: string[] = [];
-  let reqIdx = 0;
-  sys.push(required[reqIdx++]); // 1. フォーマット
-  sys.push(required[reqIdx++]); // 2. 設定情報の扱い
-  if (settings.system_prompt) sys.push(required[reqIdx++]); // 3. 共通
-  if (input.world.system_prompt) sys.push(required[reqIdx++]); // 4. 世界
-  if (input.scenario?.description) sys.push(required[reqIdx++]); // 5. シナリオ
-  for (let i = 0; i < input.participants.length; i++) sys.push(required[reqIdx++]); // 6. 参加キャラ
-  sys.push(...optionalNpcDefs); // 7. 準レギュラー
-  while (reqIdx < required.length) sys.push(required[reqIdx++]); // 8〜9. ナレーター・ペルソナ
-  sys.push(...memories); // 10. メモリー
+  const sys: string[] = [
+    ...sysHead, // 1〜6. フォーマット・設定の扱い・共通/世界/シナリオ・参加キャラ
+    ...optionalNpcDefs, // 7. 準レギュラー
+    ...sysTail, // 8〜9. ナレーター・ペルソナ
+    ...memories, // 10. メモリー
+  ];
   if (summaryBlock) sys.push(summaryBlock); // 11. あらすじ
   if (adoptedLore.length) {
     sys.push(`# 関連する世界観情報\n${adoptedLore.map((e) => e.content).join('\n\n')}`); // 12. ロア

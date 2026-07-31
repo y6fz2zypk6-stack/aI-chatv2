@@ -12,6 +12,7 @@ import {
 } from '../db/repo/scenarios.js';
 import { getSettings } from '../db/repo/settings.js';
 import { getWorld } from '../db/repo/worlds.js';
+import { seedVars } from '../domain/vars.js';
 import { parseUtterances } from '../llm/parse.js';
 
 export const scenariosRouter = Router();
@@ -64,9 +65,12 @@ scenariosRouter.post('/scenarios/:id/chats', (req, res) => {
   const persona = personaId ? getPersona(personaId) : undefined;
 
   // §4.6: 初期ステートはここでコピーした値が正。以後シナリオを編集しても影響しない
+  // 進行フラグは世界のスキーマの default で埋めてから、シナリオの指定で上書きする（v1.5.3 §2.3）
+  const world = getWorld(scenario.world_id);
   const initialState = {
     ...scenario.initial_state,
     present: [...scenario.initial_state.present],
+    vars: seedVars(world?.vars_schema ?? [], scenario.initial_state.vars),
   };
   const chat = createChat({
     world_id: scenario.world_id,

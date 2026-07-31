@@ -48,6 +48,8 @@ export function createChat(input: {
   participant_ids: string[];
   model?: string;
   narrator_enabled: number;
+  events_enabled?: number | null;
+  vars_enabled?: number | null;
   state: ChatState;
   /** 省略時は state をそのまま初期ステートとする */
   initial_state?: ChatState;
@@ -62,6 +64,8 @@ export function createChat(input: {
     participant_ids: input.participant_ids,
     model: input.model || '',
     narrator_enabled: input.narrator_enabled,
+    events_enabled: input.events_enabled ?? null,
+    vars_enabled: input.vars_enabled ?? null,
     state: input.state,
     initial_state: input.initial_state ?? input.state,
     extracted_up_to: null,
@@ -71,11 +75,12 @@ export function createChat(input: {
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, state, initial_state, extracted_up_to, extracted_up_to_seq, archived, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, events_enabled, vars_enabled, state, initial_state, extracted_up_to, extracted_up_to_seq, archived, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     c.id, c.world_id, c.scenario_id, c.title, c.persona_id, toJson(c.participant_ids),
-    c.model, c.narrator_enabled, toJson(c.state), toJson(c.initial_state),
+    c.model, c.narrator_enabled, c.events_enabled, c.vars_enabled,
+    toJson(c.state), toJson(c.initial_state),
     c.extracted_up_to, c.extracted_up_to_seq, c.archived, c.created_at, c.updated_at,
   );
   return c;
@@ -95,10 +100,11 @@ export function updateChat(id: string, patch: Partial<Chat>): Chat | undefined {
     updated_at: now(),
   };
   db.prepare(
-    `UPDATE chats SET scenario_id=?, title=?, persona_id=?, participant_ids=?, model=?, narrator_enabled=?, state=?, extracted_up_to=?, extracted_up_to_seq=?, archived=?, updated_at=? WHERE id=?`,
+    `UPDATE chats SET scenario_id=?, title=?, persona_id=?, participant_ids=?, model=?, narrator_enabled=?, events_enabled=?, vars_enabled=?, state=?, extracted_up_to=?, extracted_up_to_seq=?, archived=?, updated_at=? WHERE id=?`,
   ).run(
     next.scenario_id, next.title, next.persona_id, toJson(next.participant_ids), next.model,
-    next.narrator_enabled, toJson(next.state), next.extracted_up_to, next.extracted_up_to_seq,
+    next.narrator_enabled, next.events_enabled, next.vars_enabled,
+    toJson(next.state), next.extracted_up_to, next.extracted_up_to_seq,
     next.archived, next.updated_at, id,
   );
   return next;

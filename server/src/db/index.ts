@@ -48,10 +48,22 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       d.exec('DROP INDEX IF EXISTS idx_messages_chat');
       d.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_chat_seq ON messages(chat_id, seq)');
 
-      // 一意インデックスを張る前に、万一の重複候補を古い1件だけ残して掃除する
-      d.exec(`DELETE FROM message_variants WHERE rowid NOT IN (
-                SELECT MIN(rowid) FROM message_variants GROUP BY message_id, "index"
-              )`);
+      // 一意インデックスを張る前に、万一 index が重複している候補を採番し直す。
+      // 消してしまうとユーザーが作った候補が失われるので、古い順に 0,1,2… を振り直す
+      const dup = d
+        .prepare(
+          `SELECT message_id FROM message_variants
+             GROUP BY message_id, "index" HAVING COUNT(*) > 1`,
+        )
+        .all() as { message_id: string }[];
+      const renumber = d.prepare('UPDATE message_variants SET "index" = ? WHERE id = ?');
+      const pickVariants = d.prepare(
+        'SELECT id FROM message_variants WHERE message_id = ? ORDER BY "index" ASC, rowid ASC',
+      );
+      for (const messageId of new Set(dup.map((r) => r.message_id))) {
+        let i = 0;
+        for (const row of pickVariants.all(messageId) as { id: string }[]) renumber.run(i++, row.id);
+      }
       d.exec('DROP INDEX IF EXISTS idx_variants_message');
       d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_variants_message_index
                 ON message_variants(message_id, "index")`);
@@ -89,6 +101,67 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
                 (SELECT m.state_after FROM messages m
                   WHERE m.chat_id = chats.id ORDER BY m.seq ASC LIMIT 1),
                 chats.state)`);
+    },
+  },
+  {
+    // v1.5.3: 進行フラグと条件付きイベント
+    version: 3,
+    up: (d) => {
+      const add = (table: string, col: string, def: string) => {
+        // col は予約語対策で `"when"` のように引用符付きで来ることがある。
+        // 存在確認は引用符を外した名前で行う
+        const bare = col.replace(/"/g, '');
+        if (!hasColumn(d, table, bare)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      };
+
+      add('worlds', 'vars_schema', "TEXT NOT NULL DEFAULT '[]'");
+      // NULL は「上位から継承」。既定値は付けない
+      add('scenarios', 'events_enabled', 'INTEGER');
+      add('scenarios', 'vars_enabled', 'INTEGER');
+      add('chats', 'events_enabled', 'INTEGER');
+      add('chats', 'vars_enabled', 'INTEGER');
+
+      // world_events の拡張。旧 condition は when へ包んで移行する
+      add('world_events', 'kind', "TEXT NOT NULL DEFAULT 'ambient'");
+      add('world_events', '"when"', "TEXT NOT NULL DEFAULT '{}'");
+      // 既存イベントの挙動を変えないため、移行後の check は every_turn とする
+      add('world_events', '"check"', "TEXT NOT NULL DEFAULT 'every_turn'");
+      add('world_events', 'chance', 'REAL NOT NULL DEFAULT 1.0');
+      add('world_events', 'trigger_var', "TEXT NOT NULL DEFAULT ''");
+      add('world_events', 'priority', 'INTEGER NOT NULL DEFAULT 0');
+      add('world_events', 'inject_mode', "TEXT NOT NULL DEFAULT 'fact'");
+      add('world_events', 'set_vars', "TEXT NOT NULL DEFAULT '[]'");
+      if (hasColumn(d, 'world_events', 'condition')) {
+        // {"month":9,...} → {"all":[{"month":9,...}]}
+        d.exec(`UPDATE world_events
+                   SET "when" = '{"all":[' || condition || ']}'
+                 WHERE "when" IN ('', '{}')
+                   AND condition NOT IN ('', '{}')`);
+      }
+
+      // event_fires を新しい形へ作り直す（PKの型が変わるため置き換える）
+      if (!hasColumn(d, 'event_fires', 'fired_at_time')) {
+        d.exec(`CREATE TABLE event_fires_new (
+                  id TEXT PRIMARY KEY,
+                  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                  event_id TEXT NOT NULL REFERENCES world_events(id) ON DELETE CASCADE,
+                  message_id TEXT,
+                  fired_at_time INTEGER NOT NULL,
+                  scope_key TEXT NOT NULL DEFAULT '',
+                  created_at INTEGER NOT NULL
+                )`);
+        if (hasColumn(d, 'event_fires', 'game_time')) {
+          // 旧履歴は chat_id / event_id / 発火時刻だけ引き継ぐ。
+          // 参照先のChatが消えている行はFKに引っかかるので除く
+          d.exec(`INSERT INTO event_fires_new (id, chat_id, event_id, message_id, fired_at_time, scope_key, created_at)
+                  SELECT 'legacy-' || f.rowid, f.chat_id, f.event_id, NULL, f.game_time, '', ${Date.now()}
+                    FROM event_fires f
+                   WHERE EXISTS (SELECT 1 FROM chats c WHERE c.id = f.chat_id)`);
+        }
+        d.exec('DROP TABLE event_fires');
+        d.exec('ALTER TABLE event_fires_new RENAME TO event_fires');
+      }
+      d.exec('CREATE INDEX IF NOT EXISTS idx_event_fires_chat ON event_fires(chat_id, event_id)');
     },
   },
 ];

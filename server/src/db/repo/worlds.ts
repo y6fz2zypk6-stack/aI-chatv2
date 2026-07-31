@@ -1,13 +1,22 @@
-import { db, now } from '../index.js';
+import { db, fromJson, now, toJson } from '../index.js';
 import { ulid } from '../../util/ulid.js';
-import type { World } from '../../../../shared/types.js';
+import type { VarSchemaEntry, World } from '../../../../shared/types.js';
+
+interface Row extends Omit<World, 'vars_schema'> {
+  vars_schema: string;
+}
+
+function toApi(row: Row): World {
+  return { ...row, vars_schema: fromJson<VarSchemaEntry[]>(row.vars_schema, []) };
+}
 
 export function listWorlds(): World[] {
-  return db.prepare('SELECT * FROM worlds ORDER BY updated_at DESC').all() as World[];
+  return (db.prepare('SELECT * FROM worlds ORDER BY updated_at DESC').all() as Row[]).map(toApi);
 }
 
 export function getWorld(id: string): World | undefined {
-  return db.prepare('SELECT * FROM worlds WHERE id = ?').get(id) as World | undefined;
+  const row = db.prepare('SELECT * FROM worlds WHERE id = ?').get(id) as Row | undefined;
+  return row ? toApi(row) : undefined;
 }
 
 export function createWorld(input: Partial<World>): World {
@@ -18,24 +27,31 @@ export function createWorld(input: Partial<World>): World {
     description: input.description || '',
     system_prompt: input.system_prompt || '',
     narrator_prompt: input.narrator_prompt || '',
+    vars_schema: input.vars_schema ?? [],
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO worlds (id, name, description, system_prompt, narrator_prompt, created_at, updated_at)
-     VALUES (@id, @name, @description, @system_prompt, @narrator_prompt, @created_at, @updated_at)`,
-  ).run(world);
+    `INSERT INTO worlds (id, name, description, system_prompt, narrator_prompt, vars_schema, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    world.id, world.name, world.description, world.system_prompt, world.narrator_prompt,
+    toJson(world.vars_schema), world.created_at, world.updated_at,
+  );
   return world;
 }
 
 export function updateWorld(id: string, patch: Partial<World>): World | undefined {
   const cur = getWorld(id);
   if (!cur) return undefined;
-  const next = { ...cur, ...patch, id, updated_at: now() };
+  const next: World = { ...cur, ...patch, id, updated_at: now() };
   db.prepare(
-    `UPDATE worlds SET name=@name, description=@description, system_prompt=@system_prompt,
-     narrator_prompt=@narrator_prompt, updated_at=@updated_at WHERE id=@id`,
-  ).run(next);
+    `UPDATE worlds SET name=?, description=?, system_prompt=?,
+     narrator_prompt=?, vars_schema=?, updated_at=? WHERE id=?`,
+  ).run(
+    next.name, next.description, next.system_prompt, next.narrator_prompt,
+    toJson(next.vars_schema), next.updated_at, id,
+  );
   return next;
 }
 

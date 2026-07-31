@@ -174,6 +174,30 @@ export default function SettingsPage() {
         </div>
 
         <div className="section">
+          <span className="kicker">Events & Progress</span>
+          <SettingRow label="条件付きイベント" hint="条件を満たしたターンに一文を注入する">
+            <Toggle
+              on={settings.events_enabled === 1}
+              onChange={(v) => void set({ events_enabled: v ? 1 : 0 })}
+            />
+          </SettingRow>
+          <SettingRow label="進行フラグ" hint="物語の段階や到達済みフラグをステートで持つ">
+            <Toggle
+              on={settings.vars_enabled === 1}
+              onChange={(v) => void set({ vars_enabled: v ? 1 : 0 })}
+            />
+          </SettingRow>
+          <SettingRow label="1ターンのイベント上限" hint="演出指示は上限に関わらず1件まで" sub>
+            <Stepper
+              value={settings.event_max_per_turn}
+              min={1}
+              max={5}
+              onChange={(v) => void set({ event_max_per_turn: v })}
+            />
+          </SettingRow>
+        </div>
+
+        <div className="section">
           <span className="kicker">State</span>
           <SettingRow label="ステート機能" hint="時刻・場所・在席をアプリが管理する">
             <Toggle

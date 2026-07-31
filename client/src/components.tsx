@@ -202,6 +202,39 @@ export function Stepper({
   );
 }
 
+/**
+ * 継承 / ON / OFF の3値トグル（v1.5.3 §9.3）。
+ * null は「上位から継承」を表す。
+ */
+export function TriToggle({
+  value,
+  onChange,
+  inheritedLabel,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+  inheritedLabel?: string;
+}) {
+  const opts: { v: number | null; label: string }[] = [
+    { v: null, label: inheritedLabel ? `継承（${inheritedLabel}）` : '継承' },
+    { v: 1, label: 'ON' },
+    { v: 0, label: 'OFF' },
+  ];
+  return (
+    <div className="row" style={{ gap: 4 }}>
+      {opts.map((o) => (
+        <span
+          key={String(o.v)}
+          className={`chip${value === o.v ? ' on' : ''}`}
+          onClick={() => onChange(o.v)}
+        >
+          {o.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** ラベル＋説明＋右側の操作 を1行にする（設定画面など） */
 export function SettingRow({
   label,

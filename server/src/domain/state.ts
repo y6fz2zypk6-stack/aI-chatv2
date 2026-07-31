@@ -1,10 +1,26 @@
-import type { CalendarConfig, Character, ChatState, Location, StateDelta } from '../../../shared/types.js';
+import type {
+  CalendarConfig,
+  Character,
+  ChatState,
+  Location,
+  StateDelta,
+  VarSchemaEntry,
+} from '../../../shared/types.js';
 import { drawWeather, toGameTime, toTotalDay } from './calendar.js';
+import { applySetVar } from './vars.js';
 
 export interface ApplyResult {
   state: ChatState;
   dayChanged: boolean;
   warnings: string[];
+}
+
+export interface ApplyOptions {
+  /** 天候の抽選に使う乱数。既定はシード無し（テスト・後方互換用） */
+  rand?: () => number;
+  /** 進行フラグのスキーマ。vars_enabled = 1 のときだけ set_var を適用する */
+  varsSchema?: VarSchemaEntry[];
+  varsEnabled?: boolean;
 }
 
 /**
@@ -17,10 +33,11 @@ export function applyDelta(
   delta: StateDelta,
   locations: Location[],
   characters: Character[],
-  rand: () => number = Math.random,
+  options: ApplyOptions = {},
 ): ApplyResult {
+  const rand = options.rand ?? Math.random;
   const warnings: string[] = [];
-  const state: ChatState = { ...base, present: [...base.present] };
+  const state: ChatState = { ...base, present: [...base.present], vars: { ...(base.vars ?? {}) } };
 
   // elapsed_minutes < 0 は 0 として扱う。> 1440 はそのまま適用し、UI側でバッジ表示
   let elapsed = Math.floor(delta.elapsed_minutes);
@@ -62,6 +79,17 @@ export function applyDelta(
   }
   state.present = [...present];
 
+  // 進行フラグ（§3.2）。無効時は set_var 行を破棄して警告のみ残す（§1.2）
+  if (delta.set_var && Object.keys(delta.set_var).length) {
+    if (options.varsEnabled) {
+      const r = applySetVar(options.varsSchema ?? [], state.vars, delta.set_var);
+      state.vars = r.vars;
+      warnings.push(...r.warnings);
+    } else {
+      warnings.push('進行フラグが無効のため set_var を無視しました');
+    }
+  }
+
   // 時間適用と日替わり判定 → 天候は日付が変わったときのみ抽選（§8.2）
   const newTime = base.time + elapsed;
   const dayChanged = toTotalDay(newTime) !== toTotalDay(base.time);
@@ -82,5 +110,6 @@ export function normalizeState(input: Partial<ChatState>, base: ChatState): Chat
     location_note: input.location_note ?? base.location_note,
     weather: input.weather ?? base.weather,
     present: Array.isArray(input.present) ? input.present : base.present,
+    vars: input.vars ?? base.vars ?? {},
   };
 }

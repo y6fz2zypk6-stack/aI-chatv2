@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Character, Chat, Persona, Scenario, World } from '@shared/types';
 import { api } from '../api';
-import { Avatar, Field, Modal, Row, TopBar } from '../components';
+import { Avatar, Field, Modal, Row, TopBar, TriToggle } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -24,12 +24,19 @@ export default function WorldDetailPage() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
+  const [varsSchemaJson, setVarsSchemaJson] = useState('[]');
   const navigate = useNavigate();
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
     if (!id) return;
-    api.get<WorldWithUsage>(`/worlds/${id}`).then(setWorld).catch(() => {});
+    api
+      .get<WorldWithUsage>(`/worlds/${id}`)
+      .then((w) => {
+        setWorld(w);
+        setVarsSchemaJson(JSON.stringify(w.vars_schema ?? [], null, 2));
+      })
+      .catch(() => {});
     api.get<Character[]>(`/worlds/${id}/characters`).then(setCharacters).catch(() => {});
     api.get<Scenario[]>(`/worlds/${id}/scenarios`).then(setScenarios).catch(() => {});
     api.get<Persona[]>('/personas').then(setPersonas).catch(() => {});
@@ -41,10 +48,12 @@ export default function WorldDetailPage() {
 
   const saveWorld = async () => {
     try {
-      await api.put(`/worlds/${world.id}`, world);
+      const vars_schema = JSON.parse(varsSchemaJson || '[]');
+      await api.put(`/worlds/${world.id}`, { ...world, vars_schema });
       toast('世界を保存しました');
+      load();
     } catch (err) {
-      toast((err as Error).message, true);
+      toast(`保存できません: ${(err as Error).message}`, true);
     }
   };
 
@@ -265,6 +274,24 @@ export default function WorldDetailPage() {
               onChange={(e) => setWorld({ ...world, narrator_prompt: e.target.value })}
             />
           </Field>
+          <Field label="進行フラグの定義（JSON配列。物語の段階や到達済みフラグを宣言する）">
+            <textarea
+              className="mono tall"
+              value={varsSchemaJson}
+              onChange={(e) => setVarsSchemaJson(e.target.value)}
+              placeholder={`[
+  {
+    "key": "case_phase", "type": "number", "role": "phase",
+    "default": 0, "label": "事件の進行段階",
+    "min": 0, "max": 4, "monotonic": true, "update_mode": "system_only",
+    "phases": [
+      { "value": 0, "name": "未発生", "public_state": "まだ表面化していない。",
+        "private_note": "ここはプロンプトに載りません" }
+    ]
+  }
+]`}
+            />
+          </Field>
         </div>
       </div>
 
@@ -464,6 +491,20 @@ function ScenarioEditor(props: {
           <span className="knob" />
         </button>
       </div>
+      <Field label="条件付きイベント">
+        <TriToggle
+          value={s.events_enabled}
+          onChange={(v) => setS({ ...s, events_enabled: v })}
+          inheritedLabel="全体設定"
+        />
+      </Field>
+      <Field label="進行フラグ">
+        <TriToggle
+          value={s.vars_enabled}
+          onChange={(v) => setS({ ...s, vars_enabled: v })}
+          inheritedLabel="全体設定"
+        />
+      </Field>
     </Modal>
   );
 }

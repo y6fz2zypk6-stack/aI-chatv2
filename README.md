@@ -1,9 +1,9 @@
 # Character Chat — ビジュアルノベル風AIチャットPWA
 
-仕様書 v1.4 に基づく個人向けのチャットノベル風ロールプレイアプリ。
+仕様書 v1.4 + 追補 v1.5.3 に基づく個人向けのチャットノベル風ロールプレイアプリ。
 React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
 
-## 実装状況（Phase 1〜7 完了）
+## 実装状況（Phase 1〜7 + v1.5.3 完了）
 
 | Phase | 内容 | 状態 |
 |---|---|---|
@@ -14,6 +14,7 @@ React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
 | 5 | 営業時間・終電判定 / 場所・季節タグ発火 / 天候のアプリ管理 / separate_call抽出 | ✅ |
 | 6 | 再生成・候補・編集・分岐（fork）/ オートプレイ / 書き出し・取り込み | ✅ |
 | 7 | pendingイベント / PWA | ✅ |
+| v1.5.3 | 進行フラグ（state.vars）/ 条件式DSL / 確率・チェック方式・優先度つきイベント | ✅ |
 
 - チャット内でモデルを切替（ヘッダーのピル）。候補は `shared/types.ts` の `CURATED_MODELS`
 - キャラクター・ペルソナのアイコンは画像をアップロード可能（丸枠のカメラバッジから）
@@ -21,8 +22,11 @@ React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
   ロアブック（V2 character_book）/ 会話（JSON: 候補含む・テキスト）
 - オートプレイ: `▶▶` ボタン。`autoplay_steps` 上限、`autoplay_judge` ONで
   区切り判定（CONTINUE/STOP）により自動停止
-- pendingイベント: `/worlds/:id/events` で条件（month/week/weekday/time_after等）・
-  trigger（once / once_per_year / cooldown）・注入文を編集
+- 条件付きイベント: `/worlds/:id/events` で条件式（`when`）・チェック方式（`check`）・
+  トリガー・確率・優先度・注入区分（事実／演出指示）・`set_vars` を編集。
+  `/worlds/:id/events/evaluate` で最新のチャットに対する判定結果（どの段階で落ちたか）を確認できる
+- 進行フラグ: 世界ごとに `vars_schema` でキーを定義し、会話の `state.vars` で保持。
+  AIの `set_var:`・イベントの `set_vars`・手動編集の3経路で更新（権限は経路ごとに異なる）
 
 ## セットアップ
 
@@ -45,9 +49,17 @@ npm run dev
 npm test
 ```
 
-ステート・候補（variant）・再生成・分岐を重点的に検証します。OpenRouter互換のモックを
-立てて応答内容（経過分・場所・STATEフェンスの欠落や切断）を決定論的に与え、実APIを
-叩いて確認します。実行には `OPENROUTER_API_KEY` は不要で、既存のDBには触りません。
+2段構成です。
+
+1. `test/migrate.mjs` — 最古のスキーマのDBを作り、マイグレーション1〜3を通して
+   seq採番・候補indexの採番し直し・`initial_state` のバックフィル・旧 `condition` の
+   `when` への移行・`event_fires` の作り直しを検証します（冪等性も確認）
+2. `test/run.mjs` — ステート・候補（variant）・再生成・分岐、および進行フラグと
+   条件付きイベントを検証します
+
+OpenRouter互換のモックを立てて応答内容（経過分・場所・`set_var`・STATEフェンスの欠落や
+切断）を決定論的に与え、実APIを叩いて確認します。実行には `OPENROUTER_API_KEY` は不要で、
+既存のDBには触りません。
 
 ### 本番（VPS）
 
@@ -117,7 +129,16 @@ V2カード（`chara_card_v2`）/ V2 `character_book` JSON を取り込んでく
 - ステート編集の年月日・時分はサーバ側で通算分へ変換（時刻演算の calendar.ts 一本化を維持）
 - 暦編集UI・イベント条件はJSONエディタ形式
 - 過去メッセージの候補閲覧（めくり）は未対応。過去分の確定操作は「ここから分岐」に集約
-- イベント発火履歴はチャット単位で記録。regenerate では既発火イベントは再注入されない
+- イベントの判定は**assistantの生成が完了して `state_after` が確定した直後**に走り、
+  注入は**次のターン**のプロンプトに載る（v1.5.3 §6。v1.4 の「生成前に判定して同じターンに注入」
+  から変更）。停止した生成では判定しない
+- イベント発火履歴はチャット単位で記録。regenerate は対象メッセージの発火記録を削除して
+  から判定し直す。fork は分岐点までの発火記録を引き継ぐ
+- イベントの抽選と天候はシード固定（`chatId:eventId:drawKey`）。再生成しても結果が変わらない。
+  スコープを持つ trigger では `drawKey` を `scopeKey` で置き換える（連結しない）
+- 進行フラグの `private_note` はプロンプトに一切載せない（作者向けのメモ欄）
+- `update_mode: system_only` のキーはLLMの `set_var` を破棄し警告を返す。イベントの
+  `set_vars` と手動編集からは更新できる（手動編集のみ `monotonic` も無視できる救済手段）
 - 世界取り込み時、場所IDが既存と衝突する場合は `_2` 等の接尾辞を付けて自動リマップ
 - 会話の順序は `messages.seq`（チャット内連番）が正で、ULIDの時系列性には依存しない。
   `UNIQUE(chat_id, seq)` と `UNIQUE(message_id, index)` をDB側で保証している

@@ -5,13 +5,16 @@ import type {
   Character,
   Chat,
   ChatState,
+  EventFire,
   GameTime,
   Location,
   Message,
   MessageVariant,
+  VarSchemaEntry,
+  VarValue,
 } from '@shared/types';
 import { api } from '../api';
-import { Field, TopBar } from '../components';
+import { Field, Stepper, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -20,6 +23,10 @@ interface StateResponse {
   gameTime: GameTime;
   calendar: CalendarConfig;
   lastMessageId: string | null;
+  varsSchema: VarSchemaEntry[];
+  varsEnabled: boolean;
+  eventsEnabled: boolean;
+  fires: EventFire[];
 }
 
 /** ステート編集パネル（§10.3）。time/location/location_note/weather/present を全て手動編集可能 */
@@ -82,6 +89,7 @@ export default function StatePage() {
       setState(r.state);
       setGt(r.gameTime);
       toast('ステートを保存しました');
+      void load();
     } catch (err) {
       toast((err as Error).message, true);
     }
@@ -176,6 +184,87 @@ export default function StatePage() {
             {characters.length === 0 && <span className="empty-note">キャラクターがいません</span>}
           </div>
         </div>
+
+        {data.varsEnabled && data.varsSchema.length > 0 && (
+          <div className="section">
+            <span className="kicker">進行状況</span>
+            {data.varsSchema.map((entry) => {
+              const value = state.vars?.[entry.key] ?? (entry.default ?? (entry.type === 'number' ? 0 : entry.type === 'boolean' ? false : ''));
+              const setVar = (v: VarValue) =>
+                setState({ ...state, vars: { ...(state.vars ?? {}), [entry.key]: v } });
+              const phase =
+                (entry.role ?? 'flag') === 'phase'
+                  ? entry.phases?.find((p) => p.value === value)
+                  : undefined;
+              return (
+                <div className="setting" key={entry.key}>
+                  <div className="txt">
+                    <label>{entry.label || entry.key}</label>
+                    <span>
+                      {phase ? `${phase.name} — ${phase.public_state}` : entry.key}
+                      {phase?.private_note && ` ／ 覚え書き: ${phase.private_note}`}
+                    </span>
+                  </div>
+                  {entry.type === 'number' && (
+                    <Stepper
+                      value={Number(value)}
+                      min={entry.min ?? 0}
+                      max={entry.max ?? Number.MAX_SAFE_INTEGER}
+                      onChange={(v) => setVar(v)}
+                    />
+                  )}
+                  {entry.type === 'boolean' && (
+                    <button
+                      className={`toggle${value ? ' on' : ''}`}
+                      onClick={() => setVar(!value)}
+                      role="switch"
+                      aria-checked={!!value}
+                    >
+                      <span className="knob" />
+                    </button>
+                  )}
+                  {entry.type === 'string' && (
+                    <input
+                      style={{ maxWidth: 180 }}
+                      value={String(value)}
+                      onChange={(e) => setVar(e.target.value)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {data.eventsEnabled && (
+          <div className="section">
+            <span className="kicker">イベント発火履歴</span>
+            {data.fires.length === 0 && <div className="empty-note">まだ発火していません</div>}
+            {data.fires.map((f) => (
+              <div className="chatrow" key={f.id}>
+                <div className="body">
+                  <span className="nm sm">{f.event_title ?? '(削除済みイベント)'}</span>
+                  <div className="desc one">
+                    {new Date(f.created_at).toLocaleString('ja-JP')}
+                    {f.scope_key && ` ／ ${f.scope_key}`}
+                  </div>
+                </div>
+                <button
+                  className="icon-btn"
+                  style={{ color: 'var(--danger)' }}
+                  title="この発火を取り消す"
+                  onClick={async () => {
+                    if (!confirm('この発火を取り消しますか？（同じイベントが再び発生し得ます）')) return;
+                    await api.del(`/chats/${id}/fires/${f.id}`);
+                    void load();
+                  }}
+                >
+                  <Icon.trash size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="section">
           <span className="kicker">State Delta ログ</span>

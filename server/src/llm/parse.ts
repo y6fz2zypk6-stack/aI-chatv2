@@ -1,4 +1,4 @@
-import type { Character, StateDelta, Utterance } from '../../../shared/types.js';
+import type { Character, StateDelta, Utterance, VarValue } from '../../../shared/types.js';
 
 export const FENCE_OPEN = '@@@STATE';
 export const FENCE_CLOSE = '@@@END';
@@ -51,6 +51,24 @@ export function parseStateDelta(fence: string | null): StateDelta | null {
         delta.present_remove = splitIds(value);
         sawAny = true;
         break;
+      case 'set_var': {
+        // set_var: case_ash_phase=2, toby_met=true （代入のみ。§3.2）
+        const assigns: Record<string, VarValue> = {};
+        for (const pair of value.split(/[,、，]/)) {
+          const eq = pair.indexOf('=');
+          if (eq <= 0) continue;
+          const k = pair.slice(0, eq).trim();
+          const raw = pair.slice(eq + 1).trim();
+          if (!k || raw === '') continue;
+          if (raw === 'true') assigns[k] = true;
+          else if (raw === 'false') assigns[k] = false;
+          else if (/^-?\d+(\.\d+)?$/.test(raw)) assigns[k] = Number(raw);
+          else assigns[k] = raw.slice(0, 32);
+        }
+        if (Object.keys(assigns).length) delta.set_var = assigns;
+        sawAny = true;
+        break;
+      }
     }
   }
   return sawAny ? delta : null;

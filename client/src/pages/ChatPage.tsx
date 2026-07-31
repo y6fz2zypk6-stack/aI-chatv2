@@ -5,6 +5,7 @@ import {
   modelLabel,
   type Character,
   type Chat,
+  type EventEvalRow,
   type GameTime,
   type Location,
   type Message,
@@ -12,7 +13,7 @@ import {
   type Utterance,
 } from '@shared/types';
 import { api, streamGenerate, type DonePayload } from '../api';
-import { Avatar } from '../components';
+import { Avatar, Field, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -82,6 +83,7 @@ export default function ChatPage() {
   const [editText, setEditText] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [showChatSettings, setShowChatSettings] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const autoplayCancel = useRef(false);
@@ -434,6 +436,15 @@ export default function ChatPage() {
               <span>組み立て結果とロアの発火状況</span>
             </span>
           </button>
+          <button className="srow" onClick={() => { setSheetOpen(false); setShowChatSettings(true); }}>
+            <span className="ic">
+              <Icon.gear />
+            </span>
+            <span className="txt">
+              <b>この会話の設定</b>
+              <span>イベントと進行フラグの有効・無効</span>
+            </span>
+          </button>
           <a className="srow" href={`/api/chats/${id}/export`} download onClick={() => setSheetOpen(false)}>
             <span className="ic">
               <Icon.download />
@@ -444,6 +455,28 @@ export default function ChatPage() {
             </span>
           </a>
         </div>
+      )}
+
+      {showChatSettings && (
+        <Modal title="この会話の設定" onClose={() => setShowChatSettings(false)}>
+          <Field label="条件付きイベント">
+            <TriToggle
+              value={chat.events_enabled}
+              onChange={(v) => void api.put(`/chats/${id}`, { events_enabled: v }).then(load)}
+              inheritedLabel="シナリオ / 全体設定"
+            />
+          </Field>
+          <Field label="進行フラグ">
+            <TriToggle
+              value={chat.vars_enabled}
+              onChange={(v) => void api.put(`/chats/${id}`, { vars_enabled: v }).then(load)}
+              inheritedLabel="シナリオ / 全体設定"
+            />
+          </Field>
+          <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+            オフにしても、これまでに記録した進行フラグと発火履歴は残ります
+          </div>
+        </Modal>
       )}
 
       {modelMenu && (
@@ -657,7 +690,20 @@ interface PreviewData {
   inputBudget: number;
   trimmed: { history: number; lore: number; memories: number };
   model: string;
+  varsBlock: string;
+  varsEnabled: boolean;
+  eventsEnabled: boolean;
+  eventRows: EventEvalRow[];
 }
+
+const EVENT_OUTCOME: Record<EventEvalRow['outcome'], string> = {
+  adopted: '採用',
+  condition: '条件不一致',
+  check: 'タイミング外',
+  trigger: '発火済み',
+  chance: '抽選外れ',
+  capped: '上限超過',
+};
 
 function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
   const [data, setData] = useState<PreviewData | null>(null);
@@ -691,6 +737,24 @@ function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
             </div>
             <div className="kicker">現在の状況</div>
             <pre className="pre-block">{data.situationBlock}</pre>
+            {data.varsEnabled && data.varsBlock && (
+              <>
+                <div className="kicker">進行状況</div>
+                <pre className="pre-block">{data.varsBlock}</pre>
+              </>
+            )}
+            {data.eventsEnabled && data.eventRows.length > 0 && (
+              <>
+                <div className="kicker">イベント判定</div>
+                <div className="row wrap">
+                  {data.eventRows.map((r) => (
+                    <span key={r.id} className={`chip${r.outcome === 'adopted' ? ' on' : ''}`}>
+                      {r.title}: {EVENT_OUTCOME[r.outcome]}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
             <div className="kicker">
               ロア 発火{data.lore.fired.length} / 採用{data.lore.adopted.length} / 予算超過
               {data.lore.dropped.length}

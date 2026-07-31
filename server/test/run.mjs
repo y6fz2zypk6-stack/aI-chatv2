@@ -104,12 +104,18 @@ try {
 
   const { report } = await import('./harness.mjs');
   const s = await import('./suites.mjs');
+  const s2 = await import('./suite-events.mjs');
 
   const w = await s.setupWorld('t');
   const snapshot = await s.normalFlow(w);
   await s.regressionInitialState(w);
   await s.abnormal(w);
   await s.edges(w);
+
+  // v1.5.3: 進行フラグと条件付きイベント
+  const ew = await s2.setupEventWorld('ev');
+  await s2.varsSuite(ew);
+  await s2.eventsSuite(ew);
 
   // 再起動して同じ状態が復元されるかを見る
   server.kill('SIGKILL');

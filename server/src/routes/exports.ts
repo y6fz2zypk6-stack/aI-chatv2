@@ -1,6 +1,11 @@
 import { Router, type Response } from 'express';
-import type { Character, ChatState, LorebookEntry, Scenario } from '../../../shared/types.js';
-import type { WorldEvent } from '../db/repo/events.js';
+import type {
+  Character,
+  ChatState,
+  LorebookEntry,
+  Scenario,
+  WorldEvent,
+} from '../../../shared/types.js';
 import { getCalendar, upsertCalendar } from '../db/repo/calendars.js';
 import { getChat } from '../db/repo/chats.js';
 import { createCharacter, getCharacter, listCharacters } from '../db/repo/characters.js';

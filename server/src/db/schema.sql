@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS worlds (
   description TEXT NOT NULL DEFAULT '',
   system_prompt TEXT NOT NULL DEFAULT '',
   narrator_prompt TEXT NOT NULL DEFAULT '',
+  -- 進行フラグのホワイトリスト（JSON配列）。未定義キーの増殖を防ぐ
+  vars_schema TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -47,6 +49,9 @@ CREATE TABLE IF NOT EXISTS scenarios (
   opening TEXT NOT NULL DEFAULT '',
   initial_state TEXT NOT NULL DEFAULT '{}',
   narrator_enabled INTEGER NOT NULL DEFAULT 1,
+  -- NULL は「上位（全体設定）から継承」を表す
+  events_enabled INTEGER,
+  vars_enabled INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -60,6 +65,9 @@ CREATE TABLE IF NOT EXISTS chats (
   participant_ids TEXT NOT NULL DEFAULT '[]',
   model TEXT NOT NULL DEFAULT '',
   narrator_enabled INTEGER NOT NULL DEFAULT 1,
+  -- NULL は「上位（シナリオ → 全体設定）から継承」を表す
+  events_enabled INTEGER,
+  vars_enabled INTEGER,
   state TEXT NOT NULL DEFAULT '{}',
   -- Chat作成時にシナリオからコピーした初期ステート（§4.6）。以後変更しない。
   -- 先頭メッセージの再生成の基準、および全メッセージ削除時の復元に使う。
@@ -136,25 +144,37 @@ CREATE TABLE IF NOT EXISTS calendars (
   updated_at INTEGER NOT NULL
 );
 
+-- "when" / "check" はSQLの予約語のため、参照時は必ず二重引用符で囲む
 CREATE TABLE IF NOT EXISTS world_events (
   id TEXT PRIMARY KEY,
   world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
   title TEXT NOT NULL DEFAULT '',
-  condition TEXT NOT NULL DEFAULT '{}',
+  kind TEXT NOT NULL DEFAULT 'ambient',
+  "when" TEXT NOT NULL DEFAULT '{}',
+  "check" TEXT NOT NULL DEFAULT 'every_turn',
+  chance REAL NOT NULL DEFAULT 1.0,
   trigger TEXT NOT NULL DEFAULT 'once',
+  trigger_var TEXT NOT NULL DEFAULT '',
   cooldown_days INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 0,
+  inject_mode TEXT NOT NULL DEFAULT 'fact',
   inject TEXT NOT NULL DEFAULT '',
+  set_vars TEXT NOT NULL DEFAULT '[]',
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS event_fires (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   event_id TEXT NOT NULL REFERENCES world_events(id) ON DELETE CASCADE,
-  chat_id TEXT NOT NULL,
-  game_time INTEGER NOT NULL
+  message_id TEXT,
+  fired_at_time INTEGER NOT NULL,
+  scope_key TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_event_fires_chat ON event_fires(chat_id, event_id);
 
 -- up_to_seq が範囲判定の正。up_to_message_id は参照・表示用に残す
 -- （境界のメッセージが削除されても範囲が壊れないようにするため）

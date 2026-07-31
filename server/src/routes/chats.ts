@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { db, toJson } from '../db/index.js';
 import { getCalendar } from '../db/repo/calendars.js';
+import { copyFiresForFork, deleteFire, firesOf, listEvents, listFires } from '../db/repo/events.js';
+import { runEventPipeline } from '../domain/events.js';
 import {
   createChat,
   deleteChat,
@@ -19,19 +21,23 @@ import {
   listVariants,
   updateMessageActive,
 } from '../db/repo/messages.js';
-import { getSettings } from '../db/repo/settings.js';
+import { getScenario } from '../db/repo/scenarios.js';
+import { getSettings, resolveFlag } from '../db/repo/settings.js';
 import {
   deleteSummaries,
   insertSummary,
   latestSummary,
   updateSummaryContent,
 } from '../db/repo/summaries.js';
+import type { VarValue } from '../../../shared/types.js';
+import { getWorld } from '../db/repo/worlds.js';
 import { toGameTime, toMinutes } from '../domain/calendar.js';
+import { applyManualVars } from '../domain/vars.js';
 import { runExtract } from '../domain/memory.js';
 import { normalizeState } from '../domain/state.js';
 import { runSummarize } from '../domain/summary.js';
 import { assembleContext } from '../llm/prompt.js';
-import { gatherContext } from './messages.js';
+import { gatherContext, visitIdOf } from './messages.js';
 
 export const chatsRouter = Router();
 
@@ -125,6 +131,7 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
   });
 
   // メッセージと候補を昇順にコピー（seq は新チャット内で1から振り直される）
+  const idMap = new Map<string, string>();
   for (const m of listMessagesUpToSeq(chat.id, target.seq)) {
     const isTarget = m.id === target.id;
     const copied = insertMessage({
@@ -135,6 +142,7 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
       state_after: isTarget ? forkState : m.state_after,
       generation_status: m.generation_status,
     });
+    idMap.set(m.id, copied.id);
     const variants = listVariants(m.id);
     for (const v of variants) {
       insertVariantAt({
@@ -151,6 +159,9 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
     }
   }
 
+  // 発火履歴も引き継ぐ。コピーしないと分岐先で once イベントがもう一度起きる（v1.5.3 §8）
+  copyFiresForFork(chat.id, newChat.id, target.seq, idMap);
+
   res.status(201).json(getChat(newChat.id));
 });
 
@@ -164,12 +175,30 @@ chatsRouter.get('/chats/:id/state', (req, res) => {
   }
   const calendar = getCalendar(chat.world_id);
   const last = lastMessage(chat.id);
+  const world = getWorld(chat.world_id);
+  const scenario = chat.scenario_id ? getScenario(chat.scenario_id) : null;
+  const settings = getSettings();
   res.json({
     state: chat.state,
     gameTime: toGameTime(calendar, chat.state.time),
     calendar,
     lastMessageId: last?.id ?? null,
+    // ステート編集UIの vars 欄と発火履歴の表示に使う（v1.5.3 §9.2）
+    varsSchema: world?.vars_schema ?? [],
+    varsEnabled: resolveFlag(chat.vars_enabled, scenario?.vars_enabled, settings.vars_enabled),
+    eventsEnabled: resolveFlag(chat.events_enabled, scenario?.events_enabled, settings.events_enabled),
+    fires: listFires(chat.id),
   });
+});
+
+// 発火履歴の取り消し（once イベントの誤爆を救済する。§9.2）
+chatsRouter.delete('/chats/:id/fires/:fireId', (req, res) => {
+  if (!getChat(req.params.id)) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  deleteFire(req.params.fireId);
+  res.json({ ok: true });
 });
 
 // 手動編集: chats.state に加え、生成の基準となる末尾メッセージの state_after にも反映する
@@ -182,6 +211,12 @@ chatsRouter.put('/chats/:id/state', (req, res) => {
   }
   const body = (req.body ?? {}) as Record<string, unknown>;
   const next = normalizeState(body, chat.state);
+  // vars はスキーマで検証してから入れる（手動編集なので monotonic / system_only は課さない）
+  if (body.vars && typeof body.vars === 'object') {
+    const world = getWorld(chat.world_id);
+    const r = applyManualVars(world?.vars_schema ?? [], body.vars as Record<string, VarValue>);
+    next.vars = r.vars;
+  }
   // 年月日・時分での指定を受けた場合はサーバ側で通算分へ変換する
   // （時刻演算は calendar.ts に一本化するため、クライアントでは変換しない）
   const gtInput = body.game_time as
@@ -245,6 +280,29 @@ chatsRouter.get('/chats/:id/prompt-preview', async (req, res) => {
       overBudget: a.overBudget,
       model: gathered.model,
       stop: a.stop,
+      // v1.5.3 §9.4: 進行状況ブロックと、そのターンのイベント判定を見せる
+      varsBlock: gathered.input.varsBlock ?? '',
+      varsEnabled: gathered.pipeline.varsEnabled,
+      eventsEnabled: gathered.pipeline.eventsEnabled,
+      eventRows: gathered.pipeline.eventsEnabled
+        ? runEventPipeline({
+            chatId: chat.id,
+            events: listEvents(chat.world_id),
+            // プレビューは「いま生成したらどうなるか」なので、前後とも現在ステートで見る
+            baseState,
+            newState: baseState,
+            calendar: gathered.input.calendar,
+            locations: gathered.input.locations,
+            varsSchema: gathered.pipeline.varsSchema,
+            varsEnabled: gathered.pipeline.varsEnabled,
+            baseMessageId: last?.id ?? chat.id,
+            visitId: visitIdOf(chat.id, baseState),
+            firesByEvent: new Map(
+              listEvents(chat.world_id).map((e) => [e.id, firesOf(chat.id, e.id)]),
+            ),
+            maxPerTurn: Math.max(1, getSettings().event_max_per_turn),
+          }).rows
+        : [],
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
