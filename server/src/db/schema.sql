@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS worlds (
   description TEXT NOT NULL DEFAULT '',
   system_prompt TEXT NOT NULL DEFAULT '',
   narrator_prompt TEXT NOT NULL DEFAULT '',
+  -- 場所のエリア（JSON配列 [{id, name}]）。id は場所とイベント条件から参照されるので不変
+  areas TEXT NOT NULL DEFAULT '[]',
   -- 進行フラグのホワイトリスト（JSON配列）。未定義キーの増殖を防ぐ
   vars_schema TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL,

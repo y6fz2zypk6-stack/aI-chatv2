@@ -164,6 +164,36 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       d.exec('CREATE INDEX IF NOT EXISTS idx_event_fires_chat ON event_fires(chat_id, event_id)');
     },
   },
+  {
+    // エリアを世界ごとに持たせる。これまではクライアントに固定リストが直書きされていた。
+    // id は locations.area と world_events.when.location_area から参照されるため不変で、
+    // アプリから変えられるのは name だけ（リネームで参照が壊れないようにするため）。
+    version: 4,
+    up: (d) => {
+      if (hasColumn(d, 'worlds', 'areas')) return;
+      d.exec("ALTER TABLE worlds ADD COLUMN areas TEXT NOT NULL DEFAULT '[]'");
+      // 既存の世界は、実際に使われているエリアを拾って作る（挙動が変わらないようにする）。
+      // 既定IDには日本語の表示名を当て、見覚えのないIDはそのまま表示名にする
+      const known: Record<string, string> = {
+        hilltop: '丘の上',
+        center: '中央',
+        backstreet: '裏通り',
+        harbor: '港',
+        outskirts: '郊外',
+      };
+      const worlds = d.prepare('SELECT id FROM worlds').all() as { id: string }[];
+      const pick = d.prepare(
+        `SELECT DISTINCT area FROM locations WHERE world_id = ? AND area <> '' ORDER BY area`,
+      );
+      const save = d.prepare('UPDATE worlds SET areas = ? WHERE id = ?');
+      for (const w of worlds) {
+        const used = (pick.all(w.id) as { area: string }[]).map((r) => r.area);
+        // 使われていないぶんも含め、既定の5つは常に選べるようにしておく
+        const ids = [...new Set([...Object.keys(known), ...used])];
+        save.run(JSON.stringify(ids.map((id) => ({ id, name: known[id] ?? id }))), w.id);
+      }
+    },
+  },
 ];
 
 const applied = new Set(

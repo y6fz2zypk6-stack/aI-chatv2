@@ -97,12 +97,38 @@ export interface VarSchemaEntry {
   phases?: VarPhase[];
 }
 
+/**
+ * 場所のエリア。
+ * `id` は場所・イベント条件から参照されるので作成後は変えられない。
+ * 表示に使うのは `name` だけなので、こちらは自由に変えてよい。
+ */
+export interface WorldArea {
+  id: string;
+  name: string;
+}
+
+/** 新しい世界の初期エリア。表示名はアプリから自由に変えられる */
+export const DEFAULT_AREAS: WorldArea[] = [
+  { id: 'hilltop', name: '丘の上' },
+  { id: 'center', name: '中央' },
+  { id: 'backstreet', name: '裏通り' },
+  { id: 'harbor', name: '港' },
+  { id: 'outskirts', name: '郊外' },
+  { id: 'market', name: '市場' },
+  { id: 'residential', name: '住宅区' },
+  { id: 'underground', name: '地下' },
+];
+
+export const AREA_ID_RE = /^[a-z][a-z0-9_]{0,31}$/;
+
 export interface World {
   id: string;
   name: string;
   description: string;
   system_prompt: string;
   narrator_prompt: string;
+  /** 場所のエリア一覧。並び順がそのまま選択肢の順になる */
+  areas: WorldArea[];
   /** 進行フラグのホワイトリスト */
   vars_schema: VarSchemaEntry[];
   created_at: number;

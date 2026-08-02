@@ -7,6 +7,8 @@ import type {
   EventKind,
   EventTrigger,
   InjectMode,
+  World,
+  WorldArea,
   WorldEvent,
 } from '@shared/types';
 import { api } from '../api';
@@ -79,12 +81,14 @@ export default function EventsPage() {
   const [phaseCheck, setPhaseCheck] = useState<PhaseCheck | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [evalRows, setEvalRows] = useState<EventEvalRow[] | null>(null);
+  const [areas, setAreas] = useState<WorldArea[]>([]);
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
     if (!id) return;
     api.get<WorldEvent[]>(`/worlds/${id}/events`).then(setEvents).catch(() => {});
     api.get<PhaseCheck>(`/worlds/${id}/events/phase-check`).then(setPhaseCheck).catch(() => {});
+    api.get<World>(`/worlds/${id}`).then((w) => setAreas(w.areas)).catch(() => {});
   }, [id]);
 
   useEffect(load, [load]);
@@ -209,6 +213,7 @@ export default function EventsPage() {
       {editing && (
         <EventEditor
           event={editing}
+          areas={areas}
           onClose={() => setEditing(null)}
           onRemove={() => void remove(editing)}
           onSaved={() => {
@@ -223,6 +228,7 @@ export default function EventsPage() {
 
 function EventEditor(props: {
   event: WorldEvent;
+  areas: WorldArea[];
   onClose: () => void;
   onRemove: () => void;
   onSaved: () => void;
@@ -302,6 +308,12 @@ function EventEditor(props: {
           placeholder={'{ "all": [ { "weather": ["晴"] }, { "time_after": "19:00" } ] }'}
         />
       </Field>
+      {props.areas.length > 0 && (
+        <div className="empty-note" style={{ textAlign: 'left', margin: '-4px 0 0' }}>
+          location_area に使えるID:{' '}
+          {props.areas.map((a) => `${a.id}（${a.name}）`).join(' / ')}
+        </div>
+      )}
 
       <div className="grid-2">
         <Field label="判定タイミング">

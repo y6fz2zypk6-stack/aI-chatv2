@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import type { Location } from '@shared/types';
+import { AREA_ID_RE, type Location, type World, type WorldArea } from '@shared/types';
 import { api } from '../api';
 import { Field, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
-
-const AREAS = ['hilltop', 'center', 'backstreet', 'harbor', 'outskirts'];
 
 function minToHhmm(min: number | null): string {
   if (min == null) return '';
@@ -22,14 +20,20 @@ function hhmmToMin(s: string): number | null {
 export default function LocationsPage() {
   const { id } = useParams<{ id: string }>();
   const [locations, setLocations] = useState<Location[]>([]);
+  const [areas, setAreas] = useState<WorldArea[]>([]);
   const [editing, setEditing] = useState<Location | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const [editingAreas, setEditingAreas] = useState(false);
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
     if (!id) return;
     api.get<Location[]>(`/worlds/${id}/locations`).then(setLocations).catch(() => {});
+    api.get<World>(`/worlds/${id}`).then((w) => setAreas(w.areas)).catch(() => {});
   }, [id]);
+
+  /** 表示はエリア名で行う。見つからないIDはそのまま出して気づけるようにする */
+  const areaName = (areaId: string) => areas.find((a) => a.id === areaId)?.name || areaId;
 
   useEffect(load, [load]);
 
@@ -40,7 +44,7 @@ export default function LocationsPage() {
       world_id: id!,
       name: '',
       indoor: 0,
-      area: 'center',
+      area: areas[0]?.id ?? '',
       open_min: null,
       close_min: null,
       note: '',
@@ -75,7 +79,15 @@ export default function LocationsPage() {
 
   return (
     <>
-      <TopBar title="場所" back={`/worlds/${id}`} />
+      <TopBar
+        title="場所"
+        back={`/worlds/${id}`}
+        actions={
+          <button className="icon-btn" onClick={() => setEditingAreas(true)} title="エリアを編集">
+            <Icon.pencil size={17} />
+          </button>
+        }
+      />
       <div className="content">
         {locations.map((l) => (
           <Row
@@ -89,7 +101,7 @@ export default function LocationsPage() {
             }
             desc={
               <>
-                {l.id}　{l.area}
+                {l.id}　{areaName(l.area)}
                 {l.open_min != null &&
                   l.close_min != null &&
                   `　${minToHhmm(l.open_min)}–${minToHhmm(l.close_min)}`}
@@ -151,9 +163,10 @@ export default function LocationsPage() {
                   value={editing.area}
                   onChange={(e) => setEditing({ ...editing, area: e.target.value })}
                 >
-                  {AREAS.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
+                  <option value="">（未設定）</option>
+                  {areas.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
                     </option>
                   ))}
                 </select>
@@ -194,6 +207,131 @@ export default function LocationsPage() {
           </div>
         </Modal>
       )}
+
+      {editingAreas && (
+        <AreaEditor
+          worldId={id!}
+          areas={areas}
+          usedIds={new Set(locations.map((l) => l.area).filter(Boolean))}
+          onClose={() => setEditingAreas(false)}
+          onSaved={() => {
+            setEditingAreas(false);
+            load();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * エリアの編集。
+ * IDは場所とイベント条件から参照されるため、作成後は変えられない（変えると参照が壊れる）。
+ * 変更できるのは表示名と並び順で、未使用のエリアだけ削除できる。
+ */
+function AreaEditor(props: {
+  worldId: string;
+  areas: WorldArea[];
+  usedIds: Set<string>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [areas, setAreas] = useState<WorldArea[]>(props.areas.map((a) => ({ ...a })));
+  const [newId, setNewId] = useState('');
+  const toast = useApp((s) => s.toast);
+
+  const move = (i: number, d: -1 | 1) => {
+    const j = i + d;
+    if (j < 0 || j >= areas.length) return;
+    const next = [...areas];
+    [next[i], next[j]] = [next[j], next[i]];
+    setAreas(next);
+  };
+
+  const add = () => {
+    const id = newId.trim().toLowerCase();
+    if (!AREA_ID_RE.test(id)) {
+      toast('IDは英小文字で始まる英数字と _ で入力してください', true);
+      return;
+    }
+    if (areas.some((a) => a.id === id)) {
+      toast('そのIDは既にあります', true);
+      return;
+    }
+    setAreas([...areas, { id, name: id }]);
+    setNewId('');
+  };
+
+  const save = async () => {
+    try {
+      await api.put(`/worlds/${props.worldId}/areas`, { areas });
+      toast('保存しました');
+      props.onSaved();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
+  return (
+    <Modal
+      title="エリア"
+      onClose={props.onClose}
+      actions={
+        <button className="pill sm primary" onClick={save}>
+          保存
+        </button>
+      }
+    >
+      <div className="empty-note" style={{ textAlign: 'left', margin: '-4px 0 0', padding: 0 }}>
+        表示名と並び順は自由に変えられます。IDは場所とイベントの条件から参照されているため、
+        作成後は変更できません。
+      </div>
+      {areas.map((a, i) => (
+        <div key={a.id} className="area-row">
+          <input
+            value={a.name}
+            onChange={(e) =>
+              setAreas(areas.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
+            }
+            placeholder={a.id}
+          />
+          <code>{a.id}</code>
+          <button className="icon-btn" onClick={() => move(i, -1)} disabled={i === 0} aria-label="上へ">
+            <Icon.chevU size={15} />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => move(i, 1)}
+            disabled={i === areas.length - 1}
+            aria-label="下へ"
+          >
+            <Icon.chevD size={15} />
+          </button>
+          <button
+            className="icon-btn"
+            style={{ color: 'var(--danger)' }}
+            disabled={props.usedIds.has(a.id)}
+            title={props.usedIds.has(a.id) ? '使用中のため削除できません' : '削除'}
+            onClick={() => setAreas(areas.filter((_, j) => j !== i))}
+            aria-label="削除"
+          >
+            <Icon.trash size={15} />
+          </button>
+        </div>
+      ))}
+      <Field label="エリアを追加（IDは後から変えられません）">
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && add()}
+            placeholder="temple"
+          />
+          <button className="pill sm" onClick={add} disabled={!newId.trim()}>
+            追加
+          </button>
+        </div>
+      </Field>
+    </Modal>
   );
 }

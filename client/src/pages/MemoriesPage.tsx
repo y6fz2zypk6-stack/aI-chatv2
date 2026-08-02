@@ -1,25 +1,48 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { Character, Memory } from '@shared/types';
 import { api } from '../api';
-import { Row, TopBar } from '../components';
+import { Field, Modal, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
 export default function MemoriesPage() {
   const { id } = useParams<{ id: string }>();
   const [character, setCharacter] = useState<Character | null>(null);
+  const [characters, setCharacters] = useState<Character[]>([]);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [draft, setDraft] = useState('');
+  const [editing, setEditing] = useState<Memory | null>(null);
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
     if (!id) return;
-    api.get<Character>(`/characters/${id}`).then(setCharacter).catch(() => {});
+    api
+      .get<Character>(`/characters/${id}`)
+      .then((c) => {
+        setCharacter(c);
+        // 対象タグをIDではなく名前で出すために、同じ世界のキャラを引く
+        api
+          .get<Character[]>(`/worlds/${c.world_id}/characters`)
+          .then(setCharacters)
+          .catch(() => {});
+      })
+      .catch(() => {});
     api.get<Memory[]>(`/characters/${id}/memories`).then(setMemories).catch(() => {});
   }, [id]);
 
   useEffect(load, [load]);
+
+  const nameOf = useCallback(
+    (cid: string) => characters.find((c) => c.id === cid)?.name ?? cid,
+    [characters],
+  );
+
+  // ピン留めは必ず注入されるので先頭にまとめる
+  const [pinned, rest] = useMemo(
+    () => [memories.filter((m) => m.pinned === 1), memories.filter((m) => m.pinned !== 1)],
+    [memories],
+  );
 
   const add = async () => {
     const content = draft.trim();
@@ -29,28 +52,58 @@ export default function MemoriesPage() {
     load();
   };
 
-  const update = async (m: Memory, patch: Partial<Memory>) => {
-    await api.put(`/memories/${m.id}`, { ...m, ...patch });
+  const setPinned = async (m: Memory, pinned: number) => {
+    await api.put(`/memories/${m.id}`, { ...m, pinned });
     load();
   };
 
-  const edit = async (m: Memory) => {
-    const content = prompt('内容を編集', m.content);
-    if (content == null) return;
-    const subject = prompt('対象タグ（人物ID。空なら常時注入）', m.subject) ?? m.subject;
-    await update(m, { content, subject });
-  };
-
-  const remove = async (m: Memory) => {
-    if (!confirm('このメモリーを削除しますか？')) return;
-    await api.del(`/memories/${m.id}`);
-    load();
-    toast('削除しました');
-  };
+  const row = (m: Memory) => (
+    <div
+      key={m.id}
+      className="memrow"
+      role="button"
+      tabIndex={0}
+      onClick={() => setEditing({ ...m })}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setEditing({ ...m });
+        }
+      }}
+    >
+      <button
+        className={`icon-btn${m.pinned ? ' accent' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          void setPinned(m, m.pinned ? 0 : 1);
+        }}
+        aria-pressed={m.pinned === 1}
+        title={m.pinned ? 'ピン留めを外す' : 'ピン留め'}
+      >
+        <Icon.pin />
+      </button>
+      <div className="body">
+        <p className="txt">{m.content}</p>
+        <div className="meta">
+          <span className={`tag${m.source === 'auto' ? '' : ' mute'}`}>
+            {m.source === 'auto' ? '自動抽出' : '手動'}
+          </span>
+          {m.subject && <span>{nameOf(m.subject)}</span>}
+        </div>
+      </div>
+      <span className="chev">
+        <Icon.chevR size={14} />
+      </span>
+    </div>
+  );
 
   return (
     <>
-      <TopBar title="メモリー" sub={character?.name} back={`/characters/${id}`} />
+      <TopBar
+        title="メモリー"
+        sub={character ? `${character.name}・${memories.length}件` : undefined}
+        back={`/characters/${id}`}
+      />
       <div className="content">
         {memories.length === 0 && (
           <div className="empty-note">
@@ -59,41 +112,18 @@ export default function MemoriesPage() {
             設定の「自動抽出」をONにすると会話から拾われます
           </div>
         )}
-        {memories.map((m) => (
-          <Row
-            key={m.id}
-            name={m.content}
-            desc={
-              <>
-                {m.source === 'auto' ? '自動抽出' : '手動'}
-                {m.subject && ` / 対象: ${m.subject}`}
-                {m.pinned === 1 && ' / ピン留め'}
-              </>
-            }
-            actions={
-              <>
-                <button
-                  className={`icon-btn${m.pinned ? ' accent' : ''}`}
-                  onClick={() => void update(m, { pinned: m.pinned ? 0 : 1 })}
-                  title="ピン留め"
-                >
-                  <Icon.pin />
-                </button>
-                <button className="icon-btn" onClick={() => void edit(m)} title="編集">
-                  <Icon.pencil size={16} />
-                </button>
-                <button
-                  className="icon-btn"
-                  style={{ color: 'var(--danger)' }}
-                  onClick={() => void remove(m)}
-                  title="削除"
-                >
-                  <Icon.trash size={16} />
-                </button>
-              </>
-            }
-          />
-        ))}
+        {pinned.length > 0 && (
+          <>
+            <span className="kicker">ピン留め</span>
+            {pinned.map(row)}
+          </>
+        )}
+        {rest.length > 0 && (
+          <>
+            {pinned.length > 0 && <span className="kicker">そのほか</span>}
+            {rest.map(row)}
+          </>
+        )}
       </div>
       <div className="footbar">
         <textarea
@@ -105,6 +135,108 @@ export default function MemoriesPage() {
           <Icon.plus size={20} />
         </button>
       </div>
+
+      {editing && (
+        <MemoryEditor
+          memory={editing}
+          characters={characters}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null);
+            load();
+          }}
+          toast={toast}
+        />
+      )}
     </>
+  );
+}
+
+function MemoryEditor(props: {
+  memory: Memory;
+  characters: Character[];
+  onClose: () => void;
+  onDone: () => void;
+  toast: (msg: string, error?: boolean) => void;
+}) {
+  const [m, setM] = useState(props.memory);
+
+  const save = async () => {
+    if (!m.content.trim()) {
+      props.toast('内容が空です', true);
+      return;
+    }
+    try {
+      await api.put(`/memories/${m.id}`, m);
+      props.onDone();
+    } catch (err) {
+      props.toast((err as Error).message, true);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirm('このメモリーを削除しますか？')) return;
+    try {
+      await api.del(`/memories/${m.id}`);
+      props.toast('削除しました');
+      props.onDone();
+    } catch (err) {
+      props.toast((err as Error).message, true);
+    }
+  };
+
+  return (
+    <Modal
+      title="メモリーを編集"
+      onClose={props.onClose}
+      actions={
+        <>
+          <button className="pill sm danger" onClick={remove}>
+            削除
+          </button>
+          <button className="pill sm primary" onClick={save}>
+            保存
+          </button>
+        </>
+      }
+    >
+      <Field label="内容">
+        <textarea
+          className="tall"
+          value={m.content}
+          onChange={(e) => setM({ ...m, content: e.target.value })}
+          autoFocus
+        />
+      </Field>
+      <Field label="対象（指定するとその人物が在席のときだけ注入）">
+        <div className="select-wrap">
+          <select
+            value={m.subject}
+            onChange={(e) => setM({ ...m, subject: e.target.value })}
+          >
+            <option value="">（常時）</option>
+            {props.characters.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Field>
+      <div className="setting">
+        <div className="txt">
+          <label>ピン留め</label>
+          <span>予算が足りなくても必ず載せる</span>
+        </div>
+        <button
+          className={`toggle${m.pinned === 1 ? ' on' : ''}`}
+          onClick={() => setM({ ...m, pinned: m.pinned ? 0 : 1 })}
+          role="switch"
+          aria-checked={m.pinned === 1}
+        >
+          <span className="knob" />
+        </button>
+      </div>
+    </Modal>
   );
 }

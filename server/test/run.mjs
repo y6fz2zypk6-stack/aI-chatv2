@@ -112,6 +112,7 @@ try {
   await s.abnormal(w);
   await s.edges(w);
   await s.chatListPreview(w);
+  await s.areasSuite();
 
   // v1.5.3: 進行フラグと条件付きイベント
   const ew = await s2.setupEventWorld('ev');

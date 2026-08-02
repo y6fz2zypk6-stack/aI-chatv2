@@ -17,6 +17,7 @@ export default function LorebookPage() {
   const [editing, setEditing] = useState<LorebookEntry | null>(null);
   const [filter, setFilter] = useState('');
   const [category, setCategory] = useState<LoreCategory | ''>('');
+  const [state, setState] = useState<'' | 'on' | 'off'>('');
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
@@ -65,6 +66,7 @@ export default function LorebookPage() {
   const filtered = entries.filter(
     (e) =>
       (!category || e.category === category) &&
+      (!state || (state === 'on' ? e.enabled === 1 : e.enabled === 0)) &&
       (!filter ||
         e.title.includes(filter) ||
         e.content.includes(filter) ||
@@ -72,6 +74,7 @@ export default function LorebookPage() {
   );
 
   const countOf = (c: LoreCategory) => entries.filter((e) => e.category === c).length;
+  const onCount = entries.filter((e) => e.enabled === 1).length;
 
   return (
     <>
@@ -111,6 +114,24 @@ export default function LorebookPage() {
             </span>
           ))}
         </div>
+        {/* 有効・無効フィルター。カテゴリとは独立して掛け合わせる */}
+        <div className="row wrap" style={{ marginBottom: 10 }}>
+          <span className={`chip${state === '' ? ' on' : ''}`} onClick={() => setState('')}>
+            ON / OFF 両方
+          </span>
+          <span
+            className={`chip${state === 'on' ? ' on' : ''}`}
+            onClick={() => setState(state === 'on' ? '' : 'on')}
+          >
+            ON {onCount}
+          </span>
+          <span
+            className={`chip${state === 'off' ? ' on' : ''}`}
+            onClick={() => setState(state === 'off' ? '' : 'off')}
+          >
+            OFF {entries.length - onCount}
+          </span>
+        </div>
         {filtered.map((e) => (
           <Row
             key={e.id}
@@ -122,8 +143,14 @@ export default function LorebookPage() {
             }
             desc={
               <>
-                {e.keys.length > 0 && `${e.keys.join(' / ')}　`}
-                {e.trigger_locations.length > 0 && `場所:${e.trigger_locations.length}　`}
+                {e.keys.length > 0 && (
+                  <>
+                    {e.keys.slice(0, 3).join(' / ')}
+                    {e.keys.length > 3 && <span className="more"> +{e.keys.length - 3}</span>}
+                    {'　'}
+                  </>
+                )}
+                {e.trigger_locations.length > 0 && `場所${e.trigger_locations.length}　`}
                 {e.trigger_seasons.length > 0 && `${e.trigger_seasons.join(',')}　`}
                 {e.category}・優先度{e.priority}
               </>
@@ -171,17 +198,28 @@ function EntryEditor(props: {
   onSaved: () => void;
 }) {
   const [e, setE] = useState(props.entry);
-  const [keysText, setKeysText] = useState(props.entry.keys.join('、'));
+  const [keyDraft, setKeyDraft] = useState('');
   const toast = useApp((s) => s.toast);
 
   const toggleIn = (list: string[], v: string) =>
     list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 
-  const save = async () => {
-    const keys = keysText
+  /** 入力中の語をキーワードへ確定する。読点・カンマでまとめて貼り付けても分割する */
+  const commitKeys = (text: string) => {
+    const added = text
       .split(/[,、，]/)
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter((s) => s && !e.keys.includes(s));
+    if (added.length) setE({ ...e, keys: [...e.keys, ...added] });
+    setKeyDraft('');
+  };
+
+  const save = async () => {
+    // 未確定の入力も取りこぼさない
+    const keys = [
+      ...e.keys,
+      ...keyDraft.split(/[,、，]/).map((s) => s.trim()).filter((s) => s && !e.keys.includes(s)),
+    ];
     try {
       await api.put(`/lorebook/${e.id}`, { ...e, keys });
       toast('保存しました');
@@ -225,12 +263,38 @@ function EntryEditor(props: {
           </div>
         </Field>
       </div>
-      <Field label="発火キーワード（読点・カンマ区切り）">
-        <input
-          value={keysText}
-          onChange={(ev) => setKeysText(ev.target.value)}
-          placeholder="港、港祭り、ハーバー"
-        />
+      <Field label={`発火キーワード（${e.keys.length}語）`}>
+        <div className="chip-input">
+          {e.keys.map((k) => (
+            <span key={k} className="kchip">
+              {k}
+              <button
+                onClick={() => setE({ ...e, keys: e.keys.filter((x) => x !== k) })}
+                aria-label={`${k} を削除`}
+              >
+                <Icon.x size={10} />
+              </button>
+            </span>
+          ))}
+          <input
+            value={keyDraft}
+            onChange={(ev) => {
+              // 区切り文字を打った時点で確定する
+              if (/[,、，]/.test(ev.target.value)) commitKeys(ev.target.value);
+              else setKeyDraft(ev.target.value);
+            }}
+            onKeyDown={(ev) => {
+              if (ev.key === 'Enter' && keyDraft.trim()) {
+                ev.preventDefault();
+                commitKeys(keyDraft);
+              } else if (ev.key === 'Backspace' && !keyDraft && e.keys.length) {
+                setE({ ...e, keys: e.keys.slice(0, -1) });
+              }
+            }}
+            onBlur={() => keyDraft.trim() && commitKeys(keyDraft)}
+            placeholder={e.keys.length ? '追加…' : '港、港祭り、ハーバー'}
+          />
+        </div>
       </Field>
       <Field label="注入本文">
         <textarea

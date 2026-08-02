@@ -1162,6 +1162,149 @@ textarea.tall {
   color: var(--chevron);
 }
 
+/* メモリーの1行。本文は3行まで見せ、タップで編集する */
+.memrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 2px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.memrow .body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.memrow .txt {
+  margin: 0;
+  font: 500 13.5px/1.62 var(--font-ui);
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.memrow .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.memrow .chev {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--chevron);
+}
+
+/* ピン留めは一目で見分けたいので、色だけでなく面でも差を付ける */
+.memrow .icon-btn {
+  color: var(--chevron);
+}
+
+.memrow .icon-btn.accent {
+  color: var(--accent-2);
+  background: var(--surface-2);
+}
+
+/* 一覧で「先頭N件＋残り」を出すときの残り件数 */
+.chatrow .desc .more {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* 語を1つずつチップにして編集する入力欄（発火キーワードなど） */
+.chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border-radius: var(--r-input);
+  padding: 9px 11px;
+}
+
+.chip-input .kchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 12px/1 var(--font-ui);
+  color: var(--muted-strong);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 6px 8px 6px 11px;
+}
+
+.chip-input .kchip button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--chevron);
+  background: none;
+}
+
+.chip-input .kchip button:hover,
+.chip-input .kchip button:focus-visible {
+  color: var(--danger);
+}
+
+.chip-input input {
+  flex: 1;
+  min-width: 96px;
+  background: none;
+  border-radius: 0;
+  padding: 5px 2px;
+  font-size: 13px;
+}
+
+/* エリア編集の1行: 表示名 / 内部ID / 並べ替え / 削除 */
+.area-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.area-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.area-row code {
+  font: 400 11px/1 var(--font-meta);
+  color: var(--muted);
+  background: var(--surface-2);
+  padding: 5px 7px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+
+.area-row .icon-btn {
+  width: 34px;
+  height: 34px;
+}
+
+.area-row .icon-btn:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* 「追加」が2行に折れないようにする */
+.pill.sm {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* 取り消せない操作。他の行と区別が付くよう区切り線を入れて赤で出す */
 .sheet .srow.danger {
   border-top: 1px solid var(--border);

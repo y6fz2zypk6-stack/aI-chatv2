@@ -631,3 +631,108 @@ export async function chatListPreview(w) {
     check('アーカイブ一覧には出る', arch.some((c) => c.id === chat.id));
   }
 }
+
+// ===========================================================================
+/** 世界ごとのエリア（PUT /worlds/:id/areas） */
+export async function areasSuite() {
+  suite('エリア');
+
+  const world = (await api('POST', '/worlds', { name: 'area-test' })).json;
+  const areasOf = async () => (await api('GET', `/worlds/${world.id}`)).json.areas;
+
+  {
+    const defaults = await areasOf();
+    check('新しい世界には既定のエリアが8件入る', defaults.length === 8,
+      defaults.map((a) => a.id).join(','));
+    check('既定に予備の3件が含まれる',
+      ['market', 'residential', 'underground'].every((id) => defaults.some((a) => a.id === id)),
+      defaults.map((a) => a.id).join(','));
+    check('既定の表示名は日本語', defaults[0].name === '丘の上', defaults[0].name);
+  }
+
+  // 表示名の変更は自由
+  {
+    const areas = await areasOf();
+    areas[0] = { ...areas[0], name: '城下の丘' };
+    const r = await api('PUT', `/worlds/${world.id}/areas`, { areas });
+    check('表示名を変えられる', r.status === 200 && r.json.areas[0].name === '城下の丘',
+      JSON.stringify(r.json?.areas?.[0]));
+    check('IDは変わらない', r.json.areas[0].id === 'hilltop', r.json?.areas?.[0]?.id);
+  }
+
+  // 並べ替え
+  {
+    const areas = await areasOf();
+    const swapped = [areas[1], areas[0], ...areas.slice(2)];
+    const r = await api('PUT', `/worlds/${world.id}/areas`, { areas: swapped });
+    check('並べ替えられる', r.json.areas[0].id === 'center', r.json?.areas?.[0]?.id);
+  }
+
+  // 追加
+  {
+    const areas = await areasOf();
+    const r = await api('PUT', `/worlds/${world.id}/areas`, {
+      areas: [...areas, { id: 'temple', name: '聖域' }],
+    });
+    check('エリアを追加できる', r.json.areas.some((a) => a.id === 'temple'));
+  }
+
+  // 不正なID・重複
+  {
+    const areas = await areasOf();
+    const bad = await api('PUT', `/worlds/${world.id}/areas`, {
+      areas: [...areas, { id: '聖域', name: '聖域' }],
+    });
+    check('日本語のIDは拒否する', bad.status === 400, `${bad.status} ${bad.json?.error ?? ''}`);
+    const dup = await api('PUT', `/worlds/${world.id}/areas`, {
+      areas: [...areas, { id: areas[0].id, name: 'かぶり' }],
+    });
+    check('IDの重複は拒否する', dup.status === 400, `${dup.status} ${dup.json?.error ?? ''}`);
+    check('拒否したときは元のまま', (await areasOf()).length === areas.length);
+  }
+
+  // 使用中のエリアは消せない
+  {
+    await api('POST', `/worlds/${world.id}/locations`, {
+      id: 'area_test_dock', name: '桟橋', indoor: 0, area: 'harbor',
+    });
+    const areas = await areasOf();
+    const r = await api('PUT', `/worlds/${world.id}/areas`, {
+      areas: areas.filter((a) => a.id !== 'harbor'),
+    });
+    check('使用中のエリアは削除できない', r.status === 400, `${r.status} ${r.json?.error ?? ''}`);
+    check('どの場所が使っているか知らせる', (r.json?.error ?? '').includes('桟橋'), r.json?.error);
+    check('未使用のエリアは削除できる',
+      (await api('PUT', `/worlds/${world.id}/areas`, {
+        areas: areas.filter((a) => a.id !== 'underground'),
+      })).status === 200);
+  }
+
+  // 汎用PUTからは変更できない（参照整合の確認を迂回させない）
+  {
+    const before = await areasOf();
+    await api('PUT', `/worlds/${world.id}`, { name: 'area-test2', areas: [] });
+    check('PUT /worlds/:id ではエリアを変えられない', (await areasOf()).length === before.length,
+      `${before.length} → ${(await areasOf()).length}`);
+  }
+
+  // 書き出し → 取り込みでエリアが引き継がれる
+  {
+    const dump = (await api('GET', `/worlds/${world.id}/export`)).json;
+    const r = await api('POST', '/worlds/import', dump);
+    const copied = (await api('GET', `/worlds/${r.json.world.id}`)).json.areas;
+    check('取り込み先にエリアが引き継がれる', copied.some((a) => a.name === '城下の丘'),
+      JSON.stringify(copied.map((a) => a.name)));
+  }
+
+  // areas を持たない古い書き出しでも、使われているエリアは選べる
+  {
+    const dump = (await api('GET', `/worlds/${world.id}/export`)).json;
+    delete dump.world.areas;
+    dump.locations = [{ id: 'legacy_zone_loc', name: '旧区画', indoor: 0, area: 'legacy_zone' }];
+    const r = await api('POST', '/worlds/import', dump);
+    const copied = (await api('GET', `/worlds/${r.json.world.id}`)).json.areas;
+    check('古い書き出しでも使用中のエリアが補われる',
+      copied.some((a) => a.id === 'legacy_zone'), JSON.stringify(copied.map((a) => a.id)));
+  }
+}

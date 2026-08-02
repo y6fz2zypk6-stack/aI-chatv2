@@ -1,13 +1,18 @@
 import { db, fromJson, now, toJson } from '../index.js';
 import { ulid } from '../../util/ulid.js';
-import type { VarSchemaEntry, World } from '../../../../shared/types.js';
+import { DEFAULT_AREAS, type VarSchemaEntry, type World, type WorldArea } from '../../../../shared/types.js';
 
-interface Row extends Omit<World, 'vars_schema'> {
+interface Row extends Omit<World, 'vars_schema' | 'areas'> {
   vars_schema: string;
+  areas: string;
 }
 
 function toApi(row: Row): World {
-  return { ...row, vars_schema: fromJson<VarSchemaEntry[]>(row.vars_schema, []) };
+  return {
+    ...row,
+    areas: fromJson<WorldArea[]>(row.areas, []),
+    vars_schema: fromJson<VarSchemaEntry[]>(row.vars_schema, []),
+  };
 }
 
 export function listWorlds(): World[] {
@@ -27,16 +32,17 @@ export function createWorld(input: Partial<World>): World {
     description: input.description || '',
     system_prompt: input.system_prompt || '',
     narrator_prompt: input.narrator_prompt || '',
+    areas: input.areas ?? DEFAULT_AREAS.map((a) => ({ ...a })),
     vars_schema: input.vars_schema ?? [],
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO worlds (id, name, description, system_prompt, narrator_prompt, vars_schema, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO worlds (id, name, description, system_prompt, narrator_prompt, areas, vars_schema, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     world.id, world.name, world.description, world.system_prompt, world.narrator_prompt,
-    toJson(world.vars_schema), world.created_at, world.updated_at,
+    toJson(world.areas), toJson(world.vars_schema), world.created_at, world.updated_at,
   );
   return world;
 }
@@ -47,10 +53,10 @@ export function updateWorld(id: string, patch: Partial<World>): World | undefine
   const next: World = { ...cur, ...patch, id, updated_at: now() };
   db.prepare(
     `UPDATE worlds SET name=?, description=?, system_prompt=?,
-     narrator_prompt=?, vars_schema=?, updated_at=? WHERE id=?`,
+     narrator_prompt=?, areas=?, vars_schema=?, updated_at=? WHERE id=?`,
   ).run(
     next.name, next.description, next.system_prompt, next.narrator_prompt,
-    toJson(next.vars_schema), next.updated_at, id,
+    toJson(next.areas), toJson(next.vars_schema), next.updated_at, id,
   );
   return next;
 }

@@ -4,6 +4,8 @@ import type {
   ChatState,
   LorebookEntry,
   Scenario,
+  VarSchemaEntry,
+  WorldArea,
   WorldEvent,
 } from '../../../shared/types.js';
 import { getCalendar, upsertCalendar } from '../db/repo/calendars.js';
@@ -16,7 +18,7 @@ import { createMemory, listMemories } from '../db/repo/memories.js';
 import { listMessages, listVariants } from '../db/repo/messages.js';
 import { createScenario, listScenarios } from '../db/repo/scenarios.js';
 import { latestSummary } from '../db/repo/summaries.js';
-import { createWorld, getWorld } from '../db/repo/worlds.js';
+import { createWorld, getWorld, updateWorld } from '../db/repo/worlds.js';
 
 export const exportsRouter = Router();
 
@@ -133,7 +135,14 @@ exportsRouter.get('/worlds/:id/export', (req, res) => {
 
 interface WorldImport {
   format?: string;
-  world?: { name?: string; description?: string; system_prompt?: string; narrator_prompt?: string };
+  world?: {
+    name?: string;
+    description?: string;
+    system_prompt?: string;
+    narrator_prompt?: string;
+    areas?: WorldArea[];
+    vars_schema?: VarSchemaEntry[];
+  };
   calendar?: Record<string, unknown>;
   characters?: (Partial<Character> & { id?: string; memories?: { subject?: string; content?: string; pinned?: number }[] })[];
   lorebook?: (Partial<LorebookEntry> & { character_id?: string | null })[];
@@ -181,6 +190,20 @@ exportsRouter.post('/worlds/import', (req, res) => {
   }
   const remapLoc = (id: string | null | undefined): string =>
     id ? (locMap.get(id) ?? id) : '';
+
+  // 古い書き出し（areas を持たない）から取り込むと、場所が参照するエリアが
+  // 世界の一覧に無い状態になり得る。使われているエリアは必ず選べるようにしておく
+  {
+    const areas = [...world.areas];
+    const known = new Set(areas.map((a) => a.id));
+    for (const l of listLocations(world.id)) {
+      if (l.area && !known.has(l.area)) {
+        known.add(l.area);
+        areas.push({ id: l.area, name: l.area });
+      }
+    }
+    if (areas.length !== world.areas.length) updateWorld(world.id, { areas });
+  }
 
   for (const e of data.lorebook ?? []) {
     createLorebookEntry(world.id, {

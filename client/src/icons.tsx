@@ -54,6 +54,11 @@ export const Icon = {
       <path d="M6 9l6 6 6-6" />
     </Svg>
   ),
+  chevU: ({ size = 12, className }: Props = {}) => (
+    <Svg size={size} stroke={2.6} className={className}>
+      <path d="M18 15l-6-6-6 6" />
+    </Svg>
+  ),
   plus: ({ size = 24, className }: Props = {}) => (
     <Svg size={size} stroke={2.4} className={className}>
       <path d="M12 5v14M5 12h14" />

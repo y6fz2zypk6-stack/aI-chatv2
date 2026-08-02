@@ -32,6 +32,14 @@ function buildLegacyDb() {
       id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE locations (
+      id TEXT PRIMARY KEY,
+      world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT '',
+      indoor INTEGER NOT NULL DEFAULT 0,
+      area TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
     CREATE TABLE scenarios (
       id TEXT PRIMARY KEY,
       world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
@@ -110,6 +118,11 @@ function buildLegacyDb() {
     .run('v2', '01BBBB', 0, '候補B', st(920), NOW + 1);
   d.prepare('INSERT INTO summaries VALUES (?,?,?,?,?)')
     .run('s1', 'c1', '01BBBB', 'あらすじ', NOW);
+  // 既定リストに無いエリアも使っている
+  d.prepare('INSERT INTO locations VALUES (?,?,?,?,?,?,?)')
+    .run('loc_a', 'w1', '古い酒場', 1, 'backstreet', NOW, NOW);
+  d.prepare('INSERT INTO locations VALUES (?,?,?,?,?,?,?)')
+    .run('loc_b', 'w1', '灯台', 0, 'lighthouse_cape', NOW, NOW);
   d.prepare('INSERT INTO world_events VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run('e1', 'w1', '旧イベント', '{"month":9,"weather":["雨"]}', 'once', 0, '雨が降っている。', 1, NOW, NOW);
   d.prepare('INSERT INTO event_fires (event_id, chat_id, game_time) VALUES (?,?,?)')
@@ -134,8 +147,8 @@ try {
   const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 
   console.log('\n── マイグレーション（旧スキーマ → v1.5.3）');
-  check('schema_migrations に3件記録される',
-    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 3);
+  check('schema_migrations に4件記録される',
+    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 4);
 
   // #1 seq と一意制約
   const seqs = d.prepare('SELECT id, seq FROM messages ORDER BY seq').all();
@@ -182,6 +195,20 @@ try {
   check('event_fires が作り直され、旧履歴が引き継がれる',
     !!fire && fire.event_id === 'e1' && fire.fired_at_time === 900, JSON.stringify(fire));
   check('引き継いだ履歴の id は文字列', typeof fire?.id === 'string', String(fire?.id));
+
+  // #4 エリア
+  const areas = JSON.parse(d.prepare('SELECT areas FROM worlds').get().areas);
+  check('worlds.areas が追加される', Array.isArray(areas), JSON.stringify(areas));
+  check('既定の5つは残る',
+    ['hilltop', 'center', 'backstreet', 'harbor', 'outskirts'].every((id) =>
+      areas.some((a) => a.id === id)),
+    areas.map((a) => a.id).join(','));
+  check('既定IDには日本語の表示名が付く',
+    areas.find((a) => a.id === 'backstreet')?.name === '裏通り',
+    JSON.stringify(areas.find((a) => a.id === 'backstreet')));
+  check('場所が使っている独自エリアも拾う',
+    areas.some((a) => a.id === 'lighthouse_cape' && a.name === 'lighthouse_cape'),
+    areas.map((a) => a.id).join(','));
   d.close();
 
   // 2回目の起動でも落ちないこと（冪等性）

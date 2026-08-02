@@ -140,6 +140,10 @@ V2カード（`chara_card_v2`）/ V2 `character_book` JSON を取り込んでく
 - `update_mode: system_only` のキーはLLMの `set_var` を破棄し警告を返す。イベントの
   `set_vars` と手動編集からは更新できる（手動編集のみ `monotonic` も無視できる救済手段）
 - 世界取り込み時、場所IDが既存と衝突する場合は `_2` 等の接尾辞を付けて自動リマップ
+- 場所のエリアは `worlds.areas`（`[{id, name}]`）で世界ごとに持つ。`id` は `locations.area` と
+  イベント条件の `location_area` から参照されるため作成後は不変で、アプリから変えられるのは
+  `name` と並び順のみ（リネームで参照が壊れるのを避けるため）。使用中のエリアは削除できない。
+  変更は `PUT /worlds/:id/areas` 専用ルートのみで、汎用の `PUT /worlds/:id` からは変更できない
 - 会話の順序は `messages.seq`（チャット内連番）が正で、ULIDの時系列性には依存しない。
   `UNIQUE(chat_id, seq)` と `UNIQUE(message_id, index)` をDB側で保証している
 - `chats.initial_state` にChat作成時の初期ステートを保持する。先頭メッセージの再生成の
