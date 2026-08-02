@@ -1,0 +1,999 @@
+# Character Chat 設計書 v2
+
+ビジュアルノベル風AIチャットPWA。個人利用・VPS単体運用。
+
+この文書は **v1.4 と追補 v1.5.3 を統合し、実装済みの挙動に合わせて書き直したもの**である。
+以後の変更はこの文書を正とする。
+
+- 実装との対応: 節見出しの末尾に主な実装ファイルを添える
+- 利用者向けの操作説明は `docs/GUIDE.md` にある。この文書は設計の根拠と不変条件を扱う
+
+---
+
+## 目次
+
+1. [設計原則](#1-設計原則)
+2. [構成と運用](#2-構成と運用)
+3. [データモデル](#3-データモデル)
+4. [ステート機構](#4-ステート機構)
+5. [生成フロー](#5-生成フロー)
+6. [プロンプト組み立て](#6-プロンプト組み立て)
+7. [ロアブック](#7-ロアブック)
+8. [進行フラグ](#8-進行フラグ)
+9. [条件付きイベント](#9-条件付きイベント)
+10. [要約とメモリー](#10-要約とメモリー)
+11. [候補・再生成・分岐](#11-候補再生成分岐)
+12. [暦・天候・営業時間](#12-暦天候営業時間)
+13. [API](#13-api)
+14. [設定](#14-設定)
+15. [UI](#15-ui)
+16. [認証とセキュリティ](#16-認証とセキュリティ)
+17. [取り込みと書き出し](#17-取り込みと書き出し)
+18. [マイグレーション](#18-マイグレーション)
+19. [テスト](#19-テスト)
+20. [不変条件の一覧](#20-不変条件の一覧)
+
+---
+
+## 1. 設計原則
+
+### 1.1 二つの柱
+
+**① 小説品質の出力を、チャットUIで読ませる。**
+モデルには話者ラベル付きのプレーンテキストを書かせ、アプリ側で発話単位に分解して吹き出しにする。
+JSONで返させない。構造化を強いると文体が痩せるため。
+
+**② 世界の状態はアプリが持ち、モデルには持たせない。**
+時刻・場所・在席者・天候・進行フラグはDBが正とする。モデルは「差分」だけを申告し、
+検証と適用はアプリが行う。モデルの記憶に依存する設計を禁止する。
+
+### 1.2 派生する規則
+
+| 規則 | 理由 |
+|---|---|
+| 時刻の演算は `domain/calendar.ts` にのみ書く | 換算の重複実装は必ずズレる |
+| 会話の順序は `messages.seq` が正。ULIDの時系列性に依存しない | 同一ミリ秒の連投で順序が壊れる |
+| 再生成の基準ステートは「直前メッセージの `state_after`」 | `chats.state` を基準にすると時間が累積する |
+| 参照に使うIDは作成後に変更しない（場所ID・エリアID・進行フラグのキー） | 参照が入れ子JSONにも入るため、リネームは黙って壊れる |
+| 失敗は握り潰さず、警告として利用者に返す | 「静かに効かない」が最も直しにくい |
+
+### 1.3 スコープ外
+
+多人数同時利用・ロール権限・課金・モバイルネイティブアプリ・全文検索。
+単一利用者・単一VPS・SQLite1ファイルの範囲に閉じる。
+
+---
+
+## 2. 構成と運用
+
+### 2.1 リポジトリ
+
+npm workspaces のモノレポ。ルート `package.json` に `"type": "module"` を置く
+（`shared/` の tsc 出力をESMにするため。これが無いとサーバ起動時に named export が解決できない）。
+
+```
+shared/types.ts     API境界の型と共有定数（クライアント・サーバの両方から参照）
+server/             Express 5 + better-sqlite3
+  src/db/           スキーマ・マイグレーション・リポジトリ層
+  src/domain/       純粋なドメインロジック（暦・ステート・ロア・イベント・進行フラグ・要約・記憶）
+  src/llm/          OpenRouter・プロンプト組み立て・応答パース
+  src/routes/       HTTPルート
+  test/             回帰テスト（モックLLM + 実HTTP）
+client/             React 18 + Vite + Zustand + React Router
+docs/               SPEC・GUIDE
+```
+
+**層の依存方向は `routes → domain → db` の一方向**とする。`domain/` からHTTPを触らない。
+
+### 2.2 実行
+
+```bash
+npm install
+cp .env.example .env
+npm run dev     # server:3000（API） / client:5173（Vite、/api をプロキシ）
+npm run build && npm start   # 本番。Expressが client/dist を配信する
+npm test        # マイグレーション検証 → 機能テスト
+```
+
+### 2.3 環境変数
+
+| 変数 | 既定 | 説明 |
+|---|---|---|
+| `OPENROUTER_API_KEY` | — | 必須。**ブラウザには渡さない** |
+| `APP_PASSWORD` | 空 | 空だと認証が素通り。**公開VPSでは必須** |
+| `SESSION_SECRET` | `APP_PASSWORD` | セッション比較のHMAC鍵 |
+| `DEFAULT_MODEL` | `anthropic/claude-opus-5` | |
+| `UTILITY_MODEL` | `anthropic/claude-sonnet-5` | 要約・抽出・継続判定 |
+| `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 3000 / `./data/app.sqlite` / … | |
+| `COOKIE_SECURE` | 未設定 | 未設定なら `APP_URL` が https のときだけ有効 |
+| `TRUST_PROXY` | 未設定 | リバースプロキシ配下の段数（nginx背後なら `1`） |
+| `OPENROUTER_BASE_URL` | OpenRouter | テストでモックに差し替えるための seam |
+
+### 2.4 バックアップ
+
+**DBは1ファイル（SQLite）で完結させる。** アバター画像も外部ファイルにせず、
+320px WebP の data URL として `characters.avatar` / `personas.avatar` に埋める（1枚 2〜3KB）。
+`DB_PATH` のファイルをコピーすれば全データが揃うことを保つ。
+
+---
+
+## 3. データモデル
+
+実装: `server/src/db/schema.sql` / `shared/types.ts`
+
+### 3.1 テーブル
+
+| テーブル | 役割 | 主な制約 |
+|---|---|---|
+| `worlds` | 世界。`areas`・`vars_schema` をJSONで持つ | |
+| `characters` | キャラ。`is_npc_pool` で準レギュラー | `world_id` CASCADE |
+| `personas` | ユーザーの分身。世界に属さない | |
+| `scenarios` | 開始条件のテンプレート | `world_id` CASCADE |
+| `chats` | 会話。`state` / `initial_state` を持つ | `scenario_id` は SET NULL |
+| `messages` | 発言。`seq` が順序の正 | **UNIQUE(chat_id, seq)** |
+| `message_variants` | 再生成の候補 | **UNIQUE(message_id, "index")** |
+| `lorebook_entries` | 世界設定の断片 | |
+| `locations` | 場所。IDはグローバル一意 | |
+| `calendars` | 世界ごとの暦・天候表 | `world_id` が主キー |
+| `world_events` | 条件付きイベント | `"when"` `"check"` は予約語 |
+| `event_fires` | 発火履歴（チャット単位） | |
+| `summaries` | あらすじ。`up_to_seq` が範囲の正 | |
+| `memories` | キャラの長期記憶 | |
+| `settings` | key-value | |
+| `schema_migrations` | 適用済みマイグレーション | |
+
+`PRAGMA foreign_keys = ON` は接続ごとにアプリ側で有効化する（SQLiteの既定はOFF）。
+
+### 3.2 JSON列の扱い
+
+`aliases` / `keys` / `participant_ids` / `state` / `state_after` / `areas` / `vars_schema` /
+`"when"` / `set_vars` などはJSON文字列で保存し、**リポジトリ層で必ず展開してからAPI境界へ出す**。
+ルートやドメインが生のJSON文字列を扱うことを禁止する。
+
+### 3.3 `seq`
+
+`messages.seq` はチャット内の1始まりの連番。以下すべての基準になる。
+
+- 履歴窓の切り出し・前後メッセージの取得
+- 未要約範囲（`summaries.up_to_seq`）・未抽出範囲（`chats.extracted_up_to_seq`）
+- fork のコピー範囲（`seq <= 分岐点`）
+- 削除時の巻き戻し範囲
+
+**境界をメッセージIDで持たない。** 境界のメッセージが削除されると範囲が壊れるため、
+`up_to_message_id` は表示・参照用に残しつつ、判定は必ず `seq` で行う。
+
+### 3.4 継承フラグ
+
+`events_enabled` / `vars_enabled` は `chats` → `scenarios` → `settings` の3段で解決する。
+`chats` と `scenarios` の列は **NULL許容**で、NULLが「上位から継承」を意味する。
+
+```ts
+resolveFlag(chat.events_enabled, scenario.events_enabled, settings.events_enabled)
+// 先に見つかった非NULLを採用。どちらもNULLなら全体設定
+```
+
+---
+
+## 4. ステート機構
+
+実装: `server/src/domain/state.ts`
+
+### 4.1 `ChatState`
+
+```ts
+{
+  time: number;              // 暦元期からの通算分（整数）。これが時刻の唯一の内部表現
+  location: string;          // 場所ID
+  location_note: string;     // 未登録地の退避先。空でないとき location は据え置き
+  weather: string;
+  present: string[];         // 在席者のキャラID
+  vars?: Record<string, VarValue>;  // 進行フラグ
+}
+```
+
+### 4.2 差分の適用
+
+モデルは `@@@STATE` フェンスで差分だけを返す。適用規則は以下。
+
+| 項目 | 規則 |
+|---|---|
+| `elapsed_minutes` | 負値は0。1440超はそのまま適用し**警告**を返す（UIが「⚠ +Xh」を出す） |
+| `location` | ID一致 → 表示名一致 → どちらも無ければ `location_note` に退避し警告 |
+| `present_add` / `present_remove` | ID → 名前 → 別名 の順に解決。解決できなければ無視して警告 |
+| `set_var` | スキーマ検証を通す（§8） |
+| 天候 | **日付が変わったときだけ**抽選する（§12.3） |
+
+`present` は `(present ∪ add) − remove`。**場所が変わっても在席者は維持する**
+（「二人で店を出る」が最頻のため。別れる場合はモデルが `present_remove` を明示する）。
+
+### 4.3 基準ステート
+
+**すべての生成は「基準ステート」に差分を足して新しい `state_after` を作る。**
+基準の決め方はモードごとに異なり、ここを誤ると時間が累積する。
+
+| モード | 基準 |
+|---|---|
+| 通常送信 | 直前に保存した user メッセージの `state_after`（＝その前の値のコピー） |
+| retry | 末尾 user の `state_after` |
+| autoContinue | 末尾 assistant の `state_after` |
+| **regenerate** | **対象の1つ前のメッセージの `state_after`。存在しなければ `chats.initial_state`** |
+
+先頭メッセージの再生成で `chats.state` を基準にすると、再生成のたびに時間が積み上がる
+（18:20 → 18:40 → 19:00）。これを避けるために `chats.initial_state` を持つ。
+
+### 4.4 `chats.initial_state`
+
+Chat作成時にシナリオからコピーした初期ステート。**以後変更しない。** 用途は2つ。
+
+1. 先頭メッセージ再生成の基準
+2. 全メッセージ削除時の復元先
+
+シナリオを参照しないので、**シナリオを後から編集・削除しても既存Chatの挙動は変わらない**。
+
+### 4.5 手動編集
+
+ステート編集画面から時刻・場所・天候・在席者・進行フラグを直接変更できる。
+**進行フラグの手動編集だけは `monotonic` と `system_only` を課さない**（詰まったときの救済手段）。
+
+---
+
+## 5. 生成フロー
+
+実装: `server/src/routes/messages.ts`
+
+### 5.1 応答フォーマット
+
+モデルには話者ラベル付きプレーンテキストを書かせる。
+
+```
+アシュリー: 本を閉じて顔を上げた。「いらっしゃい」
+
+@@@STATE
+elapsed_minutes: 20
+location: vein_bookstore
+present_add:
+present_remove:
+set_var: toby_met=true
+@@@END
+```
+
+- 行頭 `話者名: ` が発話の区切り。セリフは `「」`、それ以外は地の文
+- 1発話 = 1吹き出し。段落で発話を分けない
+- その場限りの脇役は `NPC[店主]: ` の形式。登録済み人物をこの形式で書かせない
+- `*` や `_` で地の文を囲ませない
+
+### 5.2 話者の解決順
+
+`llm/parse.ts` の `resolveSpeaker`。
+
+1. ナレーター
+2. 参加キャラの名前・別名
+3. 準レギュラーの名前・別名 → **自動参加を「提案」**（勝手に参加させず確認ダイアログを出す）
+4. `NPC[...]` 形式 → その場限りの脇役
+5. ペルソナ名 → 警告（モデルがユーザーを代弁している）
+6. 該当なし → 直前の発話に本文として連結
+
+### 5.3 ストリーミング
+
+SSE。`delta` → `done` / `error`。
+
+**`@@@STATE` 以降は画面に流さない。** 判定のため、末尾 `@@@STATE` の文字数分は常に保留してから
+送出する（フェンスの断片が一瞬見えるのを防ぐ）。
+
+`max_tokens` は設定値 +200 で発行する。本文が上限に達してフェンスが切れるのを緩和するため。
+
+### 5.4 同時生成の防止
+
+チャットIDごとに `AbortController` を `inflight` Map で保持する。
+二重生成は 409（「他の端末で生成中です」）。`POST /chats/:id/stop` で中断できる。
+
+### 5.5 stop シーケンス
+
+`["\n{ペルソナ名}:", "\nuser:"]`。先頭の改行は1文字目での誤停止対策。
+
+### 5.6 フェンス欠落
+
+パースできなかった場合は `elapsed_minutes: 10`・他は変更なし、で進める。
+**チャットごとに連続欠落回数を数え、3回でUIに警告を出す**（メモリ上。1回でも成功すればリセット）。
+
+原因の切り分けができるよう、抽出方式を「別コール抽出」に切り替えられる（§14）。
+
+### 5.7 生成の中断・失敗
+
+| 状況 | 保存 | `generation_status` |
+|---|---|---|
+| 正常終了 | する | `complete` |
+| 途中で停止 | **ここまでを保存する** | `stopped` |
+| 通信・API失敗 | **保存しない**（末尾がuserのまま残り retry できる） | — |
+
+**`stopped` ではイベント判定を走らせない**（§9.2）。
+
+### 5.8 後処理の順序
+
+```
+サニタイズ → フェンス分離 → 発話パース → applyDelta
+  → メッセージ／候補の保存 → イベント判定パイプライン（complete時のみ）
+  → chats.state 更新 → 要約・抽出のバックグラウンド起動 → done送出
+```
+
+---
+
+## 6. プロンプト組み立て
+
+実装: `server/src/llm/prompt.ts`
+
+### 6.1 メッセージ構成
+
+```
+[system]  ← 下表の順に連結した1本
+[user/assistant] × 履歴窓
+[system]  ← 現在の状況ブロック（末尾system）
+```
+
+**状況ブロックを末尾に置く。** 後ろほど強く参照されるため、直近の事実をここに集約する。
+
+履歴窓は**あらすじの境界（`up_to_seq`）より後**から最大 `history_window` 件を取る。
+要約済みの範囲は生では送らず、あらすじが肩代わりする。
+
+### 6.2 system の順序
+
+| # | ブロック | 削減対象 |
+|---|---|---|
+| 1 | 応答フォーマット指示 | — |
+| 2 | 進行フラグの更新指示（有効かつ書き込み可能なキーがあるときのみ） | — |
+| 3 | 設定情報の扱い | — |
+| 4 | アプリ共通のシステムプロンプト | — |
+| 5 | 世界のシステムプロンプト | — |
+| 6 | シナリオ設定 → 参加キャラ定義 | — |
+| 7 | 準レギュラーの定義（**関連ロアが発火したときだけ**） | — |
+| 8 | ナレーター指示 → ペルソナ定義 | — |
+| 9 | メモリー | ⑤ |
+| 10 | あらすじ | — |
+| 11 | 関連する世界観情報（ロア） | ③④ |
+
+### 6.3 末尾systemのブロック順序
+
+**この順序は固定とする。**
+
+```
+# 現在の状況        ← 事実
+# 進行状況          ← 物語の段階（§8）
+# 発生中の出来事    ← 今起きていること（§9、inject_mode = fact）
+# 今回の演出指示    ← どう書くか（§9、inject_mode = instruction）
+```
+
+事実を読ませてから「どう出すか」の指示を当てる。逆順にすると指示が事実に埋もれる。
+
+### 6.4 「現在の状況」の中身
+
+```
+# 現在の状況
+3年秋 8月2週 火曜 18:30 ／ 場所:ヴェイン古書店 ／ 天候:霧
+日没後。
+〈無銘〉は営業中。〈マルロウ〉は閉店済み。
+終電まであと40分。
+その場にいる人物:アシュリー
+場所ID: vein_bookstore=ヴェイン古書店, ...
+人物ID: 01xxx=アシュリー, ...
+日付が変わり、天候は霧になった。
+```
+
+- 屋内にいるときは天候行を出さない
+- 営業状況は**現在地と同じエリア**の店のみ。`location_note` 使用中は出さない
+- 終電行は通知窓（既定60分前）の中だけ
+- 最終行は日付が変わったターンのみ
+
+### 6.5 予算
+
+```
+入力予算 = モデルのコンテキスト長 − (max_tokens + 200) − context_safety_tokens
+```
+
+日本語は保守的に `文字数 × 1.1` トークンで見積もる。超過時の削減順は固定。
+
+```
+① 履歴の古い方（最低2件は残す）
+② キーワード発火のロア（priority 昇順）
+③ 場所・季節タグのロア（priority 昇順）
+④ メモリー（末尾から）
+```
+
+`always` のロアは削減対象にしない。必須項目だけで超過したら **413** を返す
+（黙って切り詰めない）。
+
+---
+
+## 7. ロアブック
+
+実装: `server/src/domain/lorebook.ts`
+
+### 7.1 スコープ
+
+以下を**すべて**満たすエントリだけが判定対象。
+
+- その世界のエントリである
+- `enabled = 1`
+- `character_id` が未指定、または参加キャラ（準レギュラー含む）である
+
+### 7.2 発火
+
+| 種類 | 条件 |
+|---|---|
+| `always` | 常に |
+| 場所タグ | 現在地が `trigger_locations` に含まれる（`location_note` 使用中は判定しない） |
+| 季節タグ | 現在の季節が `trigger_seasons` に含まれる |
+| キーワード | 直近 `lore_scan_window` 件の本文に `keys` のいずれかが含まれる（大小無視） |
+
+### 7.3 再帰走査
+
+`lore_recursion`（1〜4）。発火したエントリの本文を走査対象に足して、もう一巡する。
+新規発火が無くなった時点で打ち切る。
+
+### 7.4 採用順と予算
+
+優先順は **① always → ② 場所・季節タグ → ③ キーワード**。同順位内は `priority` 降順、`id` 昇順。
+`lore_budget_chars` を超えた分は落とす。`always` だけで予算を超えた場合は設定ミスとして警告する。
+
+---
+
+## 8. 進行フラグ
+
+実装: `server/src/domain/vars.ts`
+
+### 8.1 目的
+
+「事件がどこまで進んだか」「もう会ったか」といった**物語の状態**を、時刻や場所と同じく
+アプリが持つ。モデルの記憶や、あらすじの文面に頼らない。
+
+### 8.2 スキーマ
+
+`worlds.vars_schema` にキーを定義する。**ここに無いキーは誰も書き込めない**
+（誤字による野良キーの増殖を防ぐ）。
+
+```ts
+{
+  key: string;              // 英字始まりの識別子
+  type: 'number' | 'boolean' | 'string';   // string は32文字まで
+  role?: 'flag' | 'phase';
+  default?: VarValue;
+  label?: string;
+  min?: number; max?: number;              // 範囲外は丸める
+  monotonic?: boolean;                     // true なら後退する更新を棄却
+  update_mode?: 'system_and_llm' | 'system_only';
+  phases?: { value, name, public_state?, private_note? }[];
+}
+```
+
+上限は 64件（`MAX_VARS`）。
+
+### 8.3 更新経路と権限
+
+| 経路 | `system_only` | 範囲外 | `monotonic` |
+|---|---|---|---|
+| モデル（`set_var:`） | **破棄**して警告 | 丸める | 棄却 |
+| イベント（`set_vars`） | 更新できる | 丸める | 棄却 |
+| 手動編集 | 更新できる | 丸める | **通す**（救済手段） |
+
+### 8.4 `public_state` と `private_note`
+
+`phases` の `public_state` は「進行状況」ブロックに載る。
+**`private_note` はプロンプトへ一切載せない。** 作者が構成を見失わないためのメモ欄であり、
+`buildVarsBlock` は `public_state` のみを読む。この不変条件はテストで固定している。
+
+### 8.5 初期化
+
+Chat作成時に `vars_schema` の `default` で `state.vars` を埋め、
+シナリオの `initial_state.vars` で上書きする。
+
+### 8.6 無効時の挙動
+
+`vars_enabled` が偽のとき、進行フラグは**存在しないものとして扱う**。
+
+- 「進行状況」ブロックを出さない
+- `set_var` の指示文を出さない
+- モデルの `set_var` を適用せず警告のみ残す（**既存の値は保持する**）
+- 条件式の `var` 述語は常に偽
+
+---
+
+## 9. 条件付きイベント
+
+実装: `server/src/domain/events.ts`
+
+### 9.1 判定パイプライン
+
+上から順に評価し、1つでも落ちたら見送る。
+
+| # | 段階 | 内容 |
+|---|---|---|
+| 1 | 有効 | `enabled = 1` かつ `events_enabled` が真 |
+| 2 | `when` | 条件式（§9.3） |
+| 3 | `check` | `every_turn` / `on_enter` / `on_day_change` / `on_location_change` |
+| 4 | `trigger` | 同じスコープで発火済みでないか（§9.4） |
+| 5 | `chance` | シード固定の抽選（§9.5） |
+| 6 | 上限 | `priority` 降順・`id` 昇順で `event_max_per_turn` 件。**`instruction` は常に1件まで** |
+
+各イベントがどの段階で落ちたかは `POST /worlds/:id/events/evaluate` が返す
+（`adopted` / `condition` / `check` / `trigger` / `chance` / `capped`）。
+
+### 9.2 実行タイミング ★v1.4からの変更
+
+**判定は assistant の生成が完了し `state_after` が確定した直後にのみ走り、
+注入は次のターンのプロンプトに載る。**
+
+v1.4 では「生成前に基準ステートで判定し、そのターンに注入」していた。
+これだと「カフェに着いた」応答が返る前に「店内は混んでいる」が注入され、
+まだ起きていない事象を前提に書かせてしまう。
+
+- 途中で停止した生成（`stopped`）では判定しない。次のターンで改めて判定する
+- `set_vars` の適用と発火記録は**1トランザクション**で行う。書き戻した `state_after` は
+  メッセージ本体と表示中の候補の両方に反映する
+
+### 9.3 条件式
+
+オブジェクトの複数キーは AND、配列で与えた値は OR。`all` / `any` / `not` で入れ子にできる。
+
+| 述語 | 例 |
+|---|---|
+| `season` / `month` / `week` / `weekday` | `{ "month": [9, 10] }` |
+| `time_after` / `time_before` | `{ "time_after": "17:00" }` |
+| `location` / `location_area` | `{ "location_area": ["harbor"] }` |
+| `weather` | `{ "weather": ["雨", "雪"] }` |
+| `present_has` / `present_lacks` | `{ "present_lacks": "toby" }` |
+| `var` + `eq`/`ne`/`in`/`gt`/`gte`/`lt`/`lte` | `{ "var": "case_phase", "gte": 2 }` |
+
+**`location_note` 使用中は場所系の述語を常に偽とする**（エリアを導出できないため）。
+`vars_enabled` が偽のとき `var` 述語は常に偽。
+
+### 9.4 トリガーとスコープ
+
+| `trigger` | `scopeKey` |
+|---|---|
+| `once` | `'once'` |
+| `once_per_day` | 通算日 |
+| `once_per_visit` | 訪問ID（`location_note` 使用中は特定できず見送り） |
+| `once_per_phase` | `{trigger_var}:{現在値}` |
+| `once_per_year` | 通算年 |
+| `cooldown` | スコープなし。前回発火から `cooldown_days` 経過で再発火 |
+| `repeat` | スコープなし。履歴を見ない |
+
+発火履歴は**チャット単位**。別のチャットでは改めて発火する。
+
+### 9.5 抽選のシード
+
+```
+seed = `${chatId}:${eventId}:${drawKey}`
+drawKey = scopeKey ?? (check === 'on_day_change' ? 通算日 : 基準メッセージID)
+```
+
+**スコープを持つ trigger では `drawKey` を `scopeKey` で「置き換える」（連結しない）。**
+連結すると、再生成のたびに基準メッセージIDが変わり抽選をやり直せてしまう。
+
+天候も同じ考え方で `${chatId}:weather:${通算日}` をシードにする。
+**再生成しても同じ日なら同じ天気になる。**
+
+### 9.6 履歴の整合
+
+| 操作 | 発火履歴 |
+|---|---|
+| 再生成 | **対象メッセージの履歴を削除してから再判定**（作り直した候補で改めて判定する） |
+| 分岐（fork） | 分岐点までの履歴を引き継ぐ（分岐先で二重に起きない） |
+| メッセージ削除 | そのメッセージ以降（`seq` 基準）の履歴を削除 |
+| 手動取り消し | ステート編集画面から1件ずつ削除できる |
+
+### 9.7 フェーズ遷移の欠落チェック
+
+`GET /worlds/:id/events/phase-check` が、**どのイベントの `set_vars` からも到達できないフェーズ**を返す。
+「フェーズ3を作ったのに3にするイベントが無い」という作り忘れを見つけるためのもの。
+
+---
+
+## 10. 要約とメモリー
+
+### 10.1 要約 — `server/src/domain/summary.ts`
+
+未要約メッセージが `summary_interval` 件たまったら、バックグラウンドで実行する。
+
+```
+retainWindow(n) = max(1, min(24, n - 2))   ← 直近この件数は要約せず生で残す
+対象 = 未要約の先頭から (n - retainWindow) 件
+```
+
+**前回のあらすじと今回の対象範囲を統合して1本に書き直させる。**
+前回分を捨てて新規分だけ要約する実装を禁止する（古い出来事が消えるため）。
+
+要約プロンプトには必ず以下を入れる。
+
+- 出来事にはゲーム内日付を添える
+- **人物の設定（容姿・口調・経歴・立場）は要約に含めない**。これらはロアブックが持つ。
+  要約に書くのは出来事と関係の変化のみ
+
+境界は `summaries.up_to_seq` に記録する。
+
+### 10.2 メモリー — `server/src/domain/memory.ts`
+
+キャラごとの長期記憶。会話をまたいで保持する。
+
+| 項目 | 意味 |
+|---|---|
+| `subject` 空 | 常時注入 |
+| `subject` あり | その人物が**在席中**、または**関連ロアが発火**したときだけ注入 |
+| `pinned` | 予算削減の対象から外す |
+| `source` | `manual` / `auto`（自動抽出） |
+
+`auto_extract` がONのとき、要約と同じ契機で `utility_model` に抽出させる。
+抽出済み境界は `chats.extracted_up_to_seq`。
+
+---
+
+## 11. 候補・再生成・分岐
+
+### 11.1 候補（variant）
+
+再生成すると同じメッセージに候補が増える。**初回生成でも必ず index 0 の候補を作る**
+（後から再生成したときに元の応答が失われないようにするため）。
+
+`messages` 側の `content` / `utterances` / `state_after` は**表示中の候補のコピー**。
+候補を切り替えると、この3つと `active_variant` を差し替える。
+
+`UNIQUE(message_id, "index")` をDBで保証する。
+
+### 11.2 過去メッセージの扱い
+
+**過去メッセージの候補めくりは行わない。** 途中の候補を切り替えると、それ以降の
+`state_after` がすべて不整合になるため。過去の分岐点で別の候補を選ぶ操作は
+**fork に一本化する**。
+
+### 11.3 fork
+
+```
+POST /chats/:id/fork { message_id, variant_index? }
+```
+
+- 分岐点までのメッセージと候補をすべて新チャットへコピーする（`seq` は1から振り直す）
+- `variant_index` を指定した場合、分岐点のメッセージだけその候補の内容で確定する
+- **元チャットは一切書き換えない**
+- 新チャットの現在ステートは、選んだ候補の `state_after` と一致する
+- `initial_state` は元チャットのものを引き継ぐ
+- 発火履歴も分岐点までコピーする
+
+### 11.4 削除
+
+メッセージを削除すると、`chats.state` をその1つ前の `state_after` に戻す。
+**全件削除した場合は `chats.initial_state` に戻す**（シナリオを参照しない）。
+`seq` 以降の発火履歴も消す。
+
+---
+
+## 12. 暦・天候・営業時間
+
+実装: `server/src/domain/calendar.ts`
+
+### 12.1 既定の暦
+
+**1ヶ月28日・1年12ヶ月（＝336日）。** 週が常に第1〜第4週に収まるので、
+「9月の最終週」のような指定が安定する。
+
+```
+季節: 春[3,4] 夏[5,6] 秋[7,8,9] 冬[10,11,12,1,2]
+```
+
+日の出・日没は月ごとの表を持ち、**書いていない月は前後の月から補間**する。
+
+### 12.2 内部表現
+
+暦元期（1年1月1日 00:00）からの**通算分（整数）**のみ。
+年月日時分への変換は `toGameTime` / `toMinutes` に限る。
+
+### 12.3 天候
+
+**日付が変わったときだけ**、季節ごとの重み表から抽選する。
+ターンごとに引くと晴れと雨が数ターンで往復してしまうため。
+
+抽選はシード固定（§9.5）。屋内にいるときは状況ブロックに天候行を出さない。
+
+### 12.4 エリア
+
+`worlds.areas` は `[{ id, name }]` の配列。**新しい世界には8件入る**
+（`hilltop` / `center` / `backstreet` / `harbor` / `outskirts` / `market` / `residential` / `underground`）。
+
+- **`name`（表示名）と並び順はいつでも変えられる**
+- **`id` は作成後に変更できない。** `locations.area` とイベント条件の `location_area` から
+  参照されており、後者は入れ子JSONの中にあるため、リネームを許すと条件が黙って発火しなくなる
+- 場所に使われているエリアは削除できない
+- 変更は `PUT /worlds/:id/areas` 専用ルートのみ。汎用の `PUT /worlds/:id` からは変えられない
+  （参照チェックを迂回させないため）
+
+### 12.5 営業時間と終電
+
+- 現在地と**同じエリア**の、開店・閉店が両方設定された場所の営業状況を出す
+- `close_min` は 24 を超えて書ける（`26:00` = 翌2時）
+- 終電行は `last_train_min` の `last_train_notice_min` 分前から出す
+
+---
+
+## 13. API
+
+すべて `/api` 配下。認証は `APP_PASSWORD` 設定時のみ有効。
+
+### 13.1 会話・生成
+
+| メソッド | パス | 備考 |
+|---|---|---|
+| GET | `/chats` | `world_id` / `archived` で絞る。**最新メッセージの抜粋 `preview` を含む** |
+| GET / PUT / DELETE | `/chats/:id` | |
+| POST | `/scenarios/:id/chats` | シナリオからChatを作る |
+| POST | `/chats/:id/messages` | **SSE。** `content` / `regenerate` / `retry` / `autoContinue` のいずれか1つ |
+| POST | `/chats/:id/stop` | 生成中断 |
+| POST | `/chats/:id/fork` | |
+| GET / PUT | `/chats/:id/state` | 進行フラグ・発火履歴を含む |
+| DELETE | `/chats/:id/fires/:fireId` | 発火の手動取り消し |
+| GET | `/chats/:id/prompt-preview` | 組み立て結果・ロア発火・イベント判定 |
+| GET / PUT / DELETE | `/chats/:id/summary` | |
+| POST | `/chats/:id/summarize` / `/extract` | 手動実行 |
+| PUT / DELETE | `/messages/:id` | |
+| GET / PUT | `/messages/:id/variants`, `/variant` | 候補の取得・切替 |
+
+### 13.2 世界と素材
+
+| メソッド | パス |
+|---|---|
+| GET / POST / PUT / DELETE | `/worlds`, `/worlds/:id` |
+| PUT | `/worlds/:id/areas` |
+| GET / PUT | `/worlds/:id/calendar` |
+| GET / POST | `/worlds/:id/characters`, `/scenarios`, `/lorebook`, `/locations`, `/events` |
+| PUT / DELETE | `/characters/:id`, `/scenarios/:id`, `/lorebook/:id`, `/locations/:id`, `/events/:id` |
+| GET / POST | `/characters/:id/memories` |
+| PUT / DELETE | `/memories/:id` |
+| GET | `/worlds/:id/events/phase-check` |
+| POST | `/worlds/:id/events/evaluate` |
+| GET / POST / PUT / DELETE | `/personas`, `/personas/:id` |
+
+### 13.3 その他
+
+| メソッド | パス |
+|---|---|
+| POST | `/login`, `/logout` |
+| GET | `/session`, `/config` |
+| GET | `/models`, `/models/curated` |
+| GET / PUT | `/settings` |
+| GET | `/worlds/:id/export`, `/characters/:id/export`, `/worlds/:id/lorebook/export`, `/chats/:id/export` |
+| POST | `/worlds/import`, `/worlds/:id/characters/import`, `/worlds/:id/lorebook/import` |
+
+### 13.4 SSEのイベント
+
+```
+event: delta   { text }
+event: done    { messageId, content, utterances, state, gameTime, needsSummary,
+                 firedEvents, eventRows, warnings, stateWarnings,
+                 fenceMissingStreak, autoJoinSuggested, generationStatus, autoplayShouldStop }
+event: error   { message }
+```
+
+---
+
+## 14. 設定
+
+実装: `server/src/db/repo/settings.ts`
+
+| キー | 既定 | 説明 |
+|---|---|---|
+| `system_prompt` | （既定文） | アプリ全体共通の指示 |
+| `default_model` | env | |
+| `utility_model` | env | 要約・抽出・継続判定 |
+| `max_tokens` | 2048 | |
+| `context_safety_tokens` | 1024 | |
+| `fallback_context_length` | 32768 | モデル情報が取れないときの想定 |
+| `history_window` | 48 | 生の履歴の件数 |
+| `auto_summarize` | 1 | |
+| `summary_interval` | 32 | |
+| `summary_max_chars` | 500 | |
+| `auto_extract` | 0 | |
+| `lore_recursion` | 1 | |
+| `lore_scan_window` | 8 | |
+| `lore_budget_chars` | 12000 | |
+| `autoplay_steps` | 3 | |
+| `autoplay_judge` | 1 | 区切りが良ければ自動停止 |
+| `state_enabled` | 1 | |
+| `state_extraction_mode` | `fenced` | `fenced` / `separate_call` |
+| `events_enabled` | 1 | |
+| `vars_enabled` | **0** | 使う世界だけONにする |
+| `event_max_per_turn` | 2 | 演出指示は上限に関わらず1件 |
+| `active_persona_id` | 空 | |
+
+`updateSettings` は `DEFAULT_SETTINGS` に無いキーを無視する（未知キーの混入を防ぐ）。
+
+---
+
+## 15. UI
+
+### 15.1 方針
+
+- **URLベースのルーティング。** リロードしても同じ画面に戻る
+- **絵文字を使わない。** アイコンは `client/src/icons.tsx` のインラインSVG（線画）に統一する
+- 白ベース × 淡い暖色。枠線はヘアラインのみで、面は塗りで表現する
+- 書体は自前ホスト（Zen Maru Gothic / Noto Sans JP / Archivo）。CDNに依存しない
+- ダークモードは持たない（白基調に振り切る）
+
+### 15.2 画面
+
+```
+/chats                     一覧（最新メッセージの抜粋を2行表示）
+/chats/:id                 会話
+/chats/:id/state           ステート編集・発火履歴
+/chats/:id/summary         あらすじ
+/worlds                    世界一覧
+/worlds/:id                世界（キャラ・シナリオ・各素材への入口）
+/worlds/:id/lorebook       ロアブック
+/worlds/:id/locations      場所（＋エリア編集）
+/worlds/:id/calendar       暦・天候
+/worlds/:id/events         イベント
+/characters/:id            キャラ
+/characters/:id/memories   メモリー
+/personas                  ペルソナ
+/settings                  設定
+```
+
+### 15.3 吹き出し
+
+- セリフ（`「」`内）と地の文で文字色を変え、**表示時に `「」` は消す**
+- 1発話の中でセリフと地の文が並ぶ場合、UI側で改行する
+- **すべての吹き出しの幅を揃える。** `⋯` メニューの有無で幅が変わらないよう、
+  操作列の領域は常に確保する
+
+### 15.4 破壊的操作の置き場所
+
+**削除は一覧に置かない。** チャットの削除・アーカイブは会話を開いた状態の ＋ メニューからのみ行う。
+一覧に削除ボタンがあると、取り違えて別の会話を消す事故が起きるため。
+
+### 15.5 モーダル内の可変長ブロック
+
+`.modal` は縦のflexなので、既定のままだと子要素が増えたときに `.pre-block` が潰される。
+**テキスト枠は `flex-shrink: 0` とし、代わりにモーダル側をスクロールさせる。**
+
+---
+
+## 16. 認証とセキュリティ
+
+実装: `server/src/routes/auth.ts`
+
+- **APIキーはサーバだけが持つ。** ブラウザには一切渡さない
+- `APP_PASSWORD` 未設定時は認証が素通り（開発用）。起動時に警告を出す
+- セッションはメモリ上のMap（TTL 30日）。プロセス再起動で失効する
+- パスワード比較はHMACダイジェスト同士の `timingSafeEqual`（長さを揃えるため）
+- 認証Cookie: `httpOnly` / `sameSite: lax` / `secure`（`COOKIE_SECURE`、未設定なら `APP_URL` が https のとき）
+- リバースプロキシ配下では `TRUST_PROXY` を設定する（`req.ip` と `req.protocol` が正しくなる）
+- **ログイン失敗のレート制限**: 同一IPで15分に5回失敗すると15分ロック（429）
+
+---
+
+## 17. 取り込みと書き出し
+
+| 対象 | 形式 |
+|---|---|
+| 世界一式 | 独自JSON（`character_chat_world`）。往復可能 |
+| キャラクター | Character Card V2（`chara_card_v2`）。取り込みも可 |
+| ロアブック | V2 `character_book` |
+| 会話 | JSON（候補を含む）／テキスト |
+
+**世界の取り込みではIDを振り直し、参照を張り替える。**
+
+- キャラ: 新ULIDを発行し、旧ID→新IDの対応表でメモリーの `subject`・シナリオの参加者を張り替える
+- 場所: IDはグローバル一意なので、衝突したら `_2` 等の接尾辞を付けてリマップし、
+  ロアの場所トリガーとシナリオの初期ステートを追随させる
+- エリア: `areas` を持たない古い書き出しでも、**場所が実際に使っているエリアは選択肢に補う**
+
+---
+
+## 18. マイグレーション
+
+実装: `server/src/db/index.ts`
+
+`schema.sql` は**新規インストール用の完成形**、`migrations` 配列は**既存DBの移行**。
+両方を必ず更新する。適用済みは `schema_migrations` に記録する。
+
+| # | 内容 |
+|---|---|
+| 1 | `messages.seq` の採番と一意インデックス。重複した候補indexの**採番し直し**（削除ではない）。`up_to_seq` / `extracted_up_to_seq` |
+| 2 | `chats.initial_state`（先頭候補 → 先頭の `state_after` → 現在ステート の順に推定して埋める） |
+| 3 | v1.5.3: `vars_schema`・継承フラグ・`world_events` の拡張（旧 `condition` を `when` に包む）・`event_fires` の作り直し |
+| 4 | `worlds.areas`（実際に使われているエリアを拾って移行する） |
+
+### 18.1 規則
+
+- **列の存在確認は引用符を外した名前で行う。** `"when"` をそのまま比較すると一致せず、
+  新規インストールで `duplicate column name` になる
+- **移行でユーザーのデータを消さない。** 重複した候補indexは削除ではなく採番し直す
+- 移行後に既存の挙動が変わらないことを優先する（旧イベントの `check` は `every_turn` にする）
+- 冪等であること。2回実行しても落ちない
+
+---
+
+## 19. テスト
+
+実装: `server/test/`
+
+`npm test` で2段構成。
+
+### 19.1 マイグレーション検証（`migrate.mjs`）
+
+**最古のスキーマのDBを実際に作り**、マイグレーション1〜4を通して結果を検証する。
+冪等性（2回起動しても落ちない）も確認する。
+
+### 19.2 機能テスト（`run.mjs`）
+
+OpenRouter互換のモックを立て、応答内容（経過分・場所・`set_var`・フェンスの欠落や切断）を
+**決定論的に与えて実APIを叩く**。`OPENROUTER_API_KEY` は不要で、既存DBには触らない。
+
+| スイート | 対象 |
+|---|---|
+| `normalFlow` | ステート・候補・再生成・分岐 |
+| `regressionInitialState` | 先頭再生成の時間累積（既知バグの回帰） |
+| `abnormal` | 途中停止・フェンス欠落／切断・不正な場所ID・present衝突・連打・index重複 |
+| `edges` | 0件チャット・elapsed異常値・日跨ぎ |
+| `restored` | サーバ再起動後の復元 |
+| `chatListPreview` | 一覧の抜粋 |
+| `areasSuite` | エリアの改名・並べ替え・追加・削除拒否・書き出し取り込み |
+| `varsSuite` | 進行フラグの権限・範囲・`private_note` 非注入 |
+| `eventsSuite` | 条件式・チェック方式・トリガー・抽選のシード固定・履歴整合 |
+
+**新しい不変条件を作ったら、必ずそれを固定するテストを足す。**
+
+---
+
+## 20. 不変条件の一覧
+
+実装を変えるときに壊してはならないもの。すべてテストで固定している。
+
+| # | 不変条件 | 壊れると |
+|---|---|---|
+| 1 | 会話の順序は `seq`。ULIDに依存しない | 連投で順序が入れ替わる |
+| 2 | `UNIQUE(chat_id, seq)` / `UNIQUE(message_id, "index")` | 候補が重複する |
+| 3 | 再生成の基準は「直前の `state_after`」、無ければ `chats.initial_state` | 時間が累積する |
+| 4 | 初回生成でも index 0 の候補を作る | 再生成で元の応答が消える |
+| 5 | fork は元チャットを書き換えない | 過去が改変される |
+| 6 | 過去メッセージの候補切替は行わない（forkに一本化） | 以降の `state_after` が総崩れになる |
+| 7 | 時刻の演算は `calendar.ts` のみ | 換算がズレる |
+| 8 | 天候は日替わりのみ・シード固定 | 数ターンで晴雨が往復する／再生成で変わる |
+| 9 | イベント判定は `complete` 時のみ・注入は次ターン | 停止で誤発火／未発生の事象を前提に書かせる |
+| 10 | スコープを持つtriggerは `drawKey` を `scopeKey` で置き換える | 再生成で抽選をやり直せる |
+| 11 | 再生成は対象の発火履歴を消してから再判定 | 履歴が二重に残る |
+| 12 | fork は分岐点までの発火履歴を引き継ぐ | 分岐先で二重に起きる |
+| 13 | `private_note` はプロンプトに載せない | 作者のメモが漏れる |
+| 14 | `vars_schema` に無いキーは書き込めない | 野良キーが増殖する |
+| 15 | エリアID・場所ID・進行フラグのキーは作成後に不変 | 入れ子JSONの参照が黙って壊れる |
+| 16 | エリアの変更は専用ルートのみ | 参照チェックを迂回できる |
+| 17 | 要約は前回分を統合して書き直す | 古い出来事が消える |
+| 18 | 要約に人物設定を含めない | ロアブックと二重管理になる |
+| 19 | 必須項目だけで予算超過なら413 | 黙って切り詰められる |
+| 20 | APIキーをブラウザへ渡さない | 鍵が漏れる |
+| 21 | 移行でユーザーのデータを消さない | 候補が失われる |
+| 22 | DBは1ファイルで完結する | バックアップが不完全になる |
+
+---
+
+## 付録A. v1.4 からの主な変更
+
+| 項目 | v1.4 | v2 |
+|---|---|---|
+| 会話の順序 | ULID | `messages.seq` ＋ 一意制約 |
+| 再生成の基準 | `chats.state` にフォールバック | `chats.initial_state` |
+| イベント判定 | 生成前・同一ターンに注入 | **生成後・次ターンに注入** |
+| イベント条件 | 平坦なAND | `all` / `any` / `not` の条件式 |
+| イベント | トリガーのみ | ＋ `check` / `chance` / `priority` / `inject_mode` / `set_vars` |
+| 進行フラグ | なし | `state.vars` ＋ `vars_schema` |
+| エリア | クライアントに固定5種 | 世界ごとに保持（既定8種、表示名は可変） |
+| 発火記録 | 生成のたび | `generation_status = complete` のときのみ |
+| Cookie | secure なし | `secure` ＋ `trust proxy` ＋ ログインレート制限 |
+| 抽選・天候 | 都度乱数 | シード固定（再生成で結果が変わらない） |
+
+## 付録B. 用語
+
+| 用語 | 意味 |
+|---|---|
+| 基準ステート | 差分を足す前のステート。モードごとに決め方が違う（§4.3） |
+| 候補（variant） | 同じメッセージの再生成結果 |
+| 準レギュラー | `is_npc_pool = 1` のキャラ。関連ロア発火時のみ定義が注入される |
+| 状況ブロック | 履歴の後ろに置く末尾system（§6.4） |
+| スコープキー | イベントの「同じ〇〇では1回だけ」を表す文字列（§9.4） |
+| 訪問ID | 同じ場所に滞在している間で一意なID |
