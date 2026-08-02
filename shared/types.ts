@@ -173,6 +173,12 @@ export interface Chat {
   updated_at: number;
 }
 
+/** 一覧用。最新メッセージの抜粋を添えて返す */
+export interface ChatListItem extends Chat {
+  /** 最新メッセージの本文を話者ラベル・記号を落として短く切ったもの。無ければ空 */
+  preview: string;
+}
+
 export type GenerationStatus = 'complete' | 'stopped' | 'failed';
 
 export interface Message {

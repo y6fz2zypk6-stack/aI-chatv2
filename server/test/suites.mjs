@@ -557,3 +557,77 @@ export async function edges(w) {
       pv.situationBlock.includes('日付が変わり'));
   }
 }
+
+// ===========================================================================
+/** 一覧の抜粋（GET /chats の preview） */
+export async function chatListPreview(w) {
+  suite('一覧の抜粋');
+
+  const previewOf = async (chatId) => {
+    const list = (await api('GET', '/chats?archived=0')).json;
+    return list.find((c) => c.id === chatId)?.preview;
+  };
+
+  // 冒頭のナレーター行が、話者ラベルを落として出る
+  {
+    const { chat } = await newChat(w, { opening: 'ナレーター: 雨が窓を叩いている。' });
+    check('冒頭から抜粋が作られる', (await previewOf(chat.id)) === '雨が窓を叩いている。',
+      await previewOf(chat.id));
+  }
+
+  // 最新メッセージが自分の入力ならそれが出る
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「おかえり」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'ただいま' });
+    check('AI応答が最新なら応答から抜粋する', (await previewOf(chat.id)) === 'おかえり',
+      await previewOf(chat.id));
+  }
+
+  // 鉤括弧・強調記号を落とし、複数行を1行に畳む
+  {
+    const { chat } = await newChat(w, { opening: '' });
+    setQueue([{
+      text: 'アシュリー: 「おかえり」\nナレーター: *本を閉じて*顔を上げた。\n\n@@@STATE\nelapsed_minutes: 10\n@@@END',
+    }]);
+    await generate(chat.id, { content: 't' });
+    check('鉤括弧と強調記号を落として1行に畳む',
+      (await previewOf(chat.id)) === 'おかえり 本を閉じて顔を上げた。', await previewOf(chat.id));
+  }
+
+  // 「18:30」のような行頭は話者ラベルとして切らない
+  {
+    const { chat } = await newChat(w, { opening: '' });
+    setQueue([{ text: reply({ char: '「またね」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: '18:30に駅で' });
+    const d = await getChat(chat.id);
+    await api('DELETE', `/messages/${d.messages.slice(-1)[0].id}`);
+    check('数字だけの行頭は話者ラベルとして切らない',
+      (await previewOf(chat.id)) === '18:30に駅で', await previewOf(chat.id));
+  }
+
+  // 長文は切り詰める
+  {
+    const { chat } = await newChat(w, { opening: '' });
+    const longLine = 'あ'.repeat(200);
+    setQueue([{ text: `ナレーター: ${longLine}\n\n@@@STATE\nelapsed_minutes: 10\n@@@END` }]);
+    await generate(chat.id, { content: 't' });
+    const p = await previewOf(chat.id);
+    check('長文は80文字＋省略記号に切り詰める', p.length === 81 && p.endsWith('…'), `${p.length}文字`);
+  }
+
+  // メッセージが1件も無ければ空
+  {
+    const { chat } = await newChat(w, { opening: '' });
+    check('メッセージが無ければ空文字', (await previewOf(chat.id)) === '', await previewOf(chat.id));
+  }
+
+  // アーカイブしたチャットは通常の一覧から外れる
+  {
+    const { chat } = await newChat(w);
+    await api('PUT', `/chats/${chat.id}`, { archived: 1 });
+    check('アーカイブすると通常の一覧から外れる', (await previewOf(chat.id)) === undefined);
+    const arch = (await api('GET', '/chats?archived=1')).json;
+    check('アーカイブ一覧には出る', arch.some((c) => c.id === chat.id));
+  }
+}

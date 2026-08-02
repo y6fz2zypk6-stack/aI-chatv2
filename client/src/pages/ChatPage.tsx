@@ -203,6 +203,36 @@ export default function ChatPage() {
     void api.post(`/chats/${id}/stop`).catch(() => {});
   };
 
+  // 誤操作を避けるため、削除・アーカイブは一覧ではなくこの会話を開いた状態からのみ行う
+  const toggleArchive = async () => {
+    const next = chat.archived ? 0 : 1;
+    setSheetOpen(false);
+    try {
+      await api.put(`/chats/${id}`, { archived: next });
+      if (next) {
+        // アーカイブすると通常の一覧から外れるので、一覧へ戻す
+        toast('アーカイブしました');
+        navigate('/chats');
+      } else {
+        toast('アーカイブから戻しました');
+        await load();
+      }
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
+  const removeChat = async () => {
+    if (!confirm(`「${titleName}」を削除しますか？メッセージも全て消えます`)) return;
+    setSheetOpen(false);
+    try {
+      await api.del(`/chats/${id}`);
+      navigate('/chats');
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
   const runAutoplay = async () => {
     if (busy || autoplaying) return;
     setAutoplaying(true);
@@ -454,6 +484,24 @@ export default function ChatPage() {
               <span>候補を含むJSON</span>
             </span>
           </a>
+          <button className="srow" onClick={() => void toggleArchive()}>
+            <span className="ic">
+              <Icon.archive />
+            </span>
+            <span className="txt">
+              <b>{chat.archived ? 'アーカイブから戻す' : 'アーカイブする'}</b>
+              <span>{chat.archived ? '通常の一覧に表示する' : '一覧から隠す（消えません）'}</span>
+            </span>
+          </button>
+          <button className="srow danger" onClick={() => void removeChat()}>
+            <span className="ic">
+              <Icon.trash />
+            </span>
+            <span className="txt">
+              <b>この会話を削除する</b>
+              <span>メッセージも全て消えます。元に戻せません</span>
+            </span>
+          </button>
         </div>
       )}
 

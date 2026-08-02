@@ -1162,6 +1162,16 @@ textarea.tall {
   color: var(--chevron);
 }
 
+/* 取り消せない操作。他の行と区別が付くよう区切り線を入れて赤で出す */
+.sheet .srow.danger {
+  border-top: 1px solid var(--border);
+}
+
+.sheet .srow.danger .ic,
+.sheet .srow.danger .txt b {
+  color: var(--danger);
+}
+
 /* ===== ポップオーバー・メニュー ===== */
 
 .popover {
@@ -1403,6 +1413,9 @@ textarea.tall {
   overflow-y: auto;
   color: var(--field-ink);
   margin: 0;
+  /* .modal は縦のflexなので、既定のままだと兄弟（イベント判定のチップ等）が増えたときに
+     この枠が潰されてしまう。縮ませずにモーダル側をスクロールさせる */
+  flex-shrink: 0;
 }
 
 .row {

@@ -1,6 +1,6 @@
 import { db, now, fromJson, toJson } from '../index.js';
 import { ulid } from '../../util/ulid.js';
-import type { Chat, ChatState } from '../../../../shared/types.js';
+import type { Chat, ChatListItem, ChatState } from '../../../../shared/types.js';
 import { EMPTY_STATE } from './scenarios.js';
 
 interface Row extends Omit<Chat, 'participant_ids' | 'state' | 'initial_state'> {
@@ -18,21 +18,56 @@ function toApi(row: Row): Chat {
   };
 }
 
-export function listChats(opts: { worldId?: string; archived?: boolean } = {}): Chat[] {
-  let sql = 'SELECT * FROM chats';
+/** 一覧に出す抜粋の最大長。表示は2行でクランプするので少し余裕を持たせる */
+const PREVIEW_CHARS = 80;
+
+/**
+ * 最新メッセージの本文から一覧用の抜粋を作る。
+ * 話者ラベル（「アシュリー: 」）と強調記号・鉤括弧を落として1行に畳む。
+ */
+export function toPreview(content: string | null | undefined): string {
+  if (!content) return '';
+  const lines: string[] = [];
+  for (const raw of content.split('\n')) {
+    let line = raw.trim();
+    if (!line) continue;
+    // 行頭の話者ラベルを落とす。「18:30に着いた」を誤って切らないよう数字だけの見出しは残す
+    const m = /^([^\s:：][^:：]{0,29})[:：]\s?(.*)$/.exec(line);
+    if (m && !/^\d+$/.test(m[1])) line = m[2].trim();
+    if (line) lines.push(line);
+  }
+  const text = lines
+    .join(' ')
+    .replace(/\*+/g, '')
+    .replace(/[「」『』]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
+}
+
+export function listChats(opts: { worldId?: string; archived?: boolean } = {}): ChatListItem[] {
+  // 最新メッセージの本文を1件だけ添える（messages.content は常に採用中の候補の本文）
+  let sql = `SELECT c.*, (
+               SELECT m.content FROM messages m
+                WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1
+             ) AS last_content
+               FROM chats c`;
   const cond: string[] = [];
   const args: unknown[] = [];
   if (opts.worldId) {
-    cond.push('world_id = ?');
+    cond.push('c.world_id = ?');
     args.push(opts.worldId);
   }
   if (opts.archived !== undefined) {
-    cond.push('archived = ?');
+    cond.push('c.archived = ?');
     args.push(opts.archived ? 1 : 0);
   }
   if (cond.length) sql += ' WHERE ' + cond.join(' AND ');
-  sql += ' ORDER BY updated_at DESC';
-  return (db.prepare(sql).all(...args) as Row[]).map(toApi);
+  sql += ' ORDER BY c.updated_at DESC';
+  return (db.prepare(sql).all(...args) as (Row & { last_content: string | null })[]).map((row) => {
+    const { last_content, ...rest } = row;
+    return { ...toApi(rest as Row), preview: toPreview(last_content) };
+  });
 }
 
 export function getChat(id: string): Chat | undefined {
