@@ -1,7 +1,8 @@
 # Character Chat — ビジュアルノベル風AIチャットPWA
 
 個人向けのチャットノベル風ロールプレイアプリ。設計は [`docs/SPEC_v2.md`](docs/SPEC_v2.md)、
-操作説明は [`docs/GUIDE.md`](docs/GUIDE.md) にある。
+操作説明は [`docs/GUIDE.md`](docs/GUIDE.md)、
+イベントとフェーズ管理の書き方は [`docs/EVENTS.md`](docs/EVENTS.md) にある。
 React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
 
 ## 実装状況（Phase 1〜7 + v1.5.3 完了）
