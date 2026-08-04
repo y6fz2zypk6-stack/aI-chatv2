@@ -89,13 +89,36 @@ app.use(
 );
 
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => {
-  console.log(`[server] http://localhost:${port} で起動しました`);
+
+// 待ち受けるインターフェース。既定は全インターフェース（0.0.0.0）。
+// Tailscale などVPN内だけに公開する場合は BIND=127.0.0.1 にして、
+// tailscale serve 等のフロント側からループバックへ繋ぐ。
+// identity ヘッダを信用する構成にするなら、偽装を防ぐためループバック固定が必須。
+const bind = (process.env.BIND || '').trim();
+const publiclyBound = !bind || bind === '0.0.0.0' || bind === '::';
+
+const onListen = (): void => {
+  console.log(`[server] ${bind || '0.0.0.0'}:${port} で待ち受けています`);
   if (!process.env.OPENROUTER_API_KEY) {
     console.warn('[server] 警告: OPENROUTER_API_KEY が未設定です。生成機能は動作しません');
   }
+  if (publiclyBound) {
+    console.warn(
+      '[server] 注意: 全インターフェースで待ち受けています。' +
+        'VPN内だけに公開する場合は BIND=127.0.0.1 を設定してください',
+    );
+  }
   if (!process.env.APP_PASSWORD) {
-    console.warn('[server] 警告: APP_PASSWORD が未設定のため認証が無効です（公開VPSでは必須）');
+    if (publiclyBound) {
+      console.warn(
+        '[server] 警告: APP_PASSWORD が未設定のまま外部に公開されています。' +
+          'パスワードを設定するか BIND でアクセス元を絞ってください',
+      );
+    } else {
+      console.warn(
+        `[server] APP_PASSWORD が未設定です。${bind} に到達できる相手は認証なしで操作できます`,
+      );
+    }
   } else if (!cookieSecure()) {
     console.warn(
       '[server] 警告: 認証Cookieに secure が付いていません。HTTPS運用時は APP_URL を https:// にするか COOKIE_SECURE=1 を設定してください',
@@ -106,4 +129,21 @@ app.listen(port, () => {
       '[server] 注意: リバースプロキシ経由の場合は TRUST_PROXY=1 を設定してください（未設定だとIP判定が正しく働きません）',
     );
   }
+};
+
+// listen(port, host) は host を渡すとそのインターフェースだけに絞られる
+const server = bind ? app.listen(port, bind, onListen) : app.listen(port, onListen);
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRNOTAVAIL') {
+    console.error(
+      `[server] BIND=${bind} のアドレスがこのホストに存在しません。` +
+        'ip addr で確認してください（Tailscale未起動の可能性があります）',
+    );
+  } else if (err.code === 'EADDRINUSE') {
+    console.error(`[server] ポート ${port} は既に使われています`);
+  } else {
+    console.error('[server] 起動に失敗しました:', err.message);
+  }
+  process.exit(1);
 });

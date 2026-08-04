@@ -92,7 +92,7 @@ npm install
 cp .env.example .env
 npm run dev     # server:3000（API） / client:5173（Vite、/api をプロキシ）
 npm run build && npm start   # 本番。Expressが client/dist を配信する
-npm test        # マイグレーション検証 → 機能テスト
+npm test        # マイグレーション検証 → BIND検証 → 機能テスト
 ```
 
 ### 2.3 環境変数
@@ -105,6 +105,7 @@ npm test        # マイグレーション検証 → 機能テスト
 | `DEFAULT_MODEL` | `anthropic/claude-opus-5` | |
 | `UTILITY_MODEL` | `anthropic/claude-sonnet-5` | 要約・抽出・継続判定 |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 3000 / `./data/app.sqlite` / … | |
+| `BIND` | 未設定 | 待ち受けるインターフェース。未設定なら全インターフェース |
 | `COOKIE_SECURE` | 未設定 | 未設定なら `APP_URL` が https のときだけ有効 |
 | `TRUST_PROXY` | 未設定 | リバースプロキシ配下の段数（nginx背後なら `1`） |
 | `OPENROUTER_BASE_URL` | OpenRouter | テストでモックに差し替えるための seam |
@@ -865,6 +866,17 @@ event: error   { message }
 - リバースプロキシ配下では `TRUST_PROXY` を設定する（`req.ip` と `req.protocol` が正しくなる）
 - **ログイン失敗のレート制限**: 同一IPで15分に5回失敗すると15分ロック（429）
 
+### 16.1 到達範囲を絞る（`BIND`）
+
+既定では全インターフェースで待ち受ける。`BIND=127.0.0.1` を設定するとループバックだけになり、
+`tailscale serve` のようなフロントを経由しないと到達できなくなる。
+
+- Tailscale等でVPN内だけに公開する場合はこれを使う。手順は README を参照
+- **将来 identity ヘッダ（`Tailscale-User-Login` 等）で認証する場合、ループバック固定は必須。**
+  全インターフェースで待ち受けたままヘッダを信用すると、誰でも偽装して素通りできる
+- 存在しないアドレスを指定した場合は、原因を示して終了する（黙って全公開に落ちない）
+- `BIND` を絞っても `APP_PASSWORD` は残す（多層防御）
+
 ---
 
 ## 17. 取り込みと書き出し
@@ -932,6 +944,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | `abnormal` | 途中停止・フェンス欠落／切断・不正な場所ID・present衝突・連打・index重複 |
 | `edges` | 0件チャット・elapsed異常値・日跨ぎ |
 | `restored` | サーバ再起動後の復元 |
+| `bind.mjs` | `BIND` が待ち受けを絞れているか（別インターフェース経由で到達不能を確認） |
 | `chatListPreview` | 一覧の抜粋 |
 | `areasSuite` | エリアの改名・並べ替え・追加・削除拒否・書き出し取り込み |
 | `varsSuite` | 進行フラグの権限・範囲・`private_note` 非注入 |

@@ -78,6 +78,55 @@ HTTPSで公開する場合は `COOKIE_SECURE=1`、リバースプロキシ配下
 DBは `DB_PATH`（既定 `./data/app.sqlite`）の1ファイルです。バックアップはこのファイルの
 コピーで完了します。スキーマは起動時に自動マイグレーションされます。
 
+### Tailscale（tailnet内だけに公開する）
+
+公開ポートを開けず、自分のTailscaleネットワークからだけ届くようにする構成です。
+`tailscale serve` が `*.ts.net` の正式なHTTPS証明書を用意するので、PWAのインストール要件も満たせます。
+
+```
+[iPhone / PC] --暗号化--> [tailnet] --> [VPS] tailscale serve --> 127.0.0.1:3000
+                                              公開IPからは到達できない
+```
+
+**順番が大事です。** 先に serve を動かして到達を確認してから `BIND` を絞ってください。
+逆にすると自分が入れなくなります。
+
+```bash
+# 1. VPSにTailscaleを入れて参加させる
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# 2. まだ BIND は設定せず、いつも通り起動する
+npm start
+
+# 3. tailnet内のHTTPSで受けられるようにする
+sudo tailscale serve --bg 3000
+
+# 4. 別の端末（同じtailnet）から https://<マシン名>.<tailnet>.ts.net で開けることを確認する
+
+# 5. 確認できたら .env を更新して再起動
+#    BIND=127.0.0.1
+#    APP_URL=https://<マシン名>.<tailnet>.ts.net
+#    TRUST_PROXY=1
+npm start
+
+# 6. 公開ポートを閉じる（ufw の例）
+sudo ufw deny 3000
+```
+
+起動ログの1行目に待ち受け先が出ます。`127.0.0.1:3000` になっていれば、
+公開IPからは到達できません（`server/test/bind.mjs` で実際に別インターフェース経由の
+到達不能を検証しています）。
+
+| 症状 | 対処 |
+|---|---|
+| 起動時に「このホストに存在しません」 | Tailscaleが起動していない。`tailscale status` を確認 |
+| 端末から開けない | その端末がtailnetに参加しているか、VPNがONか |
+| ログインが毎回切れる | セッションはメモリ上。プロセス再起動で失効します |
+
+`BIND` を絞っても `APP_PASSWORD` は設定したままにしてください。
+`tailscaled` が落ちた場合や設定を戻した場合の備えになります。
+
 ### 環境変数
 
 | キー | 説明 |
@@ -88,6 +137,7 @@ DBは `DB_PATH`（既定 `./data/app.sqlite`）の1ファイルです。バッ�
 | `COOKIE_SECURE` | 認証Cookieに `Secure` を付ける。未設定なら `APP_URL` が https:// のときだけ有効 |
 | `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
 | `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5` / `anthropic/claude-sonnet-5` |
+| `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1` |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 任意 |
 
 ## 構成

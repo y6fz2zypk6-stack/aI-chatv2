@@ -1,0 +1,172 @@
+// BIND が待ち受けインターフェースを本当に絞れているかを確かめる。
+//   node test/bind.mjs
+// 前提: あらかじめ `npm run build -w server` でビルドしておく。
+//
+// Tailscale などVPN内だけに公開する構成では、ここが効いていないと
+// 公開IPからそのまま到達できてしまうため、実際に別インターフェース経由で叩いて確認する。
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const workDir = mkdtempSync(path.join(tmpdir(), 'charchat-bind-'));
+
+let failed = 0;
+function check(label, ok, detail = '') {
+  console.log(`  ${ok ? '✓' : '✗'} ${label}${detail ? `  — ${detail}` : ''}`);
+  if (!ok) failed++;
+}
+
+/** ループバック以外のIPv4。無ければこのホストでは外部到達の検証ができない */
+function externalIp() {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === 'IPv4' && !a.internal) return a.address;
+    }
+  }
+  return null;
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+/** サーバを起動し、起動ログか終了を待つ */
+function start(env, port) {
+  const child = spawn(process.execPath, [path.join(here, '../dist/server/src/index.js')], {
+    env: {
+      ...process.env,
+      DB_PATH: path.join(workDir, `${port}.sqlite`),
+      PORT: String(port),
+      OPENROUTER_API_KEY: 'test',
+      APP_PASSWORD: '',
+      ...env,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (b) => (out += b));
+  child.stderr.on('data', (b) => (out += b));
+  return {
+    child,
+    log: () => out,
+    exited: new Promise((resolve) => child.on('exit', (code) => resolve(code))),
+  };
+}
+
+/** 指定アドレスへTCP接続できるか（HTTPまで行かず接続可否だけ見る） */
+function canConnect(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const s = new net.Socket();
+    const done = (ok) => {
+      s.destroy();
+      resolve(ok);
+    };
+    s.setTimeout(timeoutMs);
+    s.once('connect', () => done(true));
+    s.once('timeout', () => done(false));
+    s.once('error', () => done(false));
+    s.connect(port, host);
+  });
+}
+
+async function waitUp(host, port, timeoutMs = 15000) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    if (await canConnect(host, port)) return true;
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
+const ext = externalIp();
+console.log(`外部インターフェース: ${ext ?? '（無し）'}`);
+
+let exitCode = 1;
+const running = [];
+try {
+  console.log('\n── BIND');
+
+  // ① BIND=127.0.0.1 → ループバックのみ
+  {
+    const port = await freePort();
+    const s = start({ BIND: '127.0.0.1' }, port);
+    running.push(s.child);
+    check('BIND=127.0.0.1 でループバックから到達できる', await waitUp('127.0.0.1', port));
+    check('起動ログに待ち受け先が出る', s.log().includes(`127.0.0.1:${port}`), s.log().split('\n')[0]);
+    if (ext) {
+      check(
+        `BIND=127.0.0.1 では外部IF（${ext}）から到達できない`,
+        !(await canConnect(ext, port)),
+        `${ext}:${port}`,
+      );
+    } else {
+      console.log('    · 外部インターフェースが無いため到達不能の確認は省略');
+    }
+    check(
+      'パスワード未設定でも「公開されている」警告は出さない',
+      !s.log().includes('外部に公開されています'),
+    );
+  }
+
+  // ② BIND 未設定 → 全インターフェース（既定の挙動を変えていないこと）
+  {
+    const port = await freePort();
+    const s = start({}, port);
+    running.push(s.child);
+    check('BIND 未設定でループバックから到達できる', await waitUp('127.0.0.1', port));
+    if (ext) {
+      check(`BIND 未設定なら外部IF（${ext}）からも到達できる`, await canConnect(ext, port));
+    }
+    check(
+      'BIND 未設定のときは全インターフェース待ち受けを注意する',
+      s.log().includes('全インターフェースで待ち受けています'),
+    );
+    check(
+      'パスワード未設定かつ公開なら強い警告を出す',
+      s.log().includes('外部に公開されています'),
+    );
+  }
+
+  // ③ 存在しないアドレス → 分かる形で落ちる
+  {
+    const port = await freePort();
+    const s = start({ BIND: '10.255.255.254' }, port);
+    running.push(s.child);
+    const code = await s.exited;
+    check('存在しないアドレスなら起動に失敗する', code === 1, `exit=${code}`);
+    check(
+      '原因が分かるメッセージを出す',
+      s.log().includes('このホストに存在しません'),
+      s.log().trim().split('\n').slice(-1)[0],
+    );
+  }
+
+  console.log(`\n${failed === 0 ? 'すべて通りました' : `${failed}件失敗`}`);
+  exitCode = failed === 0 ? 0 : 1;
+} catch (err) {
+  console.error('\nBINDの検証に失敗しました:', err);
+  exitCode = 1;
+} finally {
+  for (const c of running) {
+    try {
+      c.kill('SIGKILL');
+    } catch {
+      /* noop */
+    }
+  }
+  rmSync(workDir, { recursive: true, force: true });
+}
+
+process.exit(exitCode);
