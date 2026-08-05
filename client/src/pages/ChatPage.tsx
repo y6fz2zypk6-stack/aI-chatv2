@@ -17,10 +17,44 @@ import { Avatar, Field, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
+interface ResolvedFlag {
+  enabled: boolean;
+  from: 'chat' | 'scenario' | 'settings';
+}
+
 interface Detail {
   chat: Chat;
   messages: Message[];
   gameTime: GameTime;
+  flags: { events: ResolvedFlag; vars: ResolvedFlag; scenarioMissing: boolean };
+}
+
+interface MemoryPreview {
+  candidates: {
+    character_id: string;
+    character_name: string;
+    subject: string;
+    content: string;
+    why: string;
+  }[];
+  range: { fromSeq: number; toSeq: number; count: number } | null;
+  notes: string[];
+}
+
+const FLAG_SOURCE: Record<ResolvedFlag['from'], string> = {
+  chat: 'この会話で指定',
+  scenario: 'シナリオの設定',
+  settings: '全体設定',
+};
+
+/** 3段の解決結果を1行で示す。「継承」だけだと結果が読めないため必ず添える */
+function FlagResult({ flag }: { flag: ResolvedFlag | undefined }) {
+  if (!flag) return null;
+  return (
+    <div className={`flag-result${flag.enabled ? ' on' : ''}`}>
+      いまは <b>{flag.enabled ? 'ON' : 'OFF'}</b>（{FLAG_SOURCE[flag.from]}）
+    </div>
+  );
 }
 
 /** 地の文の強調記号（* や _ で囲む書き方）を表示上は外す */
@@ -84,6 +118,8 @@ export default function ChatPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showChatSettings, setShowChatSettings] = useState(false);
+  const [memPreview, setMemPreview] = useState<MemoryPreview | null>(null);
+  const [memLoading, setMemLoading] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const autoplayCancel = useRef(false);
@@ -466,6 +502,27 @@ export default function ChatPage() {
               <span>組み立て結果とロアの発火状況</span>
             </span>
           </button>
+          <button
+            className="srow"
+            onClick={() => {
+              setSheetOpen(false);
+              setMemLoading(true);
+              setMemPreview(null);
+              void api
+                .post<MemoryPreview>(`/chats/${id}/extract-preview`)
+                .then(setMemPreview)
+                .catch((err) => toast((err as Error).message, true))
+                .finally(() => setMemLoading(false));
+            }}
+          >
+            <span className="ic">
+              <Icon.brain size={19} />
+            </span>
+            <span className="txt">
+              <b>メモリー候補を確認</b>
+              <span>保存せずに、抽出される内容と理由を見る</span>
+            </span>
+          </button>
           <button className="srow" onClick={() => { setSheetOpen(false); setShowChatSettings(true); }}>
             <span className="ic">
               <Icon.gear />
@@ -505,6 +562,39 @@ export default function ChatPage() {
         </div>
       )}
 
+      {(memLoading || memPreview) && (
+        <Modal title="メモリー候補" onClose={() => { setMemPreview(null); setMemLoading(false); }}>
+          {memLoading && <div className="empty-note">抽出中…</div>}
+          {memPreview && (
+            <>
+              <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+                {memPreview.range
+                  ? `未抽出の ${memPreview.range.count} 件（seq ${memPreview.range.fromSeq}〜${memPreview.range.toSeq}）が対象です。ここでは保存しません。`
+                  : '対象がありません。'}
+              </div>
+              {memPreview.candidates.length === 0 && memPreview.range && (
+                <div className="empty-note">保存に値する内容はありませんでした</div>
+              )}
+              {memPreview.candidates.map((c, i) => (
+                <div key={i} className="mem-cand">
+                  <div className="head">
+                    <span className="tag mute">{c.character_name}</span>
+                    {c.subject && <span className="tag">対象: {charOf(c.subject)?.name ?? c.subject}</span>}
+                  </div>
+                  <p className="txt">{c.content}</p>
+                  {c.why && <p className="why">{c.why}</p>}
+                </div>
+              ))}
+              {memPreview.notes.map((n, i) => (
+                <div key={`n${i}`} className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+                  {n}
+                </div>
+              ))}
+            </>
+          )}
+        </Modal>
+      )}
+
       {showChatSettings && (
         <Modal title="この会話の設定" onClose={() => setShowChatSettings(false)}>
           <Field label="条件付きイベント">
@@ -513,6 +603,7 @@ export default function ChatPage() {
               onChange={(v) => void api.put(`/chats/${id}`, { events_enabled: v }).then(load)}
               inheritedLabel="シナリオ / 全体設定"
             />
+            <FlagResult flag={detail.flags?.events} />
           </Field>
           <Field label="進行フラグ">
             <TriToggle
@@ -520,8 +611,12 @@ export default function ChatPage() {
               onChange={(v) => void api.put(`/chats/${id}`, { vars_enabled: v }).then(load)}
               inheritedLabel="シナリオ / 全体設定"
             />
+            <FlagResult flag={detail.flags?.vars} />
           </Field>
           <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+            「継承」は シナリオ → 全体設定 の順に見ます。
+            {detail.flags?.scenarioMissing && ' このチャットのシナリオは削除済みのため、全体設定を見ています。'}
+            <br />
             オフにしても、これまでに記録した進行フラグと発火履歴は残ります
           </div>
         </Modal>

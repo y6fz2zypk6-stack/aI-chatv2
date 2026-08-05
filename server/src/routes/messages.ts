@@ -51,7 +51,7 @@ import { buildEventBlocks, runEventPipeline } from '../domain/events.js';
 import { applyVarOps, buildVarsBlock, varsInstruction } from '../domain/vars.js';
 import { seededRand } from '../util/random.js';
 import { scopeEntries } from '../domain/lorebook.js';
-import { runExtract } from '../domain/memory.js';
+import { maybeExtract } from '../domain/memory.js';
 import { applyDelta } from '../domain/state.js';
 import { maybeSummarize } from '../domain/summary.js';
 import { extractStateSeparate } from '../llm/extract.js';
@@ -570,13 +570,10 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
 
   setChatState(chatId, finalState);
 
-  // 要約・知識抽出はバックグラウンド（§8.3・§8.4）
+  // 要約・知識抽出はバックグラウンド（§8.3・§8.4）。
+  // 互いに独立して判定する（auto_summarize を切っても自動抽出は動く）
   const { needed: needsSummary } = maybeSummarize(chatId, settings);
-  if (needsSummary && settings.auto_extract === 1) {
-    runExtract(chatId, settings).catch((err) =>
-      console.error('[memory] 自動抽出に失敗:', (err as Error).message),
-    );
-  }
+  maybeExtract(chatId, settings);
 
   // オートプレイの継続判定（§8.7）: 区切りが良ければ自動停止
   let autoplayShouldStop = false;

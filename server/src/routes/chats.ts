@@ -29,11 +29,11 @@ import {
   latestSummary,
   updateSummaryContent,
 } from '../db/repo/summaries.js';
-import type { VarValue } from '../../../shared/types.js';
+import type { Chat, VarValue } from '../../../shared/types.js';
 import { getWorld } from '../db/repo/worlds.js';
 import { toGameTime, toMinutes } from '../domain/calendar.js';
 import { applyManualVars } from '../domain/vars.js';
-import { runExtract } from '../domain/memory.js';
+import { extractCandidates, runExtract } from '../domain/memory.js';
 import { normalizeState } from '../domain/state.js';
 import { runSummarize } from '../domain/summary.js';
 import { assembleContext } from '../llm/prompt.js';
@@ -63,8 +63,39 @@ chatsRouter.get('/chats/:id', (req, res) => {
     chat,
     messages: listMessages(chat.id),
     gameTime: toGameTime(calendar, chat.state.time),
+    // 3段の解決結果と、どこで決まったか。UIが「いまはON（シナリオの設定）」と出せるようにする
+    flags: resolvedFlags(chat),
   });
 });
+
+/** chat → scenario → 全体設定 の解決結果と、決め手になった段を返す（§3.4） */
+function resolvedFlags(chat: Chat) {
+  const settings = getSettings();
+  const scenario = chat.scenario_id ? getScenario(chat.scenario_id) : undefined;
+  const one = (
+    chatValue: number | null,
+    scenarioValue: number | null | undefined,
+    globalValue: number,
+  ) => ({
+    enabled: resolveFlag(chatValue, scenarioValue, globalValue),
+    from:
+      chatValue !== null && chatValue !== undefined
+        ? ('chat' as const)
+        : scenarioValue !== null && scenarioValue !== undefined
+          ? ('scenario' as const)
+          : ('settings' as const),
+  });
+  return {
+    events: one(chat.events_enabled, scenario?.events_enabled, settings.events_enabled),
+    vars: one(chat.vars_enabled, scenario?.vars_enabled, settings.vars_enabled),
+    /**
+     * シナリオの段を飛ばしているか。
+     * シナリオを削除すると chats.scenario_id は FK で NULL になるので、
+     * 「参照先が見つからない」ではなく「参照が無い」で判定する
+     */
+    scenarioMissing: !scenario,
+  };
+}
 
 chatsRouter.put('/chats/:id', (req, res) => {
   const chat = updateChat(req.params.id, req.body ?? {});
@@ -356,6 +387,21 @@ chatsRouter.delete('/chats/:id/summary', (req, res) => {
 });
 
 // ---- 知識抽出（§8.4）----
+
+/** 保存せずに候補と理由だけ返す。抽出条件を調整するための確認用 */
+chatsRouter.post('/chats/:id/extract-preview', async (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  try {
+    // 手動確認では下限を無視する（少ない範囲でも試せるようにする）
+    res.json(await extractCandidates(chat.id, getSettings(), { ignoreMinimum: true }));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
 
 chatsRouter.post('/chats/:id/extract', async (req, res) => {
   const chat = getChat(req.params.id);

@@ -6,6 +6,9 @@ import { messagesAfterSeq } from '../db/repo/messages.js';
 import { toGameTime } from './calendar.js';
 import { completeText } from '../llm/openrouter.js';
 
+/** 同じチャットで要約が重ならないようにする（重なると毎ターン走る） */
+const summarizing = new Set<string>();
+
 /** §8.3: retainWindow(n) = max(1, min(24, n - 2)) */
 export function retainWindow(n: number): number {
   return Math.max(1, Math.min(24, n - 2));
@@ -22,6 +25,16 @@ const SUMMARY_RULES = `- 出来事には、そのときのゲーム内日付を�
  * 前回分を捨てて新規分だけ要約する実装は禁止。
  */
 export async function runSummarize(chatId: string, settings: Settings): Promise<string | null> {
+  if (summarizing.has(chatId)) return null;
+  summarizing.add(chatId);
+  try {
+    return await summarizeOnce(chatId, settings);
+  } finally {
+    summarizing.delete(chatId);
+  }
+}
+
+async function summarizeOnce(chatId: string, settings: Settings): Promise<string | null> {
   const chat = getChat(chatId);
   if (!chat) return null;
   const prev = latestSummary(chatId);
@@ -69,6 +82,9 @@ ${lines}
 /** 応答保存直後のバックグラウンド判定（§8.3-1,2） */
 export function maybeSummarize(chatId: string, settings: Settings): { needed: boolean } {
   if (!settings.auto_summarize) return { needed: false };
+  // 要約はLLM呼び出しなので数秒〜十数秒かかる。実行中に次のターンが来ても
+  // 未要約件数は減っていないため、ガードが無いと毎ターン起動してしまう
+  if (summarizing.has(chatId)) return { needed: false };
   const prev = latestSummary(chatId);
   const count = messagesAfterSeq(chatId, prev?.up_to_seq ?? 0).length;
   const needed = count >= settings.summary_interval;

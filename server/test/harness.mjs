@@ -9,6 +9,17 @@ export function setQueue(items) {
   writeFileSync(QUEUE, JSON.stringify(items));
 }
 
+const MOCK = `http://localhost:${process.env.MOCK_PORT || 4010}/v1`;
+
+/** モックが受け取ったリクエストの一覧（プロンプトの中身・呼び出し回数の検証用） */
+export async function mockRequests() {
+  return (await fetch(`${MOCK}/__requests`)).json();
+}
+
+export async function clearMockRequests() {
+  await fetch(`${MOCK}/__requests`, { method: 'DELETE' });
+}
+
 export async function api(method, path, body) {
   const res = await fetch(BASE + path, {
     method,

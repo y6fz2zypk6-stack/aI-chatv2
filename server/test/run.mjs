@@ -31,6 +31,7 @@ const MOCK_PORT = Number(process.env.MOCK_PORT) || (await freePort());
 writeFileSync(queuePath, '[]');
 process.env.MOCK_QUEUE = queuePath;
 process.env.TEST_PORT = String(PORT);
+process.env.MOCK_PORT = String(MOCK_PORT);
 
 const children = [];
 function launch(cmd, args, env, label) {
@@ -105,6 +106,7 @@ try {
   const { report } = await import('./harness.mjs');
   const s = await import('./suites.mjs');
   const s2 = await import('./suite-events.mjs');
+  const s3 = await import('./suite-memory.mjs');
 
   const w = await s.setupWorld('t');
   const snapshot = await s.normalFlow(w);
@@ -118,6 +120,11 @@ try {
   const ew = await s2.setupEventWorld('ev');
   await s2.varsSuite(ew);
   await s2.eventsSuite(ew);
+
+  // メモリー抽出と3段フラグの解決
+  const mw = await s3.setupMemoryWorld('mem');
+  await s3.memorySuite(mw);
+  await s3.flagResolutionSuite(mw);
 
   // 再起動して同じ状態が復元されるかを見る
   server.kill('SIGKILL');

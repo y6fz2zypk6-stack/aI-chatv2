@@ -1162,6 +1162,50 @@ textarea.tall {
   color: var(--chevron);
 }
 
+/* 3段の設定の解決結果。「継承」だけでは結果が読めないので必ず添える */
+.flag-result {
+  margin-top: 7px;
+  font-size: 11.5px;
+  color: var(--muted-strong);
+}
+
+.flag-result b {
+  color: var(--muted-strong);
+}
+
+.flag-result.on b {
+  color: var(--accent-ink);
+}
+
+/* メモリー候補のプレビュー1件 */
+.mem-cand {
+  background: var(--surface-2);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-cand .head {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mem-cand .txt {
+  margin: 0;
+  font: 500 13px/1.6 var(--font-ui);
+  color: var(--text);
+}
+
+.mem-cand .why {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
 /* メモリーの1行。本文は3行まで見せ、タップで編集する */
 .memrow {
   display: flex;
