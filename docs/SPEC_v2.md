@@ -751,7 +751,11 @@ POST /chats/:id/fork { message_id, variant_index? }
 
 - 現在地と**同じエリア**の、開店・閉店が両方設定された場所の営業状況を出す
 - `close_min` は 24 を超えて書ける（`26:00` = 翌2時）
-- 終電行は `last_train_min` の `last_train_notice_min` 分前から出す
+- 終電行は `last_train_min` の `last_train_notice_min` 分前から出す。
+  `last_train_enabled = 0` で行ごと出さない（鉄道が無い世界観向け）。
+  `last_train_label`（既定「終電」）を「最終バス」「最終転移」などに変えられる
+- **暦は列ではなくJSON1本（`calendars.config`）** なので、キーを増やしてもマイグレーションは不要。
+  読み出し時に `normalizeCalendar` が既定値で補う
 
 ---
 
@@ -990,6 +994,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | `chatListPreview` | 一覧の抜粋 |
 | `memorySuite` | 抽出の下限・プロンプトの中身・`subject` の検証・実行中ガード・要約からの独立 |
 | `flagResolutionSuite` | 3段フラグの解決結果と根拠 |
+| `lastTrainSuite` | 終電行の呼び方の差し替え・オンオフ・差分更新 |
 | `areasSuite` | エリアの改名・並べ替え・追加・削除拒否・書き出し取り込み |
 | `varsSuite` | 進行フラグの権限・範囲・`private_note` 非注入 |
 | `eventsSuite` | 条件式・チェック方式・トリガー・抽選のシード固定・履歴整合 |

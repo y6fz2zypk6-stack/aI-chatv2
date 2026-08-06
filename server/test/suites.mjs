@@ -736,3 +736,63 @@ export async function areasSuite() {
       copied.some((a) => a.id === 'legacy_zone'), JSON.stringify(copied.map((a) => a.id)));
   }
 }
+
+// ===========================================================================
+/** 終電行（呼び方の差し替え・オンオフ） */
+export async function lastTrainSuite(w) {
+  suite('終電行');
+
+  const setCal = (patch) => api('PUT', `/worlds/${w.world.id}/calendar`, patch);
+  const cal = (await api('GET', `/worlds/${w.world.id}/calendar`)).json;
+
+  // 22:30（既定は終電23:00・通知60分前）で通知窓に入る
+  const at2230 = async () => {
+    const { chat } = await newChat(w, { time: 877 * 1440 + 22 * 60 + 30 });
+    return (await api('GET', `/chats/${chat.id}/prompt-preview`)).json.situationBlock;
+  };
+  const at2330 = async () => {
+    const { chat } = await newChat(w, { time: 877 * 1440 + 23 * 60 + 30 });
+    return (await api('GET', `/chats/${chat.id}/prompt-preview`)).json.situationBlock;
+  };
+
+  check('既定では「終電まで残り◯分」が出る', (await at2230()).includes('終電まで残り30分'),
+    (await at2230()).split('\n').find((l) => l.includes('残り')) ?? '（無し）');
+  check('既定では終電後の文が出る', (await at2330()).includes(cal.after_last_train_text));
+
+  // 呼び方を差し替える
+  {
+    await setCal({ ...cal, last_train_label: '最終転移' });
+    const s = await at2230();
+    check('呼び方を差し替えられる', s.includes('最終転移まで残り30分'),
+      s.split('\n').find((l) => l.includes('残り')) ?? '（無し）');
+    check('差し替えたら「終電」の語は出ない', !s.includes('終電まで'));
+  }
+
+  // 空文字なら既定の呼び方へ戻す
+  {
+    await setCal({ ...cal, last_train_label: '' });
+    check('呼び方が空なら「終電」に戻す', (await at2230()).includes('終電まで残り30分'));
+  }
+
+  // オフにすると通知も終電後の文も出ない
+  {
+    await setCal({ ...cal, last_train_enabled: 0 });
+    const before = await at2230();
+    const after = await at2330();
+    check('オフ: 通知窓でも行が出ない', !before.includes('残り'),
+      before.split('\n').find((l) => l.includes('残り')) ?? '（無し）');
+    check('オフ: 終電後の文も出ない', !after.includes(cal.after_last_train_text));
+  }
+
+  // 保存は差分更新。触れなかったキーは保存済みの値が残る
+  {
+    await setCal({ last_train_label: '最終バス' });
+    const saved = (await api('GET', `/worlds/${w.world.id}/calendar`)).json;
+    check('指定したキーだけ変わる', saved.last_train_label === '最終バス', saved.last_train_label);
+    check('触れていないキーは保存済みの値が残る', saved.last_train_enabled === 0,
+      String(saved.last_train_enabled));
+  }
+
+  await setCal(cal);
+  check('元の設定へ戻せる', (await at2230()).includes('終電まで残り30分'));
+}

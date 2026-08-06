@@ -8,7 +8,25 @@ import { useApp } from '../store';
 export default function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [editing, setEditing] = useState<Persona | null>(null);
+  // 戻るで編集内容が黙って消えないよう、開いた時点の値と比べる
+  const [original, setOriginal] = useState<Persona | null>(null);
   const toast = useApp((s) => s.toast);
+
+  const open = (p: Persona) => {
+    setOriginal({ ...p });
+    setEditing({ ...p });
+  };
+
+  const close = () => {
+    setEditing(null);
+    setOriginal(null);
+  };
+
+  const closeWithConfirm = () => {
+    const dirty = editing && original && JSON.stringify(editing) !== JSON.stringify(original);
+    if (dirty && !confirm('保存していない変更があります。破棄して戻りますか？')) return;
+    close();
+  };
 
   const load = useCallback(() => {
     api.get<Persona[]>('/personas').then(setPersonas).catch(() => {});
@@ -22,14 +40,14 @@ export default function PersonasPage() {
       is_default: personas.length === 0 ? 1 : 0,
     });
     load();
-    setEditing(p);
+    open(p);
   };
 
   const save = async () => {
     if (!editing) return;
     try {
       await api.put(`/personas/${editing.id}`, editing);
-      setEditing(null);
+      close();
       load();
       toast('保存しました');
     } catch (err) {
@@ -40,14 +58,15 @@ export default function PersonasPage() {
   const remove = async (p: Persona) => {
     if (!confirm(`「${p.name}」を削除しますか？`)) return;
     await api.del(`/personas/${p.id}`);
-    setEditing(null);
+    close();
     load();
   };
 
   if (editing) {
     return (
       <>
-        <TopBar title="ペルソナ編集" back="/personas" />
+        {/* 編集は同じURL内の状態なので、遷移ではなく状態を閉じて一覧へ戻す */}
+        <TopBar title="ペルソナ編集" onBack={closeWithConfirm} />
         <div className="content form">
           <div className="id-row">
             <AvatarPicker
@@ -123,7 +142,7 @@ export default function PersonasPage() {
               </>
             }
             desc={p.description}
-            onClick={() => setEditing({ ...p })}
+            onClick={() => open(p)}
             chevron
           />
         ))}

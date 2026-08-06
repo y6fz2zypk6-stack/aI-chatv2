@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { CalendarConfig } from '@shared/types';
 import { api } from '../api';
-import { Field, Stepper, TopBar } from '../components';
+import { Field, Stepper, Toggle, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -87,35 +87,59 @@ export default function CalendarPage() {
           <span className="kicker">Last Train</span>
           <div className="setting">
             <div className="txt">
-              <label>終電</label>
-              <span>0時からの分。23:00 = 1380</span>
+              <label>終電の行を出す</label>
+              <span>鉄道が無い世界観ではオフにできます</span>
             </div>
-            <Stepper
-              value={cfg.last_train_min}
-              step={30}
-              min={0}
-              max={2880}
-              onChange={(v) => setCfg({ ...cfg, last_train_min: v })}
+            <Toggle
+              on={cfg.last_train_enabled !== 0}
+              onChange={(v) => setCfg({ ...cfg, last_train_enabled: v ? 1 : 0 })}
             />
           </div>
-          <div className="setting">
-            <div className="txt">
-              <label>通知を出し始める（分前）</label>
-              <span>この窓の中だけ「終電まで残り◯分」を出す</span>
-            </div>
-            <Stepper
-              value={cfg.last_train_notice_min}
-              step={15}
-              min={0}
-              onChange={(v) => setCfg({ ...cfg, last_train_notice_min: v })}
-            />
-          </div>
-          <Field label="終電後に出す文">
-            <input
-              value={cfg.after_last_train_text}
-              onChange={(e) => setCfg({ ...cfg, after_last_train_text: e.target.value })}
-            />
-          </Field>
+          {cfg.last_train_enabled !== 0 && (
+            <>
+              <Field label="呼び方（終電 / 最終バス / 最終転移 など）">
+                <input
+                  value={cfg.last_train_label}
+                  onChange={(e) => setCfg({ ...cfg, last_train_label: e.target.value })}
+                  placeholder="終電"
+                />
+              </Field>
+              <div className="setting" >
+                <div className="txt">
+                  <label>{cfg.last_train_label || '終電'}の時刻</label>
+                  <span>0時からの分。23:00 = 1380</span>
+                </div>
+                <Stepper
+                  value={cfg.last_train_min}
+                  step={30}
+                  min={0}
+                  max={2880}
+                  onChange={(v) => setCfg({ ...cfg, last_train_min: v })}
+                />
+              </div>
+              <div className="setting">
+                <div className="txt">
+                  <label>通知を出し始める（分前）</label>
+                  <span>
+                    この窓の中だけ「{cfg.last_train_label || '終電'}まで残り◯分」を出す
+                  </span>
+                </div>
+                <Stepper
+                  value={cfg.last_train_notice_min}
+                  step={15}
+                  min={0}
+                  onChange={(v) => setCfg({ ...cfg, last_train_notice_min: v })}
+                />
+              </div>
+              <Field label={`${cfg.last_train_label || '終電'}後に出す文`}>
+                <input
+                  value={cfg.after_last_train_text}
+                  onChange={(e) => setCfg({ ...cfg, after_last_train_text: e.target.value })}
+                  placeholder="終電は終了。帰りは徒歩か辻馬車になる。"
+                />
+              </Field>
+            </>
+          )}
         </div>
 
         <div className="section">

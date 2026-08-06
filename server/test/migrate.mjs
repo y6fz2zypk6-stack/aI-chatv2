@@ -87,6 +87,11 @@ function buildLegacyDb() {
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE calendars (
+      world_id TEXT PRIMARY KEY REFERENCES worlds(id) ON DELETE CASCADE,
+      config TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
     CREATE TABLE event_fires (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id TEXT NOT NULL REFERENCES world_events(id) ON DELETE CASCADE,
@@ -127,6 +132,12 @@ function buildLegacyDb() {
     .run('e1', 'w1', '旧イベント', '{"month":9,"weather":["雨"]}', 'once', 0, '雨が降っている。', 1, NOW, NOW);
   d.prepare('INSERT INTO event_fires (event_id, chat_id, game_time) VALUES (?,?,?)')
     .run('e1', 'c1', 900);
+  // 終電のオンオフ・呼び方を持たない、旧い暦設定
+  d.prepare('INSERT INTO calendars VALUES (?,?,?,?)').run(
+    'w1',
+    JSON.stringify({ last_train_min: 1320, after_last_train_text: '旧テキスト' }),
+    NOW, NOW,
+  );
   d.close();
 }
 
@@ -210,6 +221,27 @@ try {
     areas.some((a) => a.id === 'lighthouse_cape' && a.name === 'lighthouse_cape'),
     areas.map((a) => a.id).join(','));
   d.close();
+
+  // 暦は列ではなくJSONなので、新しいキーは読み出し時に既定で補われる
+  {
+    const out = execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `const { getCalendar } = await import('./dist/server/src/db/repo/calendars.js');
+         console.log(JSON.stringify(getCalendar('w1')));`,
+      ],
+      { cwd: path.join(here, '..'), env: { ...process.env, DB_PATH: dbPath } },
+    ).toString();
+    const cfg = JSON.parse(out.trim().split('\n').pop());
+    check('旧い暦設定でも last_train_enabled が既定で補われる', cfg.last_train_enabled === 1,
+      String(cfg.last_train_enabled));
+    check('旧い暦設定でも last_train_label が既定で補われる', cfg.last_train_label === '終電',
+      cfg.last_train_label);
+    check('保存済みの値は上書きされない',
+      cfg.last_train_min === 1320 && cfg.after_last_train_text === '旧テキスト',
+      `${cfg.last_train_min} / ${cfg.after_last_train_text}`);
+  }
 
   // 2回目の起動でも落ちないこと（冪等性）
   execFileSync(

@@ -16,6 +16,8 @@ export const DEFAULT_CALENDAR: CalendarConfig = {
     '1': { rise: '08:10', set: '16:20' },
     '7': { rise: '05:20', set: '20:40' },
   },
+  last_train_enabled: 1,
+  last_train_label: '終電',
   last_train_min: 1380,
   last_train_notice_min: 60,
   after_last_train_text: '終電は終了。帰りは徒歩か辻馬車になる。',
@@ -189,11 +191,14 @@ export function openStatusOf(
  * - それ以外: null（行を出さない）
  */
 export function lastTrainLine(cfg: CalendarConfig, time: number): string | null {
+  // 鉄道が無い世界観では行ごと出さない
+  if (cfg.last_train_enabled === 0) return null;
   const m = time % MIN_PER_DAY;
   const last = cfg.last_train_min;
   const notice = cfg.last_train_notice_min;
+  const label = cfg.last_train_label || '終電';
   if (m >= last - notice && m < last) {
-    return `終電まで残り${last - m}分。`;
+    return `${label}まで残り${last - m}分。`;
   }
   const gt = toGameTime(cfg, time);
   const { riseMin } = sunTimes(cfg, gt.month);

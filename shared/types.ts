@@ -279,6 +279,10 @@ export interface CalendarConfig {
   seasons: Record<string, number[]>;
   /** 月番号(文字列) → 日出・日没。未定義月は前後から線形補間（年跨ぎラップ） */
   sun: Record<string, SunTime>;
+  /** 終電行を出すか。合わない世界観では 0 にする */
+  last_train_enabled: number;
+  /** 「終電」「最終バス」「最終転移」など、その世界での呼び方 */
+  last_train_label: string;
   last_train_min: number;
   last_train_notice_min: number;
   after_last_train_text: string;

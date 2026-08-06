@@ -103,12 +103,18 @@ export function TopBar({
   title,
   sub,
   back,
+  onBack,
   actions,
 }: {
   title: string;
   sub?: string;
   /** 戻り先。省略時は履歴を1つ戻る */
   back?: string;
+  /**
+   * 画面内の状態だけで前の表示に戻す場合に使う（URLが変わらない編集画面など）。
+   * 指定したときは back より優先し、遷移は行わない。
+   */
+  onBack?: () => void;
   actions?: ReactNode;
 }) {
   const navigate = useNavigate();
@@ -116,7 +122,7 @@ export function TopBar({
     <header className="topbar">
       <button
         className="icon-btn"
-        onClick={() => (back ? navigate(back) : navigate(-1))}
+        onClick={() => (onBack ? onBack() : back ? navigate(back) : navigate(-1))}
         aria-label="戻る"
       >
         <Icon.back />
