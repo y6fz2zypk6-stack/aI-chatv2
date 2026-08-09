@@ -9,7 +9,8 @@ import type {
   VarValue,
   WorldEvent,
 } from '../../../shared/types.js';
-import { hhmmToMin, MIN_PER_DAY, toGameTime } from './calendar.js';
+import { parseHhmm } from '../../../shared/types.js';
+import { MIN_PER_DAY, toGameTime } from './calendar.js';
 import { readVar } from './vars.js';
 import { seededRandom } from '../util/random.js';
 
@@ -69,8 +70,16 @@ export function evalCondition(cond: EventCondition | null | undefined, ctx: Eval
   const weekday = asList(cond.weekday);
   if (weekday && !weekday.includes(gt.weekday)) return false;
 
-  if (cond.time_after !== undefined && minOfDay < hhmmToMin(cond.time_after)) return false;
-  if (cond.time_before !== undefined && minOfDay >= hhmmToMin(cond.time_before)) return false;
+  // 解釈できない時刻表記は「満たさない」とする。0分に丸めると常時真になり、
+  // 全時間帯で発火してしまう（誤りが静かに広がる方向へ倒れる）
+  if (cond.time_after !== undefined) {
+    const t = parseHhmm(cond.time_after);
+    if (t === null || minOfDay < t) return false;
+  }
+  if (cond.time_before !== undefined) {
+    const t = parseHhmm(cond.time_before);
+    if (t === null || minOfDay >= t) return false;
+  }
 
   const location = asList(cond.location);
   if (location && (usingNote || !location.includes(state.location))) return false;

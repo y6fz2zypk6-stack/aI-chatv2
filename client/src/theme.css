@@ -1025,15 +1025,15 @@ textarea.tall {
   flex: 0 0 auto;
   cursor: pointer;
   min-height: 36px;
-  font: 600 11.5px/1 var(--font-meta);
-  letter-spacing: 0.06em;
+  /* 場所だけ別書体にすると、日本語部分の見た目が揃わない。
+     Archivo は日本語を持たないためシステム書体へ落ちてしまうので、
+     ステートバー全体を本文と同じ --font-ui で揃える */
+  font: 600 12.5px/1 var(--font-ui);
+  letter-spacing: 0.02em;
   color: var(--muted-strong);
 }
 
 .state-bar .loc {
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-  letter-spacing: 0;
   color: var(--text);
 }
 
@@ -1160,6 +1160,18 @@ textarea.tall {
   display: grid;
   place-items: center;
   color: var(--chevron);
+}
+
+/* 時刻入力の解釈結果。黙って捨てず、何として保存されるかを見せる */
+.time-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.time-hint.bad {
+  color: var(--danger);
 }
 
 /* 3段の設定の解決結果。「継承」だけでは結果が読めないので必ず添える */

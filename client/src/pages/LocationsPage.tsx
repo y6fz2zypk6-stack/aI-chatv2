@@ -1,20 +1,57 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { AREA_ID_RE, type Location, type World, type WorldArea } from '@shared/types';
+import {
+  AREA_ID_RE,
+  formatHhmm,
+  parseHhmm,
+  type Location,
+  type World,
+  type WorldArea,
+} from '@shared/types';
 import { api } from '../api';
 import { Field, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
-function minToHhmm(min: number | null): string {
-  if (min == null) return '';
-  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
-}
-
-function hhmmToMin(s: string): number | null {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
-  if (!m) return null;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+/**
+ * 開店・閉店の入力欄。
+ * 非制御（defaultValue + onBlur）にすると、blur が起きないまま保存された場合に
+ * 入力が反映されない。制御にして、打った内容がそのまま状態へ入るようにする。
+ * 解釈できない表記は黙って捨てず、その場で知らせる。
+ */
+function TimeField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number | null;
+  onChange: (v: number | null) => void;
+}) {
+  const [text, setText] = useState(formatHhmm(value));
+  useEffect(() => setText(formatHhmm(value)), [value]);
+  const parsed = parseHhmm(text);
+  const invalid = text.trim() !== '' && parsed === null;
+  return (
+    <Field label={label}>
+      <input
+        value={text}
+        inputMode="numeric"
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange(parseHhmm(e.target.value));
+        }}
+        placeholder="16:00"
+      />
+      <span className={`time-hint${invalid ? ' bad' : ''}`}>
+        {invalid
+          ? '時刻として読み取れません（例: 16:00）'
+          : parsed === null
+            ? '空欄なら終日'
+            : `${formatHhmm(parsed)} として保存します`}
+      </span>
+    </Field>
+  );
 }
 
 export default function LocationsPage() {
@@ -104,7 +141,7 @@ export default function LocationsPage() {
                 {l.id}　{areaName(l.area)}
                 {l.open_min != null &&
                   l.close_min != null &&
-                  `　${minToHhmm(l.open_min)}–${minToHhmm(l.close_min)}`}
+                  `　${formatHhmm(l.open_min)}–${formatHhmm(l.close_min)}`}
                 {l.note && `　${l.note}`}
               </>
             }
@@ -178,18 +215,16 @@ export default function LocationsPage() {
                 onChange={(e) => setEditing({ ...editing, note: e.target.value })}
               />
             </Field>
-            <Field label="開店（例 16:00。空欄で終日）">
-              <input
-                defaultValue={minToHhmm(editing.open_min)}
-                onBlur={(e) => setEditing({ ...editing, open_min: hhmmToMin(e.target.value) })}
-              />
-            </Field>
-            <Field label="閉店（翌日なら 26:00 のように24超）">
-              <input
-                defaultValue={minToHhmm(editing.close_min)}
-                onBlur={(e) => setEditing({ ...editing, close_min: hhmmToMin(e.target.value) })}
-              />
-            </Field>
+            <TimeField
+              label="開店"
+              value={editing.open_min}
+              onChange={(v) => setEditing({ ...editing, open_min: v })}
+            />
+            <TimeField
+              label="閉店（翌日なら 26:00 のように24超）"
+              value={editing.close_min}
+              onChange={(v) => setEditing({ ...editing, close_min: v })}
+            />
           </div>
           <div className="setting">
             <div className="txt">

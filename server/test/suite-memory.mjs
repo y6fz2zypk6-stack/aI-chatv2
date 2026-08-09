@@ -300,6 +300,38 @@ export async function summarySuite(w) {
     check('方針が本文に入る', p.includes('# 要約の方針') && p.includes('# 何を落とすか'));
   }
 
+  // 自動で発火した瞬間に、何件の生データを対象にしているか
+  {
+    const autoTargets = async (interval) => {
+      await api('PUT', '/settings', {
+        auto_summarize: 1, auto_extract: 0, summary_interval: interval,
+      });
+      const chat = await newChat(w);
+      for (let t = 1; t <= 20; t++) {
+        await clearMockRequests();
+        setQueue([
+          { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+          { text: `あらすじ${t}` },
+        ]);
+        await generate(chat.id, { content: `t${t}` });
+        await new Promise((r) => setTimeout(r, 400));
+        const reqs = (await mockRequests()).filter((r) => !r.stream);
+        if (reqs.length) {
+          const body = reqs[0].prompt.slice(reqs[0].prompt.indexOf('# 今回の会話'));
+          return (body.match(/^\[/gm) ?? []).length;
+        }
+      }
+      return 0;
+    };
+    const c8 = await autoTargets(8);
+    const c16 = await autoTargets(16);
+    note(`初回要約の対象件数: interval=8 → ${c8}件 / interval=16 → ${c16}件`);
+    // 初回は冒頭メッセージ1件が乗るので interval/2 + 1 になる
+    check('対象件数は interval のおよそ半分', c8 === 5 && c16 === 9, `${c8} / ${c16}`);
+    check('interval の差がそのまま対象件数の差になる', c16 - c8 === (16 - 8) / 2,
+      `${c8} → ${c16}`);
+  }
+
   // 方針を差し替えられる
   {
     await api('PUT', '/settings', { summary_policy: '# 方針\n一行で書く。' });

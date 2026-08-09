@@ -508,6 +508,45 @@ export interface CuratedModel {
 }
 
 /**
+ * 「HH:MM」表記を0時からの分に直す。解釈できなければ null。
+ *
+ * 日本語キーボードでは全角の「：」が既定なので、半角コロンだけを受け付けると
+ * 入力が黙って無効化される（時刻が消えて「保存できない」ように見える）。
+ * 全角・時分表記・区切り無しも受け取る。
+ *
+ *   09:00 / 9:00 / ０９：００ / 09：00 / 900 / 9 / 9時 / 18時30分 → 可
+ *
+ * 時は24を超えてよい（閉店26:00 = 翌2時）。分は0〜59まで。
+ */
+export function parseHhmm(input: string): number | null {
+  const s = String(input ?? '')
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[：．.]/g, ':')
+    .replace(/時/g, ':')
+    .replace(/分/g, '')
+    .replace(/\s/g, '');
+  if (!s) return null;
+  const at = (h: number, m: number): number | null =>
+    m > 59 || h > 47 ? null : h * 60 + m;
+
+  let m = /^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (m) return at(+m[1], +m[2]);
+  m = /^(\d{1,2}):$/.exec(s); // 「9時」
+  if (m) return at(+m[1], 0);
+  m = /^(\d{1,2})$/.exec(s); // 「9」「18」
+  if (m) return at(+m[1], 0);
+  m = /^(\d{1,2})(\d{2})$/.exec(s); // 「900」「1830」
+  if (m) return at(+m[1], +m[2]);
+  return null;
+}
+
+/** 分を「HH:MM」に戻す。null は空文字 */
+export function formatHhmm(min: number | null | undefined): string {
+  if (min == null) return '';
+  return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+}
+
+/**
  * 直近これだけは要約せず生のまま残す件数。
  * summary_interval に比例させる。固定値にすると interval が小さいときに
  * retain が interval を食い尽くし、毎ターン要約になる。

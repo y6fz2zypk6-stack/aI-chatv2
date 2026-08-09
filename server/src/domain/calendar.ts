@@ -1,4 +1,4 @@
-import type { CalendarConfig, GameTime } from '../../../shared/types.js';
+import { parseHhmm, type CalendarConfig, type GameTime } from '../../../shared/types.js';
 
 // 時刻の演算・変換はこのモジュールに一本化する。
 // それ以外の場所で時刻演算を書くことを禁止する（§4.12）。
@@ -89,10 +89,9 @@ export function toMinutes(
 }
 
 /** "HH:MM" → 0時からの分 */
+/** 解釈できない表記は0分として扱う（日の出・日没表の後方互換） */
 export function hhmmToMin(s: string): number {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
-  if (!m) return 0;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  return parseHhmm(s) ?? 0;
 }
 
 export function minToHhmm(min: number): string {

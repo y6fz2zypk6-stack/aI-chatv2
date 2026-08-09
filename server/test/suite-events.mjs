@@ -466,6 +466,30 @@ export async function eventsSuite(w) {
       !!cp && !cp.missing.some((x) => x.value === 1), JSON.stringify(cp?.missing));
   }
 
+  // 時刻表記のゆれ（日本語キーボードの全角コロンなど）
+  {
+    await resetEvents(w);
+    const mk = (title, when) =>
+      mkEvent(w.world.id, { title, when, kind: 'ambient', trigger: 'repeat', chance: 1,
+        check: 'every_turn', inject: `${title}。` });
+    await mk('半角', { time_after: '19:00' });
+    await mk('全角コロン', { time_after: '19：00' });
+    await mk('区切り無し', { time_after: '1900' });
+    await mk('読めない', { time_after: 'よる' });
+
+    const { chat } = await newChat(w, { time: 877 * 1440 + 20 * 60 }); // 20:00
+    const rows = (await api('POST', `/worlds/${w.world.id}/events/evaluate`, { chat_id: chat.id }))
+      .json.rows;
+    // 採用まで見ると1ターンの上限（既定2件）に引っかかるので、条件を通ったかだけを見る
+    const by = Object.fromEntries(rows.map((r) => [r.title, r.outcome]));
+    const passed = (t) => by[t] !== undefined && by[t] !== 'condition';
+    check('半角の time_after が効く', passed('半角'), by['半角']);
+    check('全角コロンでも同じに扱う', passed('全角コロン'), by['全角コロン']);
+    check('区切り無しでも同じに扱う', passed('区切り無し'), by['区切り無し']);
+    check('読めない時刻は「満たさない」にする（常時真にしない）',
+      by['読めない'] === 'condition', by['読めない']);
+  }
+
   // 条件式の評価API
   {
     const { chat } = await newChat(w);
