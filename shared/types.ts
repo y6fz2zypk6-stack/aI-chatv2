@@ -423,6 +423,12 @@ export interface Settings {
   auto_summarize: number;
   summary_interval: number;
   summary_max_chars: number;
+  /**
+   * 要約の方針（何を残し・何を落とし・どう書くか）。
+   * アプリ側の制約（統合・人物設定を含めない・日付・文字数）は別途固定で付くので、
+   * ここには「取捨選択と文体」だけを書く。
+   */
+  summary_policy: string;
   auto_extract: number;
   lore_recursion: number;
   lore_scan_window: number;

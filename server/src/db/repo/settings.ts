@@ -1,6 +1,36 @@
 import { db } from '../index.js';
 import type { Settings } from '../../../../shared/types.js';
 
+/**
+ * 要約の方針の既定値。
+ * 「何を残すか」だけでなく **「何を落とすか」** を必ず書くこと。
+ * 落とす基準が無いと、モデルは文を詰めることでしか短くできず、
+ * 接続詞で繋いだ列挙（＝冗漫なあらすじ）になる。
+ */
+export const DEFAULT_SUMMARY_POLICY = `# 何を残すか
+- 関係の変化（距離感・呼び方・態度が変わった瞬間）
+- 交わした約束と、その履行・破棄
+- 進行中の仕事・研究・調査の進捗
+- 感情の転機となった場面
+- 未解決の事柄、開いたままの問い
+- 今後の予定、約束された日時
+
+# 何を落とすか
+- 雑談。ただし関係や物語が動いたものは残す
+- 移動・飲食などの日常動作。それ自体に意味がある場合を除く
+- 感情の機微の描写。転機になっていないもの
+
+# 書き方
+- 美文を避け、情報密度を優先する。事実を淡々と書く
+- 地の文の言い回しを再現しようとしない
+- 次の見出しで区切る
+
+## 経緯
+[日付] 起きたこと（時系列）
+
+## 約束・予定
+## 未解決`;
+
 /** §12 の既定値 */
 export const DEFAULT_SETTINGS: Settings = {
   system_prompt:
@@ -14,7 +44,8 @@ export const DEFAULT_SETTINGS: Settings = {
   utility_model: process.env.UTILITY_MODEL || 'anthropic/claude-sonnet-5',
   auto_summarize: 1,
   summary_interval: 32,
-  summary_max_chars: 500,
+  summary_max_chars: 700,
+  summary_policy: DEFAULT_SUMMARY_POLICY,
   auto_extract: 0,
   lore_recursion: 1,
   lore_scan_window: 8,

@@ -106,6 +106,34 @@ export default function SettingsPage() {
                   onChange={(v) => void set({ summary_max_chars: v })}
                 />
               </SettingRow>
+              <Field label="要約の方針（何を残し、何を落とし、どう書くか）">
+                <textarea
+                  className="tall"
+                  value={settings.summary_policy}
+                  onChange={(e) => setSettings({ ...settings, summary_policy: e.target.value })}
+                  onBlur={(e) => void set({ summary_policy: e.target.value })}
+                />
+              </Field>
+              <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+                「何を落とすか」を必ず書いてください。落とす基準が無いと、
+                短くする方法が文を詰めることしか無くなり、冗漫なあらすじになります。
+                <br />
+                前回分との統合・人物設定を書かないこと・日付の付け方・文字数は、
+                アプリ側で必ず付けるのでここに書く必要はありません。
+                <div className="row" style={{ marginTop: 10 }}>
+                  <button
+                    className="pill sm"
+                    onClick={() => {
+                      if (!confirm('要約の方針を既定に戻しますか？')) return;
+                      void api
+                        .get<Settings>('/settings/defaults')
+                        .then((d) => set({ summary_policy: d.summary_policy }));
+                    }}
+                  >
+                    既定に戻す
+                  </button>
+                </div>
+              </div>
             </>
           )}
           <SettingRow label="自動抽出" hint="会話からメモリー候補を拾う">

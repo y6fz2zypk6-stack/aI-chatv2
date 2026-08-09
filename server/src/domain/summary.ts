@@ -1,6 +1,7 @@
 import type { Message, Settings } from '../../../shared/types.js';
 import { getCalendar } from '../db/repo/calendars.js';
 import { getChat } from '../db/repo/chats.js';
+import { DEFAULT_SUMMARY_POLICY } from '../db/repo/settings.js';
 import { insertSummary, latestSummary } from '../db/repo/summaries.js';
 import { messagesAfterSeq } from '../db/repo/messages.js';
 import { toGameTime } from './calendar.js';
@@ -14,10 +15,24 @@ export function retainWindow(n: number): number {
   return Math.max(1, Math.min(24, n - 2));
 }
 
-/** §8.3 要約プロンプトに必ず含める文 */
-const SUMMARY_RULES = `- 出来事には、そのときのゲーム内日付を添えること。
-- 人物の設定（容姿・口調・経歴・立場）は要約に含めない。これらはロアブックが保持している。
-  要約に書くのは、出来事と、人物間の関係の変化のみ。`;
+/**
+ * 要約プロンプトの骨組み。**利用者は編集できない。**
+ * ここにあるのはアプリの構造上どうしても必要な制約で、書き忘れると静かに壊れる:
+ *   - 統合を書き忘れる → 前回分が捨てられ、古い出来事が消える
+ *   - 人物設定の除外を書き忘れる → ロアブックと二重管理になりコンテキストを食う
+ *
+ * 取捨選択と文体は settings.summary_policy（編集可能）が受け持つ。
+ */
+function buildRules(maxChars: number): string {
+  return `# 必ず守ること
+- 前回までのあらすじは選別済みである。言い回しは縮めてよいが、そこに書かれた
+  出来事・約束・未解決の項目は落とさない。
+- 今回の会話は生の記録である。下の「要約の方針」に従って取捨選択する。
+- 人物の設定（容姿・口調・経歴・立場）は書かない。ロアブックが保持している。
+- 出来事には [5年9月10日(秋)] の形式でゲーム内日付を添える。
+- 全体を${maxChars}文字程度に収める。
+- あらすじ本文のみを出力する。前置き・説明・見出し以外の装飾を書かない。`;
+}
 
 /**
  * 要約の実行（§8.3）。
@@ -53,17 +68,20 @@ async function summarizeOnce(chatId: string, settings: Settings): Promise<string
 
   const lines = targets.map((m) => `[${fmtDate(m)}] ${m.content}`).join('\n');
   const model = settings.utility_model || settings.default_model;
-  const prompt = `以下はロールプレイ会話の記録である。前回までのあらすじと今回の会話を統合し、1本のあらすじとして書き直すこと。
-古い出来事も消さずに残し、全体を${settings.summary_max_chars}文字程度に圧縮する。
-${SUMMARY_RULES}
+  const policy = settings.summary_policy?.trim() || DEFAULT_SUMMARY_POLICY;
+  const prompt = `以下はロールプレイ会話の記録である。
+前回までのあらすじと今回の会話を統合し、1本のあらすじとして書き直すこと。
+
+${buildRules(settings.summary_max_chars)}
+
+# 要約の方針
+${policy}
 
 # 前回までのあらすじ
 ${prev?.content || '（なし）'}
 
 # 今回の会話（各行の [日付] はゲーム内日付）
-${lines}
-
-あらすじ本文のみを出力すること。`;
+${lines}`;
 
   const content = (
     await completeText({

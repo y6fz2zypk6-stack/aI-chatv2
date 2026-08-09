@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import { CURATED_MODELS } from '../../../shared/types.js';
-import { getSettings, updateSettings } from '../db/repo/settings.js';
+import { DEFAULT_SETTINGS, getSettings, updateSettings } from '../db/repo/settings.js';
 import { listModels } from '../llm/openrouter.js';
 
 export const settingsRouter = Router();
 
 settingsRouter.get('/settings', (_req, res) => {
   res.json(getSettings());
+});
+
+// 既定値。設定画面の「既定に戻す」で使う（副作用は無い）
+settingsRouter.get('/settings/defaults', (_req, res) => {
+  res.json(DEFAULT_SETTINGS);
 });
 
 settingsRouter.put('/settings', (req, res) => {

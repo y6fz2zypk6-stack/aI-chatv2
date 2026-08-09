@@ -262,3 +262,60 @@ export async function flagResolutionSuite(w) {
     check('シナリオの段を飛ばしていることを知らせる', d.flags.scenarioMissing === true);
   }
 }
+
+// ===========================================================================
+/** 要約プロンプト（固定の骨組み + 編集できる方針） */
+export async function summarySuite(w) {
+  suite('要約プロンプト');
+
+  const base = (await api('GET', '/settings')).json;
+  const defaults = (await api('GET', '/settings/defaults')).json;
+
+  check('既定の方針に「何を落とすか」がある', defaults.summary_policy.includes('# 何を落とすか'),
+    defaults.summary_policy.split('\n')[0]);
+  check('既定の方針に見出しの指定がある', defaults.summary_policy.includes('## 未解決'));
+
+  /** 要約を1回起こし、そのとき送られたプロンプトを返す */
+  const promptOf = async () => {
+    const chat = await newChat(w);
+    await advance(chat.id, w, 20); // 41件 ≧ summary_interval
+    await clearMockRequests();
+    setQueue([{ text: 'まとめたあらすじ。' }]);
+    await api('POST', `/chats/${chat.id}/summarize`);
+    const reqs = (await mockRequests()).filter((r) => !r.stream);
+    return reqs[reqs.length - 1]?.prompt ?? '';
+  };
+
+  await api('PUT', '/settings', { auto_extract: 0, summary_max_chars: 700 });
+
+  // 骨組み
+  {
+    const p = await promptOf();
+    check('統合の指示がある', p.includes('統合し、1本のあらすじとして書き直す'));
+    check('前回分を落とさない指示がある', p.includes('出来事・約束・未解決の項目は落とさない'));
+    check('人物設定を除外する指示がある', p.includes('人物の設定'));
+    check('日付の形式を指定している', p.includes('[5年9月10日(秋)] の形式'));
+    check('文字数が反映される', p.includes('700文字程度'), '');
+    check('「古い出来事も消さずに残し」は無くなった', !p.includes('古い出来事も消さずに残し'));
+    check('方針が本文に入る', p.includes('# 要約の方針') && p.includes('# 何を落とすか'));
+  }
+
+  // 方針を差し替えられる
+  {
+    await api('PUT', '/settings', { summary_policy: '# 方針\n一行で書く。' });
+    const p = await promptOf();
+    check('差し替えた方針が使われる', p.includes('一行で書く。'));
+    check('差し替えても骨組みは残る',
+      p.includes('人物の設定') && p.includes('出来事・約束・未解決の項目は落とさない'));
+    check('差し替えたら既定の方針は入らない', !p.includes('# 何を落とすか'));
+  }
+
+  // 空にしたら既定へ戻す（骨組みだけになるのを防ぐ）
+  {
+    await api('PUT', '/settings', { summary_policy: '   ' });
+    const p = await promptOf();
+    check('方針が空なら既定を使う', p.includes('# 何を落とすか'));
+  }
+
+  await api('PUT', '/settings', base);
+}
