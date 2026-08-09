@@ -319,3 +319,73 @@ export async function summarySuite(w) {
 
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+/** 要約の発火間隔（毎ターン走らないこと） */
+export async function summaryCadenceSuite(w) {
+  suite('要約の発火間隔');
+
+  const base = (await api('GET', '/settings')).json;
+
+  /** interval を設定して n ターン進め、要約が走ったターンを返す */
+  const firedTurns = async (interval, turns) => {
+    await api('PUT', '/settings', {
+      auto_summarize: 1, auto_extract: 0, summary_interval: interval,
+    });
+    const chat = await newChat(w);
+    const fired = [];
+    for (let t = 1; t <= turns; t++) {
+      await clearMockRequests();
+      setQueue([
+        { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+        { text: `あらすじ${t}` },
+      ]);
+      await generate(chat.id, { content: `t${t}` });
+      await new Promise((r) => setTimeout(r, 400));
+      const utility = (await mockRequests()).filter((r) => !r.stream);
+      if (utility.length) fired.push(t);
+    }
+    return fired;
+  };
+
+  // 修正前は retain が interval をほぼ食い尽くし、どの interval でも毎ターンになっていた
+  let small = [];
+  {
+    const fired = await firedTurns(8, 12);
+    small = fired.slice(1).map((t, i) => t - fired[i]);
+    note(`interval=8 の発火ターン: ${fired.join(',') || '（なし）'}`);
+    check('複数回発火するところまで進んでいる', fired.length >= 3, `${fired.length}回`);
+    check('interval=8 で毎ターン要約しない', small.length > 0 && small.every((g) => g >= 2),
+      `間隔 ${small.join(',') || '—'}`);
+    check('発火間隔が一定', new Set(small).size === 1, `間隔 ${small.join(',')}`);
+  }
+
+  // interval を大きくすると間隔も比例して広がる
+  {
+    const fired = await firedTurns(16, 18);
+    const gaps = fired.slice(1).map((t, i) => t - fired[i]);
+    note(`interval=16 の発火ターン: ${fired.join(',') || '（なし）'}`);
+    check('複数回発火するところまで進んでいる', fired.length >= 2, `${fired.length}回`);
+    check('interval=16 は interval=8 より間隔が広い',
+      gaps.length > 0 && gaps.every((g) => g > small[0]),
+      `間隔 ${gaps.join(',')} vs ${small[0]}`);
+  }
+
+  // 1回の要約で必ず前へ進む（進まないと次ターンも同じ判定になる）
+  {
+    await api('PUT', '/settings', { auto_summarize: 1, auto_extract: 0, summary_interval: 8 });
+    const chat = await newChat(w);
+    for (let t = 1; t <= 5; t++) {
+      setQueue([
+        { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+        { text: `あらすじ${t}` },
+      ]);
+      await generate(chat.id, { content: `t${t}` });
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const sum = (await api('GET', `/chats/${chat.id}/summary`)).json;
+    check('境界が前へ進んでいる', (sum?.up_to_seq ?? 0) > 0, `up_to_seq=${sum?.up_to_seq}`);
+  }
+
+  await api('PUT', '/settings', base);
+}

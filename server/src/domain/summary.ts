@@ -1,4 +1,4 @@
-import type { Message, Settings } from '../../../shared/types.js';
+import { retainWindow, type Message, type Settings } from '../../../shared/types.js';
 import { getCalendar } from '../db/repo/calendars.js';
 import { getChat } from '../db/repo/chats.js';
 import { DEFAULT_SUMMARY_POLICY } from '../db/repo/settings.js';
@@ -9,11 +9,6 @@ import { completeText } from '../llm/openrouter.js';
 
 /** 同じチャットで要約が重ならないようにする（重なると毎ターン走る） */
 const summarizing = new Set<string>();
-
-/** §8.3: retainWindow(n) = max(1, min(24, n - 2)) */
-export function retainWindow(n: number): number {
-  return Math.max(1, Math.min(24, n - 2));
-}
 
 /**
  * 要約プロンプトの骨組み。**利用者は編集できない。**
@@ -56,7 +51,7 @@ async function summarizeOnce(chatId: string, settings: Settings): Promise<string
   const unsummarized = messagesAfterSeq(chatId, prev?.up_to_seq ?? 0);
   if (unsummarized.length === 0) return prev?.content ?? null;
 
-  const retain = retainWindow(unsummarized.length);
+  const retain = retainWindow(unsummarized.length, settings.summary_interval);
   const targets = unsummarized.slice(0, Math.max(0, unsummarized.length - retain));
   if (targets.length === 0) return prev?.content ?? null;
 

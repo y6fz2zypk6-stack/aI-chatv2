@@ -127,6 +127,7 @@ try {
   await s3.memorySuite(mw);
   await s3.flagResolutionSuite(mw);
   await s3.summarySuite(mw);
+  await s3.summaryCadenceSuite(mw);
 
   // 再起動して同じ状態が復元されるかを見る
   server.kill('SIGKILL');

@@ -507,6 +507,21 @@ export interface CuratedModel {
   label: string;
 }
 
+/**
+ * 直近これだけは要約せず生のまま残す件数。
+ * summary_interval に比例させる。固定値にすると interval が小さいときに
+ * retain が interval を食い尽くし、毎ターン要約になる。
+ */
+export function retainWindow(unsummarized: number, interval: number): number {
+  const half = Math.min(24, Math.max(2, Math.floor(interval / 2)));
+  return Math.max(1, Math.min(half, unsummarized - 2));
+}
+
+/** 設定値から、実際に何メッセージごとに要約が走るかを求める */
+export function summarizeEveryMessages(interval: number): number {
+  return Math.max(2, interval - retainWindow(interval, interval));
+}
+
 export const CURATED_MODELS: CuratedModel[] = [
   { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
   { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },

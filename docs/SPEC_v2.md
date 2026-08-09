@@ -600,9 +600,24 @@ drawKey = scopeKey ?? (check === 'on_day_change' ? 通算日 : 基準メッセ�
 未要約メッセージが `summary_interval` 件たまったら、バックグラウンドで実行する。
 
 ```
-retainWindow(n) = max(1, min(24, n - 2))   ← 直近この件数は要約せず生で残す
-対象 = 未要約の先頭から (n - retainWindow) 件
+retain = min(24, max(2, floor(interval / 2)))   ← 直近この件数は要約せず生で残す
+retain = min(retain, n - 2)                     ← 1回で最低2件は前へ進める
+対象 = 未要約の先頭から (n - retain) 件
+発火間隔 = interval - retain ≒ interval / 2 メッセージ
 ```
+
+**`retain` は `summary_interval` に比例させること。** 以前は interval と無関係に24件で
+頭打ちにしていたため、interval が小さいと retain が interval をほぼ食い尽くし、
+1回で2件しか進まず、次のターンで即座に閾値へ戻って**毎ターン要約**になっていた。
+
+| interval | 旧: 発火間隔 | 新: 発火間隔 |
+|---|---|---|
+| 16 | **毎ターン** | 4ターン |
+| 24 | **毎ターン** | 6ターン |
+| 32 | 4ターン | 8ターン |
+
+設定画面には実際の発火間隔（`summarizeEveryMessages`）を出す。
+2つのつまみが噛み合っているかは、値を見ないと分からないため。
 
 **前回のあらすじと今回の対象範囲を統合して1本に書き直させる。**
 前回分を捨てて新規分だけ要約する実装を禁止する（古い出来事が消えるため）。
@@ -1022,6 +1037,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | `flagResolutionSuite` | 3段フラグの解決結果と根拠 |
 | `lastTrainSuite` | 終電行の呼び方の差し替え・オンオフ・差分更新 |
 | `summarySuite` | 要約プロンプトの骨組みと方針の分離・差し替え・空文字のフォールバック |
+| `summaryCadenceSuite` | 要約が毎ターン走らないこと・間隔が interval に比例すること |
 | `areasSuite` | エリアの改名・並べ替え・追加・削除拒否・書き出し取り込み |
 | `varsSuite` | 進行フラグの権限・範囲・`private_note` 非注入 |
 | `eventsSuite` | 条件式・チェック方式・トリガー・抽選のシード固定・履歴整合 |

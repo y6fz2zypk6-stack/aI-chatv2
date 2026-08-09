@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { CURATED_MODELS, modelLabel, type Persona, type Settings } from '@shared/types';
+import {
+  CURATED_MODELS,
+  modelLabel,
+  summarizeEveryMessages,
+  type Persona,
+  type Settings,
+} from '@shared/types';
 import { api } from '../api';
 import { Field, SettingRow, Stepper, Toggle, TopBar } from '../components';
 import { useApp } from '../store';
@@ -90,7 +96,11 @@ export default function SettingsPage() {
           </SettingRow>
           {settings.auto_summarize === 1 && (
             <>
-              <SettingRow label="要約する間隔（メッセージ）" sub>
+              <SettingRow
+                label="要約する間隔（メッセージ）"
+                hint={`未要約がこの件数に達したら要約します。直近の一部は生のまま残すので、実際は約${summarizeEveryMessages(settings.summary_interval)}メッセージ（${Math.round(summarizeEveryMessages(settings.summary_interval) / 2)}ターン）ごとです`}
+                sub
+              >
                 <Stepper
                   value={settings.summary_interval}
                   step={2}
