@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import type { LorebookEntry } from '../../../shared/types.js';
+import type { LorebookEntry, Memory, MemoryListItem } from '../../../shared/types.js';
+import { getCalendar } from '../db/repo/calendars.js';
+import { memoryDateLabel } from '../domain/calendar.js';
 import {
   createCharacter,
   deleteCharacter,
@@ -153,8 +155,22 @@ charactersRouter.post('/worlds/:id/characters/import', (req, res) => {
 
 // ---- メモリー ----
 
+/**
+ * ゲーム内日付の表示用ラベルを添える。
+ * メモリーはキャラクター紐づけで「いまが何日か」を持たないため、
+ * 一覧では相対表記にせず絶対日付を出す（相対表記は生成時のプロンプトのみ）。
+ */
+function withDateLabel(characterId: string, items: Memory[]): MemoryListItem[] {
+  const c = getCharacter(characterId);
+  const cal = c ? getCalendar(c.world_id) : null;
+  return items.map((m) => ({
+    ...m,
+    game_time_label: cal ? memoryDateLabel(cal, m.game_time, null) : '',
+  }));
+}
+
 charactersRouter.get('/characters/:id/memories', (req, res) => {
-  res.json(listMemories(req.params.id));
+  res.json(withDateLabel(req.params.id, listMemories(req.params.id)));
 });
 
 charactersRouter.post('/characters/:id/memories', (req, res) => {
@@ -162,7 +178,8 @@ charactersRouter.post('/characters/:id/memories', (req, res) => {
     res.status(404).json({ error: 'キャラクターが見つかりません' });
     return;
   }
-  res.status(201).json(createMemory(req.params.id, req.body ?? {}));
+  const m = createMemory(req.params.id, req.body ?? {});
+  res.status(201).json(withDateLabel(req.params.id, [m])[0]);
 });
 
 charactersRouter.put('/memories/:id', (req, res) => {
@@ -171,7 +188,7 @@ charactersRouter.put('/memories/:id', (req, res) => {
     res.status(404).json({ error: 'メモリーが見つかりません' });
     return;
   }
-  res.json(m);
+  res.json(withDateLabel(m.character_id, [m])[0]);
 });
 
 charactersRouter.delete('/memories/:id', (req, res) => {

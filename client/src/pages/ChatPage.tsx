@@ -36,6 +36,8 @@ interface MemoryPreview {
     subject: string;
     content: string;
     why: string;
+    /** 「3日前」など。日付不明なら空文字 */
+    game_time_label: string;
   }[];
   range: { fromSeq: number; toSeq: number; count: number } | null;
   notes: string[];
@@ -580,6 +582,7 @@ export default function ChatPage() {
                   <div className="head">
                     <span className="tag mute">{c.character_name}</span>
                     {c.subject && <span className="tag">対象: {charOf(c.subject)?.name ?? c.subject}</span>}
+                    {c.game_time_label && <span className="tag mute">{c.game_time_label}</span>}
                   </div>
                   <p className="txt">{c.content}</p>
                   {c.why && <p className="why">{c.why}</p>}

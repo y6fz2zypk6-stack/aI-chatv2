@@ -61,6 +61,8 @@ export interface MemoryCandidate {
   content: string;
   /** 保存条件をどう満たすかの説明。調整用に返すだけで保存はしない */
   why: string;
+  /** 出来事のゲーム内時刻（通算分）。抽出範囲の末尾のステートから採る */
+  game_time: number | null;
 }
 
 export interface ExtractResult {
@@ -154,6 +156,9 @@ export async function extractCandidates(
   const convo = targets.map((m) => m.content).join('\n');
   const model = settings.utility_model || settings.default_model;
   const candidates: MemoryCandidate[] = [];
+  // 「いつの出来事か」は抽出範囲の末尾のゲーム内時刻とする。
+  // 範囲内で日をまたぐこともあるが、記憶は範囲全体をまとめた1件なので末尾に寄せる
+  const gameTime = targets[targets.length - 1]?.state_after?.time ?? null;
 
   for (const c of participants) {
     const existing = listMemories(c.id).map((m) => m.content);
@@ -205,6 +210,7 @@ export async function extractCandidates(
           subject,
           content,
           why: (m.why ?? '').trim(),
+          game_time: gameTime,
         });
         taken++;
       }
@@ -253,7 +259,12 @@ export async function runExtract(
     }
 
     for (const c of result.candidates) {
-      createMemory(c.character_id, { subject: c.subject, content: c.content, source: 'auto' });
+      createMemory(c.character_id, {
+        subject: c.subject,
+        content: c.content,
+        source: 'auto',
+        game_time: c.game_time,
+      });
     }
     const chat = getChat(chatId);
     const targets = chat ? messagesAfterSeq(chatId, chat.extracted_up_to_seq ?? 0) : [];

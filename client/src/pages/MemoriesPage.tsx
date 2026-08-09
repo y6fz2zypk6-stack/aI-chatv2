@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import type { Character, Memory } from '@shared/types';
+import type { Character, MemoryListItem } from '@shared/types';
 import { api } from '../api';
 import { Field, Modal, TopBar } from '../components';
 import { Icon } from '../icons';
@@ -10,9 +10,9 @@ export default function MemoriesPage() {
   const { id } = useParams<{ id: string }>();
   const [character, setCharacter] = useState<Character | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [memories, setMemories] = useState<Memory[]>([]);
+  const [memories, setMemories] = useState<MemoryListItem[]>([]);
   const [draft, setDraft] = useState('');
-  const [editing, setEditing] = useState<Memory | null>(null);
+  const [editing, setEditing] = useState<MemoryListItem | null>(null);
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
@@ -28,7 +28,7 @@ export default function MemoriesPage() {
           .catch(() => {});
       })
       .catch(() => {});
-    api.get<Memory[]>(`/characters/${id}/memories`).then(setMemories).catch(() => {});
+    api.get<MemoryListItem[]>(`/characters/${id}/memories`).then(setMemories).catch(() => {});
   }, [id]);
 
   useEffect(load, [load]);
@@ -52,12 +52,12 @@ export default function MemoriesPage() {
     load();
   };
 
-  const setPinned = async (m: Memory, pinned: number) => {
+  const setPinned = async (m: MemoryListItem, pinned: number) => {
     await api.put(`/memories/${m.id}`, { ...m, pinned });
     load();
   };
 
-  const row = (m: Memory) => (
+  const row = (m: MemoryListItem) => (
     <div
       key={m.id}
       className="memrow"
@@ -89,6 +89,8 @@ export default function MemoriesPage() {
             {m.source === 'auto' ? '自動抽出' : '手動'}
           </span>
           {m.subject && <span>{nameOf(m.subject)}</span>}
+          {/* いつの出来事か。生成時は「3日前」等の相対表記になる */}
+          {m.game_time_label && <span>{m.game_time_label}</span>}
         </div>
       </div>
       <span className="chev">
@@ -153,7 +155,7 @@ export default function MemoriesPage() {
 }
 
 function MemoryEditor(props: {
-  memory: Memory;
+  memory: MemoryListItem;
   characters: Character[];
   onClose: () => void;
   onDone: () => void;

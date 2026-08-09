@@ -125,6 +125,7 @@ try {
   // メモリー抽出と3段フラグの解決
   const mw = await s3.setupMemoryWorld('mem');
   await s3.memorySuite(mw);
+  await s3.memoryDateSuite(mw);
   await s3.flagResolutionSuite(mw);
   await s3.summarySuite(mw);
   await s3.summaryCadenceSuite(mw);

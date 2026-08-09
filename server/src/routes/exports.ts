@@ -144,7 +144,10 @@ interface WorldImport {
     vars_schema?: VarSchemaEntry[];
   };
   calendar?: Record<string, unknown>;
-  characters?: (Partial<Character> & { id?: string; memories?: { subject?: string; content?: string; pinned?: number }[] })[];
+  characters?: (Partial<Character> & {
+    id?: string;
+    memories?: { subject?: string; content?: string; pinned?: number; game_time?: number | null }[];
+  })[];
   lorebook?: (Partial<LorebookEntry> & { character_id?: string | null })[];
   locations?: { id?: string; name?: string; indoor?: number; area?: string; open_min?: number | null; close_min?: number | null; note?: string }[];
   events?: Record<string, unknown>[];
@@ -172,6 +175,8 @@ exportsRouter.post('/worlds/import', (req, res) => {
         subject: m.subject ? (idMap.get(m.subject) ?? m.subject) : '',
         content: m.content,
         pinned: m.pinned ?? 0,
+        // 暦は世界ごと持ち出すので、ゲーム内時刻はそのまま持ち込める
+        game_time: m.game_time ?? null,
       });
     }
   }

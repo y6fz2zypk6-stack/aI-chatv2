@@ -482,3 +482,75 @@ export async function summaryCadenceSuite(w) {
 
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+// メモリーのゲーム内日付（実時間ではなく state の時刻を持たせる）
+// ===========================================================================
+export async function memoryDateSuite(w) {
+  suite('メモリーのゲーム内日付');
+
+  const base = (await api('GET', '/settings')).json;
+  await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0 });
+
+  const chat = await newChat(w);
+  await advance(chat.id, w, 5); // 10分×5 = 18:50
+  const at = T1800 + 50;
+
+  setQueue([{ text: memJson([{ subject: '', content: '港で待ち合わせると約束した', why: 'x' }]) }]);
+  const r = await api('POST', `/chats/${chat.id}/extract`);
+  check('抽出して保存できる', r.json.added === 1, JSON.stringify(r.json));
+
+  const find = async (content) =>
+    (await api('GET', `/characters/${w.ashley.id}/memories`)).json.find((m) => m.content === content);
+
+  const m = await find('港で待ち合わせると約束した');
+  check('抽出範囲末尾のゲーム内時刻を保存する', m?.game_time === at, String(m?.game_time));
+  check('一覧では絶対日付を返す', m?.game_time_label === '3年8月10日', m?.game_time_label);
+
+  // 同じ日なら「今日」として注入される
+  await clearMockRequests();
+  setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'x' });
+  let prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+  check('同じ日は「今日」として注入する', prompt.includes('- (今日) 港で待ち合わせると約束した'),
+    prompt.split('\n').filter((l) => l.includes('港で')).join(' | '));
+
+  // 日をまたぐと相対表記が動く
+  const gt = (await api('GET', `/chats/${chat.id}/state`)).json.gameTime;
+  await api('PUT', `/chats/${chat.id}/state`, { game_time: { ...gt, day: gt.day + 3 } });
+  await clearMockRequests();
+  setQueue([{ text: reply({ char: '「ええ」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'y' });
+  prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+  check('3日経つと「3日前」になる', prompt.includes('- (3日前) 港で待ち合わせると約束した'),
+    prompt.split('\n').filter((l) => l.includes('港で')).join(' | '));
+
+  // 手動追加は日付を持たない（実時間から推測しない）
+  const manual = (await api('POST', `/characters/${w.ashley.id}/memories`, { content: '手動で足した' })).json;
+  check('手動追加の日付は null', manual.game_time === null, String(manual.game_time));
+  check('日付不明ならラベルは空', manual.game_time_label === '', manual.game_time_label);
+
+  await clearMockRequests();
+  setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'z' });
+  prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+  check('日付不明は日付を付けずに注入する', prompt.includes('- 手動で足した'),
+    prompt.split('\n').filter((l) => l.includes('手動で')).join(' | '));
+
+  // 編集しても日付は消えない
+  await api('PUT', `/memories/${m.id}`, { content: m.content, subject: '', pinned: 1 });
+  const after = await find('港で待ち合わせると約束した');
+  check('日付を含まない更新でも日付は残る', after?.game_time === at, String(after?.game_time));
+
+  // 書き出し → 取り込みで日付が保たれる
+  const dump = (await api('GET', `/worlds/${w.world.id}/export`)).json;
+  const imported = (await api('POST', '/worlds/import', { ...dump, world: { ...dump.world, name: 'mem_copy' } })).json;
+  const copied = (await api('GET', `/worlds/${imported.world.id}/characters`)).json
+    .find((c) => c.name === 'アシュリー');
+  const copiedMems = (await api('GET', `/characters/${copied.id}/memories`)).json;
+  check('取り込み後も日付が残る',
+    copiedMems.find((x) => x.content === '港で待ち合わせると約束した')?.game_time === at,
+    JSON.stringify(copiedMems.map((x) => [x.content, x.game_time])));
+
+  await api('PUT', '/settings', base);
+}

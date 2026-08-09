@@ -207,6 +207,35 @@ export function lastTrainLine(cfg: CalendarConfig, time: number): string | null 
   return null;
 }
 
+// ---- メモリーの日付表記 ----
+
+/** 「1年7月12日」形式。日付だけを見せたいとき用 */
+export function formatGameDate(cfg: CalendarConfig, time: number): string {
+  const gt = toGameTime(cfg, time);
+  return `${gt.year}年${gt.month}月${gt.day}日`;
+}
+
+/**
+ * 記憶の日付をプロンプト・UIに出す表記（§8.4）。
+ * memories はチャットではなくキャラクターに紐づくので、同じ世界の別チャットが
+ * 別の日付にいると差が負になったり極端に開いたりする。相対表記は
+ * 「過去1年以内」に限り、それ以外は絶対日付に落として破綻を避ける。
+ */
+export function memoryDateLabel(
+  cfg: CalendarConfig,
+  memTime: number | null | undefined,
+  nowTime: number | null,
+): string {
+  if (memTime == null || !Number.isFinite(memTime)) return '';
+  if (nowTime == null || !Number.isFinite(nowTime)) return formatGameDate(cfg, memTime);
+  const days = toTotalDay(nowTime) - toTotalDay(memTime);
+  if (days === 0) return '今日';
+  if (days === 1) return '昨日';
+  const daysPerYear = cfg.months_per_year * cfg.days_per_month;
+  if (days > 1 && days <= daysPerYear) return `${days}日前`;
+  return formatGameDate(cfg, memTime);
+}
+
 /** 「秋・第2週の水曜日 18:40」形式 */
 export function formatGameTime(gt: GameTime): string {
   return `${gt.season}・第${gt.week}週の${gt.weekday}曜日 ${String(gt.hh).padStart(2, '0')}:${String(gt.mm).padStart(2, '0')}`;

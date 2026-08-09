@@ -98,6 +98,22 @@ function buildLegacyDb() {
       chat_id TEXT NOT NULL,
       game_time INTEGER NOT NULL
     );
+    CREATE TABLE characters (
+      id TEXT PRIMARY KEY,
+      world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    -- ゲーム内日付を持たない旧メモリー表（マイグレーション5の ALTER 対象）
+    CREATE TABLE memories (
+      id TEXT PRIMARY KEY,
+      character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'auto')),
+      pinned INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
   `);
 
   const st = (t, s) => JSON.stringify({ time: t, location: 'loc_a', weather: '晴', present: [], ...s });
@@ -132,6 +148,9 @@ function buildLegacyDb() {
     .run('e1', 'w1', '旧イベント', '{"month":9,"weather":["雨"]}', 'once', 0, '雨が降っている。', 1, NOW, NOW);
   d.prepare('INSERT INTO event_fires (event_id, chat_id, game_time) VALUES (?,?,?)')
     .run('e1', 'c1', 900);
+  d.prepare('INSERT INTO characters VALUES (?,?,?,?,?)').run('ch1', 'w1', '旧キャラ', NOW, NOW);
+  d.prepare('INSERT INTO memories VALUES (?,?,?,?,?,?,?,?)')
+    .run('mem1', 'ch1', '', '古い記憶', 'auto', 0, NOW, NOW);
   // 終電のオンオフ・呼び方を持たない、旧い暦設定
   d.prepare('INSERT INTO calendars VALUES (?,?,?,?)').run(
     'w1',
@@ -158,8 +177,9 @@ try {
   const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 
   console.log('\n── マイグレーション（旧スキーマ → v1.5.3）');
-  check('schema_migrations に4件記録される',
-    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 4);
+  check('schema_migrations に5件記録される',
+    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 5,
+    String(d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n));
 
   // #1 seq と一意制約
   const seqs = d.prepare('SELECT id, seq FROM messages ORDER BY seq').all();
@@ -220,6 +240,14 @@ try {
   check('場所が使っている独自エリアも拾う',
     areas.some((a) => a.id === 'lighthouse_cape' && a.name === 'lighthouse_cape'),
     areas.map((a) => a.id).join(','));
+
+  // #5 メモリーのゲーム内日付
+  check('memories.game_time が追加される', cols('memories').includes('game_time'),
+    cols('memories').join(' '));
+  const mem = d.prepare('SELECT * FROM memories').get();
+  check('既存のメモリーは消えない', mem?.content === '古い記憶', JSON.stringify(mem));
+  check('既存のメモリーの日付は NULL（推測で埋めない）', mem?.game_time === null,
+    String(mem?.game_time));
   d.close();
 
   // 暦は列ではなくJSONなので、新しいキーは読み出し時に既定で補われる

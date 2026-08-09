@@ -17,6 +17,7 @@ import {
   daylightOf,
   formatGameTime,
   lastTrainLine,
+  memoryDateLabel,
   openStatusOf,
   toGameTime,
 } from '../domain/calendar.js';
@@ -254,8 +255,14 @@ export function assembleContext(input: AssembleInput): AssembleResult {
   }
   const required = [...sysHead, ...sysTail];
 
+  // 「いつの話か」が伝わるよう、記録されているものは日付を頭に添える（§8.4）。
+  // 日付不明（旧データ・手動追加）は何も付けず、以前と同じ形のまま出す
+  const memoryLine = (m: Memory): string => {
+    const label = memoryDateLabel(input.calendar, m.game_time, input.baseState.time);
+    return label ? `- (${label}) ${m.content}` : `- ${m.content}`;
+  };
   let memories = memoryBlocks.map(
-    (b) => `# ${b.charName}が記憶している事実\n${b.items.map((m) => `- ${m.content}`).join('\n')}`,
+    (b) => `# ${b.charName}が記憶している事実\n${b.items.map(memoryLine).join('\n')}`,
   );
   const summaryBlock = input.summary?.content
     ? `# これまでのあらすじ\n${input.summary.content}`

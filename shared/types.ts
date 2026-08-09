@@ -407,8 +407,21 @@ export interface Memory {
   content: string;
   source: 'manual' | 'auto';
   pinned: number;
+  /**
+   * その記憶が生まれたゲーム内時刻（暦元期からの通算分）。null は日付不明。
+   * created_at（実時間）とは別物で、注入時の「3日前」表示に使う。
+   * memories はチャットではなくキャラクターに紐づくため、相対表記が破綻しないよう
+   * 絶対値で保存し、表示のときだけ現在時刻と突き合わせる。
+   */
+  game_time: number | null;
   created_at: number;
   updated_at: number;
+}
+
+/** 一覧APIの返り値。game_time の表示用文字列をサーバ側で作って添える */
+export interface MemoryListItem extends Memory {
+  /** 「1年7月12日」など。game_time が null なら空文字 */
+  game_time_label: string;
 }
 
 // ---- 設定（§12） ----

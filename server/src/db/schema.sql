@@ -197,6 +197,8 @@ CREATE TABLE IF NOT EXISTS memories (
   content TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'auto')),
   pinned INTEGER NOT NULL DEFAULT 0,
+  -- 記憶が生まれたゲーム内時刻（通算分）。NULL は日付不明
+  game_time INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

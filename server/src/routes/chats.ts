@@ -31,7 +31,7 @@ import {
 } from '../db/repo/summaries.js';
 import type { Chat, VarValue } from '../../../shared/types.js';
 import { getWorld } from '../db/repo/worlds.js';
-import { toGameTime, toMinutes } from '../domain/calendar.js';
+import { memoryDateLabel, toGameTime, toMinutes } from '../domain/calendar.js';
 import { applyManualVars } from '../domain/vars.js';
 import { extractCandidates, runExtract } from '../domain/memory.js';
 import { normalizeState } from '../domain/state.js';
@@ -397,7 +397,16 @@ chatsRouter.post('/chats/:id/extract-preview', async (req, res) => {
   }
   try {
     // 手動確認では下限を無視する（少ない範囲でも試せるようにする）
-    res.json(await extractCandidates(chat.id, getSettings(), { ignoreMinimum: true }));
+    const result = await extractCandidates(chat.id, getSettings(), { ignoreMinimum: true });
+    // 日付は「保存後にプロンプトへ入る形」で見せる（現在時刻からの相対）
+    const cal = getCalendar(chat.world_id);
+    res.json({
+      ...result,
+      candidates: result.candidates.map((c) => ({
+        ...c,
+        game_time_label: memoryDateLabel(cal, c.game_time, chat.state.time),
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

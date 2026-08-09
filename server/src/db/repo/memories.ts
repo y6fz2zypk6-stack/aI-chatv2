@@ -20,6 +20,13 @@ export function countMemories(characterId: string): number {
   ).c;
 }
 
+/** ゲーム内時刻は通算分の整数か null（＝日付不明）に正規化する */
+function normalizeGameTime(v: unknown): number | null {
+  if (v == null || v === '') return null;
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 export function createMemory(characterId: string, input: Partial<Memory>): Memory {
   const t = now();
   const m: Memory = {
@@ -29,11 +36,12 @@ export function createMemory(characterId: string, input: Partial<Memory>): Memor
     content: input.content || '',
     source: input.source === 'auto' ? 'auto' : 'manual',
     pinned: input.pinned ? 1 : 0,
+    game_time: normalizeGameTime(input.game_time),
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    'INSERT INTO memories (id, character_id, subject, content, source, pinned, created_at, updated_at) VALUES (@id, @character_id, @subject, @content, @source, @pinned, @created_at, @updated_at)',
+    'INSERT INTO memories (id, character_id, subject, content, source, pinned, game_time, created_at, updated_at) VALUES (@id, @character_id, @subject, @content, @source, @pinned, @game_time, @created_at, @updated_at)',
   ).run(m);
   return m;
 }
@@ -41,9 +49,17 @@ export function createMemory(characterId: string, input: Partial<Memory>): Memor
 export function updateMemory(id: string, patch: Partial<Memory>): Memory | undefined {
   const cur = getMemory(id);
   if (!cur) return undefined;
-  const next: Memory = { ...cur, ...patch, id, character_id: cur.character_id, updated_at: now() };
+  const next: Memory = {
+    ...cur,
+    ...patch,
+    id,
+    character_id: cur.character_id,
+    // patch に game_time が無ければ現状維持。あれば null を含めて素直に採用する
+    game_time: 'game_time' in patch ? normalizeGameTime(patch.game_time) : cur.game_time,
+    updated_at: now(),
+  };
   db.prepare(
-    'UPDATE memories SET subject=@subject, content=@content, source=@source, pinned=@pinned, updated_at=@updated_at WHERE id=@id',
+    'UPDATE memories SET subject=@subject, content=@content, source=@source, pinned=@pinned, game_time=@game_time, updated_at=@updated_at WHERE id=@id',
   ).run(next);
   return next;
 }

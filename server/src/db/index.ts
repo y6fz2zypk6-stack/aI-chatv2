@@ -194,6 +194,16 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       }
     },
   },
+  {
+    // メモリーに「ゲーム内でいつの出来事か」を持たせる。
+    // 既存行は NULL のまま（＝日付不明）にする。実時間の created_at から
+    // ゲーム内時刻を逆算する方法は無く、推測で埋めると嘘の日付が入るため。
+    version: 5,
+    up: (d) => {
+      if (hasColumn(d, 'memories', 'game_time')) return;
+      d.exec('ALTER TABLE memories ADD COLUMN game_time INTEGER');
+    },
+  },
 ];
 
 const applied = new Set(
