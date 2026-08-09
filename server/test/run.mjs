@@ -121,6 +121,7 @@ try {
   const ew = await s2.setupEventWorld('ev');
   await s2.varsSuite(ew);
   await s2.eventsSuite(ew);
+  await s2.advanceSuite(ew);
 
   // メモリー抽出と3段フラグの解決
   const mw = await s3.setupMemoryWorld('mem');

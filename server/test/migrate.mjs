@@ -177,8 +177,8 @@ try {
   const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 
   console.log('\n── マイグレーション（旧スキーマ → v1.5.3）');
-  check('schema_migrations に5件記録される',
-    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 5,
+  check('schema_migrations に6件記録される',
+    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 6,
     String(d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n));
 
   // #1 seq と一意制約
@@ -248,6 +248,12 @@ try {
   check('既存のメモリーは消えない', mem?.content === '古い記憶', JSON.stringify(mem));
   check('既存のメモリーの日付は NULL（推測で埋めない）', mem?.game_time === null,
     String(mem?.game_time));
+
+  // #6 場面転換マーカーの種別
+  check('messages.kind が追加される', cols('messages').includes('kind'), cols('messages').join(' '));
+  check('既存のメッセージは normal 扱い',
+    d.prepare('SELECT DISTINCT kind k FROM messages').all().map((r) => r.k).join(',') === 'normal',
+    JSON.stringify(d.prepare('SELECT id, kind FROM messages').all()));
   d.close();
 
   // 暦は列ではなくJSONなので、新しいキーは読み出し時に既定で補われる

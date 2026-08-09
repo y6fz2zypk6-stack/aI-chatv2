@@ -241,6 +241,12 @@ export const Icon = {
       <circle cx="12" cy="10" r="2.6" />
     </Svg>
   ),
+  clock: ({ size = 19, className }: Props = {}) => (
+    <Svg size={size} stroke={1.8} className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5.4l3.4 2" />
+    </Svg>
+  ),
   calendar: ({ size = 19, className }: Props = {}) => (
     <Svg size={size} stroke={1.8} className={className}>
       <rect x="3" y="5" width="18" height="16" rx="2" />

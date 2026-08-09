@@ -123,6 +123,7 @@ export default function ChatPage() {
   const [memPreview, setMemPreview] = useState<MemoryPreview | null>(null);
   const [memLoading, setMemLoading] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const autoplayCancel = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -377,6 +378,17 @@ export default function ChatPage() {
         <span>{chat.state.weather}</span>
         <span className="spacer" />
         {bigJumpH > 24 && <span className="tag">+{bigJumpH}H</span>}
+        {/* 時間を進める。ステート編集と違い、天候の抽選とイベント判定が走る */}
+        <button
+          className="icon-btn"
+          title="場面を進める"
+          onClick={(e) => {
+            e.stopPropagation();
+            setAdvanceOpen(true);
+          }}
+        >
+          <Icon.clock size={14} />
+        </button>
         <Icon.pencil size={14} />
       </div>
 
@@ -680,7 +692,161 @@ export default function ChatPage() {
       )}
 
       {showPreview && <PromptPreviewModal chatId={id!} onClose={() => setShowPreview(false)} />}
+
+      {advanceOpen && (
+        <AdvanceModal
+          chatId={id!}
+          gameTime={gameTime}
+          locations={locations}
+          onClose={() => setAdvanceOpen(false)}
+          onDone={(msg) => {
+            setAdvanceOpen(false);
+            toast(msg);
+            void load();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---- 場面を進める（§8.8）----
+
+interface AdvanceResult {
+  gameTime: GameTime;
+  dayChanged: boolean;
+  weather: string;
+  firedEvents: string[];
+  warnings: string[];
+  eventsEnabled: boolean;
+}
+
+/**
+ * ステート編集との違いは「遷移として扱うかどうか」。
+ * こちらは生成ターンと同じ経路を通るので、日付が変われば天候が引き直され、
+ * イベントの判定も走る。LLMは呼ばない。
+ */
+function AdvanceModal(props: {
+  chatId: string;
+  gameTime: GameTime;
+  locations: Location[];
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
+  const [gt, setGt] = useState<GameTime>({ ...props.gameTime });
+  const [location, setLocation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const run = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api.post<AdvanceResult>(`/chats/${props.chatId}/advance`, {
+        ...body,
+        ...(location ? { location } : {}),
+      });
+      const hhmm = `${String(r.gameTime.hh).padStart(2, '0')}:${String(r.gameTime.mm).padStart(2, '0')}`;
+      const parts = [`${r.gameTime.month}月${r.gameTime.day}日 ${hhmm} へ進めました`];
+      // 日付が変わったときだけ天候を引き直すので、変わったときだけ知らせる
+      if (r.dayChanged) parts.push(`天気は「${r.weather}」`);
+      if (r.firedEvents.length) parts.push(`イベント: ${r.firedEvents.join('・')}`);
+      props.onDone(parts.join(' ／ '));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // クイックは相対分で送る。暦（1か月の日数など）はサーバが持っているので、
+  // 桁上がりの計算をクライアントでは行わない
+  const minOfDay = props.gameTime.hh * 60 + props.gameTime.mm;
+  const quick: [string, number][] = [
+    ['+30分', 30],
+    ['+1時間', 60],
+    ['+3時間', 180],
+    ['翌朝 8:00', 1440 - minOfDay + 8 * 60],
+    ['翌日の同じ時刻', 1440],
+  ];
+
+  const num = (v: string, fb: number) => {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : fb;
+  };
+
+  return (
+    <Modal title="場面を進める" onClose={props.onClose}>
+      <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+        ステート編集と違い、日付が変われば天候を引き直し、イベントの判定も行います。
+        会話の生成（AIの呼び出し）はしません。
+      </div>
+
+      <span className="kicker">クイック</span>
+      <div className="row wrap">
+        {quick.map(([label, minutes]) => (
+          <button
+            key={label}
+            className="pill sm"
+            disabled={busy}
+            onClick={() => void run({ minutes })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <span className="kicker">日時を指定</span>
+      {/* 5つを1行に収める。折り返すと年月日と時分の区切りが読み取りづらくなる */}
+      <div className="row">
+        {(
+          [
+            ['年', 'year', 1],
+            ['月', 'month', 1],
+            ['日', 'day', 1],
+            ['時', 'hh', 0],
+            ['分', 'mm', 0],
+          ] as const
+        ).map(([label, key, min]) => (
+          <div key={key} className="field" style={{ flex: "1 1 0", minWidth: 0 }}>
+            <label>{label}</label>
+            <input
+              type="number"
+              min={min}
+              value={gt[key]}
+              onChange={(e) => setGt({ ...gt, [key]: num(e.target.value, gt[key]) })}
+            />
+          </div>
+        ))}
+      </div>
+
+      <Field label="場所（変えるときだけ選ぶ）">
+        <div className="select-wrap">
+          <select value={location} onChange={(e) => setLocation(e.target.value)}>
+            <option value="">（変えない）</option>
+            {props.locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Field>
+
+      {error && <div className="empty-note err">{error}</div>}
+
+      <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <button
+          className="pill sm primary"
+          disabled={busy}
+          onClick={() =>
+            void run({ game_time: { year: gt.year, month: gt.month, day: gt.day, hh: gt.hh, mm: gt.mm } })
+          }
+        >
+          この日時へ進める
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -737,6 +903,22 @@ function MessageView(props: {
     </div>
   );
   const emptySide = <div className="msg-side" />;
+
+  // 場面転換マーカーは吹き出しではなく区切り線として出す。
+  // 生成された応答ではないので、再生成・分岐・編集は出さず、取り消しだけ置く
+  if (m.kind === 'scene_break') {
+    return (
+      <div className="scene-break">
+        <span className="rule" />
+        {/* 本文の先頭のダッシュは履歴でモデルに読ませるためのもの。線と重なるので表示では外す */}
+        <span className="txt">{m.content.replace(/^[―—–-]+\s*/, '')}</span>
+        <button className="icon-btn" onClick={props.onDelete} title="この場面転換を取り消す">
+          <Icon.trash size={14} />
+        </button>
+        <span className="rule" />
+      </div>
+    );
+  }
 
   return (
     <div className="msg">

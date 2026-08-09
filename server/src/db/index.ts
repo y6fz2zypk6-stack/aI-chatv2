@@ -204,6 +204,16 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       d.exec('ALTER TABLE memories ADD COLUMN game_time INTEGER');
     },
   },
+  {
+    // 「場面を進める」で入れる場面転換マーカーの識別。
+    // messages.role は CHECK で user/assistant に固定されており、SQLite では
+    // 表を作り直さないと変えられないため、種別は別列で持つ
+    version: 6,
+    up: (d) => {
+      if (hasColumn(d, 'messages', 'kind')) return;
+      d.exec("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'");
+    },
+  },
 ];
 
 const applied = new Set(

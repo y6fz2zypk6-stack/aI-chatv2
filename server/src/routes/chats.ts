@@ -172,6 +172,7 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
       utterances: isTarget ? forkUtterances : m.utterances,
       state_after: isTarget ? forkState : m.state_after,
       generation_status: m.generation_status,
+      kind: m.kind,
     });
     idMap.set(m.id, copied.id);
     const variants = listVariants(m.id);

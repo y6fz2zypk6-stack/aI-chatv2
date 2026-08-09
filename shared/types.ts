@@ -218,6 +218,11 @@ export interface Message {
   state_after: ChatState;
   active_variant: number;
   generation_status: GenerationStatus | null;
+  /**
+   * 'scene_break' は「場面を進める」で入れた場面転換マーカー。
+   * 生成された応答ではないので、再生成の対象にはしない。
+   */
+  kind: 'normal' | 'scene_break';
   created_at: number;
   /** assistantのとき候補数（一覧APIで付与） */
   variant_count?: number;

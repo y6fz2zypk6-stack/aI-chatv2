@@ -46,7 +46,7 @@ import {
   listEvents,
   recordFire,
 } from '../db/repo/events.js';
-import { toGameTime, toTotalDay } from '../domain/calendar.js';
+import { MIN_PER_DAY, formatGameTime, toGameTime, toMinutes, toTotalDay } from '../domain/calendar.js';
 import { buildEventBlocks, runEventPipeline } from '../domain/events.js';
 import { applyVarOps, buildVarsBlock, varsInstruction } from '../domain/vars.js';
 import { seededRand } from '../util/random.js';
@@ -315,6 +315,12 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     // 末尾assistantに候補を追加。基準は対象の1つ前のメッセージ（§8.5・§8.1）
     if (!last || last.role !== 'assistant') {
       res.status(400).json({ error: 'regenerate はチャット末尾がassistantの場合のみ可能です' });
+      return;
+    }
+    // 場面転換マーカーは生成された応答ではないので、作り直しの対象にしない
+    // （やり直すと場面転換が消えて普通の応答に化ける）
+    if (last.kind === 'scene_break') {
+      res.status(400).json({ error: '場面転換は作り直せません。消してから進め直してください' });
       return;
     }
     target = last;
@@ -626,6 +632,188 @@ async function judgeAutoplayStop(
     return false;
   }
 }
+
+// ---- 場面を進める（生成せずに時間だけ動かす）----
+//
+// 手動のステート編集（PUT /chats/:id/state）は値を入れ替えるだけで、天候の抽選も
+// イベント判定も走らない。「翌朝にする」たびに天気が固定されたままになるのはこのため。
+// ここでは生成ターンとまったく同じ関数（applyDelta → runEventPipeline）を通し、
+// 遷移で起きるはずのことを実際に起こす。LLMは呼ばない。
+//
+// 場面転換マーカーのメッセージを1件残すのは表示のためだけではない:
+//   ① 発火は assistant のメッセージに紐づき、次ターンの注入はそこから引く。
+//      マーカーを作らずに直前の応答へ紐づけると、その応答の発火と混ざって再注入される
+//   ② 基準ステートは「直前メッセージの state_after」なので、鎖を繋いでおく必要がある
+
+interface AdvanceBody {
+  /** 相対指定（分）。game_time と排他 */
+  minutes?: number;
+  /** 絶対指定。年月日時分をすべて渡す */
+  game_time?: { year?: number; month?: number; day?: number; hh?: number; mm?: number };
+  location?: string;
+  present_add?: string[];
+  present_remove?: string[];
+  /** マーカーの本文。省略すると日時と場所から作る */
+  text?: string;
+}
+
+/** 1回の場面転換で進められる上限。打ち間違いで暦を吹き飛ばさないための歯止め */
+const ADVANCE_MAX_MINUTES = 366 * MIN_PER_DAY;
+
+function sceneBreakText(cal: CalendarConfig, state: ChatState, locations: Location[]): string {
+  const place = state.location_note || locations.find((l) => l.id === state.location)?.name || '';
+  return `――${formatGameTime(toGameTime(cal, state.time))}${place ? `、${place}` : ''}。`;
+}
+
+messagesRouter.post('/chats/:id/advance', (req, res) => {
+  const chatId = req.params.id;
+  const chat = getChat(chatId);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  if (inflight.has(chatId)) {
+    res.status(409).json({ error: '生成中です' });
+    return;
+  }
+
+  const body = (req.body ?? {}) as AdvanceBody;
+  const calendar = getCalendar(chat.world_id);
+  const last = lastMessage(chatId);
+  const baseState = last?.state_after ?? chat.initial_state;
+
+  // 目標時刻 → 経過分。時刻の演算は calendar.ts に一本化する（§4.12）
+  let elapsed: number;
+  const g = body.game_time;
+  if (g && [g.year, g.month, g.day, g.hh, g.mm].every((v) => Number.isFinite(v))) {
+    elapsed = toMinutes(calendar, g.year!, g.month!, g.day!, g.hh!, g.mm!) - baseState.time;
+  } else if (Number.isFinite(body.minutes)) {
+    elapsed = Math.floor(body.minutes!);
+  } else {
+    res.status(400).json({ error: 'minutes か game_time のどちらかを指定してください' });
+    return;
+  }
+  if (elapsed <= 0) {
+    res.status(400).json({
+      error: '時間は前にだけ進められます。巻き戻すときはステート編集を使ってください',
+    });
+    return;
+  }
+  if (elapsed > ADVANCE_MAX_MINUTES) {
+    res.status(400).json({ error: `一度に進められるのは ${ADVANCE_MAX_MINUTES / MIN_PER_DAY} 日までです` });
+    return;
+  }
+
+  const scenario = chat.scenario_id ? getScenario(chat.scenario_id) : null;
+  const settings = getSettings();
+  const world = getWorld(chat.world_id);
+  const varsEnabled = resolveFlag(chat.vars_enabled, scenario?.vars_enabled, settings.vars_enabled);
+  const eventsEnabled = resolveFlag(
+    chat.events_enabled,
+    scenario?.events_enabled,
+    settings.events_enabled,
+  );
+  const varsSchema = world?.vars_schema ?? [];
+  const locations = listLocations(chat.world_id);
+  const characters = listCharacters(chat.world_id);
+
+  const delta: StateDelta = {
+    elapsed_minutes: elapsed,
+    location: body.location ?? '',
+    present_add: Array.isArray(body.present_add) ? body.present_add : [],
+    present_remove: Array.isArray(body.present_remove) ? body.present_remove : [],
+    set_var: {},
+  };
+  const applied = applyDelta(calendar, baseState, delta, locations, characters, {
+    // 生成ターンと同じ種を使う。同じ日に着けば天気も同じになる（§7）
+    rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + elapsed) / MIN_PER_DAY)}`),
+    varsSchema,
+    varsEnabled,
+  });
+
+  const text = (body.text ?? '').trim() || sceneBreakText(calendar, applied.state, locations);
+  const utterances: Utterance[] = [{ speaker: 'narrator', name: 'ナレーター', text }];
+  const msg = insertMessage({
+    chat_id: chatId,
+    role: 'assistant',
+    content: text,
+    utterances,
+    state_after: applied.state,
+    generation_status: 'complete',
+    kind: 'scene_break',
+  });
+  insertVariant({
+    message_id: msg.id,
+    content: text,
+    utterances,
+    state_delta: `(advance) elapsed_minutes: ${elapsed}`,
+    state_after: applied.state,
+  });
+
+  // ---- 判定パイプライン（生成ターンと同じ）----
+  let finalState = applied.state;
+  const firedTitles: string[] = [];
+  let eventRows: EventEvalRow[] = [];
+  if (eventsEnabled) {
+    const result = runEventPipeline({
+      chatId,
+      events: listEvents(chat.world_id),
+      baseState,
+      newState: applied.state,
+      calendar,
+      locations,
+      varsSchema,
+      varsEnabled,
+      baseMessageId: last?.id ?? chatId,
+      visitId: visitIdOf(chatId, applied.state),
+      firesByEvent: groupFires(chatId),
+      maxPerTurn: Math.max(1, settings.event_max_per_turn),
+    });
+    eventRows = result.rows;
+    const commit = db.transaction(() => {
+      let state = applied.state;
+      for (const { event, scopeKey } of result.adopted) {
+        if (varsEnabled && event.set_vars.length) {
+          const r = applyVarOps(varsSchema, state.vars, event.set_vars);
+          state = { ...state, vars: r.vars };
+          applied.warnings.push(...r.warnings);
+        }
+        recordFire({
+          chat_id: chatId,
+          event_id: event.id,
+          message_id: msg.id,
+          fired_at_time: applied.state.time,
+          scope_key: scopeKey,
+        });
+        firedTitles.push(event.title);
+      }
+      if (state !== applied.state) {
+        updateMessageActive(msg.id, { state_after: state });
+        const active = listVariants(msg.id)[0];
+        if (active) updateVariantState(active.id, state);
+      }
+      finalState = state;
+    });
+    commit();
+  }
+
+  setChatState(chatId, finalState);
+
+  // 要約・知識抽出はここでは走らせない。LLMを呼ばない操作から
+  // 勝手に呼び出しが飛ぶのは分かりにくいため（次の生成ターンで判定される）
+  res.status(201).json({
+    message: getMessage(msg.id),
+    state: finalState,
+    gameTime: toGameTime(calendar, finalState.time),
+    elapsedMinutes: elapsed,
+    dayChanged: applied.dayChanged,
+    weather: finalState.weather,
+    warnings: applied.warnings,
+    firedEvents: firedTitles,
+    eventRows,
+    eventsEnabled,
+  });
+});
 
 // ---- 停止（§5.8）: クライアントabortではなくサーバ側AbortController ----
 messagesRouter.post('/chats/:id/stop', (req, res) => {

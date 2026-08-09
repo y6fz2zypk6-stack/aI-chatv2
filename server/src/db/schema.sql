@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS messages (
   state_after TEXT NOT NULL DEFAULT '{}',
   active_variant INTEGER NOT NULL DEFAULT 0,
   generation_status TEXT CHECK (generation_status IN ('complete', 'stopped', 'failed')),
+  -- 'scene_break' は「場面を進める」で入れた場面転換マーカー。
+  -- role は user/assistant で固定なので、種別はこの列で表す
+  kind TEXT NOT NULL DEFAULT 'normal',
   created_at INTEGER NOT NULL
 );
 -- messages(chat_id, seq) / message_variants(message_id, index) の一意インデックスは

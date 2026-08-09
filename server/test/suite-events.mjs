@@ -522,3 +522,169 @@ export async function eventsSuite(w) {
       JSON.stringify(r.json.rows.slice(0, 3)));
   }
 }
+
+// ===========================================================================
+// 場面を進める（生成せずに遷移だけ起こす）
+// ===========================================================================
+export async function advanceSuite(w) {
+  suite('場面を進める');
+
+  // 天候は日付が変わったときだけ引き直される
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w, { weather: '晴' });
+
+    // 同じ日のうちは引き直さない
+    let r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 60 });
+    check('分単位で進められる', r.json.gameTime.hh === 19 && r.json.gameTime.mm === 0,
+      JSON.stringify(r.json.gameTime));
+    check('同じ日なら日付は変わらない扱い', r.json.dayChanged === false, String(r.json.dayChanged));
+    check('同じ日なら天候は維持される', r.json.weather === '晴', r.json.weather);
+
+    // 日付をまたぐと引き直す（手動のステート編集では起きなかったところ）。
+    // 抽選が実際に走ったことを確かめるため、その季節の天候表を1つだけにしてから見る
+    const cal = (await api('GET', `/worlds/${w.world.id}/calendar`)).json;
+    await api('PUT', `/worlds/${w.world.id}/calendar`, {
+      weather_table: { ...cal.weather_table, 秋: { 雹: 100 } },
+    });
+    r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 14 * 60 });
+    check('日をまたぐと日付が変わったと分かる', r.json.dayChanged === true, String(r.json.dayChanged));
+    check('日をまたぐと天候が抽選し直される', r.json.weather === '雹', r.json.weather);
+    await api('PUT', `/worlds/${w.world.id}/calendar`, { weather_table: cal.weather_table });
+  }
+
+  // 手動のステート編集では抽選も判定も起きない（違いを固定しておく）
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w, { weather: '晴' });
+    const gt = (await api('GET', `/chats/${chat.id}/state`)).json.gameTime;
+    await api('PUT', `/chats/${chat.id}/state`, { game_time: { ...gt, day: gt.day + 1 } });
+    const after = (await api('GET', `/chats/${chat.id}/state`)).json;
+    check('ステート編集は天候を引き直さない', after.state.weather === '晴', after.state.weather);
+    check('ステート編集はメッセージを増やさない',
+      (await getChat(chat.id)).messages.length === 1,
+      String((await getChat(chat.id)).messages.length));
+  }
+
+  // 同じ日に着けば天候は同じ（シード固定）
+  {
+    await resetEvents(w);
+    const a = await newChat(w);
+    const b = await newChat(w);
+    const ra = await api('POST', `/chats/${a.chat.id}/advance`, { minutes: 1440 });
+    const rb = await api('POST', `/chats/${b.chat.id}/advance`, { minutes: 1440 });
+    check('チャットが違えば天候の種も違ってよい',
+      typeof ra.json.weather === 'string' && typeof rb.json.weather === 'string');
+    // 同じチャット・同じ着地日なら何度やっても同じになる
+    const again = await api('POST', `/chats/${a.chat.id}/advance`, { minutes: 60 });
+    check('同じ日のうちは天候が動かない', again.json.weather === ra.json.weather,
+      `${ra.json.weather} → ${again.json.weather}`);
+  }
+
+  // 日付指定で進める
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w);
+    const gt = (await api('GET', `/chats/${chat.id}/state`)).json.gameTime;
+    const r = await api('POST', `/chats/${chat.id}/advance`, {
+      game_time: { year: gt.year, month: gt.month, day: gt.day + 2, hh: 9, mm: 30 },
+    });
+    check('日時指定で進められる',
+      r.json.gameTime.day === gt.day + 2 && r.json.gameTime.hh === 9 && r.json.gameTime.mm === 30,
+      JSON.stringify(r.json.gameTime));
+  }
+
+  // 巻き戻しは受け付けない
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w);
+    const back = await api('POST', `/chats/${chat.id}/advance`, { minutes: -60 });
+    check('過去へは進められない', back.status === 400, String(back.status));
+    const zero = await api('POST', `/chats/${chat.id}/advance`, { minutes: 0 });
+    check('0分も受け付けない', zero.status === 400, String(zero.status));
+    const far = await api('POST', `/chats/${chat.id}/advance`, { minutes: 400 * 1440 });
+    check('極端に大きい値は弾く', far.status === 400, String(far.status));
+    const none = await api('POST', `/chats/${chat.id}/advance`, {});
+    check('指定が無ければ400', none.status === 400, String(none.status));
+  }
+
+  // 場面転換マーカーが残り、ステートの鎖が繋がる
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w);
+    const r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 120 });
+    const d = await getChat(chat.id);
+    const marker = d.messages[d.messages.length - 1];
+    check('場面転換がメッセージとして残る', marker.kind === 'scene_break', marker.kind);
+    check('マーカーの本文に日時が入る', marker.content.includes('20:00'), marker.content);
+    check('マーカーの state_after が結果と一致する',
+      marker.state_after.time === r.json.state.time, `${marker.state_after.time} / ${r.json.state.time}`);
+    check('chats.state も揃う', d.chat.state.time === r.json.state.time,
+      `${d.chat.state.time} / ${r.json.state.time}`);
+
+    // 続けて生成すると、マーカーの state_after が基準になる
+    setQueue([{ text: reply({ char: '「夜だ」', elapsed: 10, location: w.shop }) }]);
+    const g = await generate(chat.id, { content: 'つづき' });
+    check('マーカーを基準に生成が続く', g.done?.gameTime.hh === 20 && g.done?.gameTime.mm === 10,
+      JSON.stringify(g.done?.gameTime));
+
+    // マーカーは作り直しの対象にしない
+    await api('POST', `/chats/${chat.id}/advance`, { minutes: 60 });
+    const bad = await api('POST', `/chats/${chat.id}/messages`, { regenerate: true });
+    check('場面転換は再生成できない', bad.status === 400, String(bad.status));
+  }
+
+  // 取り消すと時間もステートも戻る
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w);
+    const before = (await api('GET', `/chats/${chat.id}/state`)).json.state.time;
+    const r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 180 });
+    await api('DELETE', `/messages/${r.json.message.id}`);
+    const after = (await api('GET', `/chats/${chat.id}/state`)).json.state.time;
+    check('マーカーを消すと時間が戻る', after === before, `${before} → ${after}`);
+  }
+
+  // イベント判定が走り、次のターンのプロンプトへ注入される
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w, { time: T1800, weather: '晴' });
+    await mkEvent(w.world.id, {
+      title: '朝市', kind: 'ambient', inject_mode: 'fact',
+      check: 'on_day_change', trigger: 'repeat', chance: 1,
+      when: { all: [{ time_after: '06:00' }, { time_before: '11:00' }] },
+      inject: '広場に朝市が立っている。',
+    });
+
+    // 同じ日のうちは on_day_change が成立しない
+    let r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 60 });
+    check('日付が変わらなければ発火しない', (r.json.firedEvents ?? []).length === 0,
+      JSON.stringify(r.json.firedEvents));
+
+    // 翌朝へ進めると発火する
+    r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 13 * 60 });
+    check('日付が変わると on_day_change が発火する', (r.json.firedEvents ?? []).includes('朝市'),
+      JSON.stringify(r.json.eventRows));
+
+    // 発火はマーカーに紐づくので、次の生成のプロンプトに載る
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「賑やかだ」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: '朝だね' });
+    const sent = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('場面転換で発火した分が次ターンに注入される', sent.includes('朝市が立っている'),
+      sent.split('\n').find((l) => l.includes('朝市')) ?? '注入されていない');
+  }
+
+  // イベントがOFFなら判定しない
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w, { eventsEnabled: 0 });
+    await mkEvent(w.world.id, {
+      title: '無効時イベント', kind: 'ambient', inject_mode: 'fact',
+      check: 'every_turn', trigger: 'repeat', chance: 1, when: {}, inject: 'x',
+    });
+    const r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 60 });
+    check('イベントOFFなら判定しない', r.json.eventsEnabled === false && r.json.firedEvents.length === 0,
+      JSON.stringify(r.json.firedEvents));
+  }
+}

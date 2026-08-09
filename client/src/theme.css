@@ -925,6 +925,40 @@ textarea.tall {
   }
 }
 
+/* 場面転換マーカー：吹き出しではなく区切り線として出す */
+.scene-break {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  color: var(--muted);
+  font: 600 12px/1.5 var(--font-ui);
+}
+
+.scene-break .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.scene-break .txt {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-break .icon-btn {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.empty-note.err {
+  color: var(--danger);
+  text-align: left;
+  padding: 4px 0;
+}
+
 /* ナレーション：吹き出しの外、ハート付きの独立行 */
 .narr-row {
   display: flex;

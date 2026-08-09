@@ -105,12 +105,13 @@ export function insertMessage(input: {
   utterances: Utterance[];
   state_after: ChatState;
   generation_status?: GenerationStatus | null;
+  kind?: Message['kind'];
 }): Message {
   const id = ulid();
   const createdAt = now();
   db.prepare(
-    `INSERT INTO messages (id, chat_id, seq, role, content, utterances, state_after, active_variant, generation_status, created_at)
-     SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, 0, ?, ?
+    `INSERT INTO messages (id, chat_id, seq, role, content, utterances, state_after, active_variant, generation_status, kind, created_at)
+     SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, 0, ?, ?, ?
      FROM messages WHERE chat_id = ?`,
   ).run(
     id,
@@ -120,6 +121,7 @@ export function insertMessage(input: {
     toJson(input.utterances),
     toJson(input.state_after),
     input.generation_status ?? null,
+    input.kind ?? 'normal',
     createdAt,
     input.chat_id,
   );
