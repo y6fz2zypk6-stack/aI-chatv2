@@ -153,8 +153,13 @@ export async function gatherContext(
   );
 
   // イベントの注入は「前のターンに採用された分」を載せる（v1.5.3 §6）。
-  // 判定は生成完了後に走るため、このターンのプロンプトには直前の結果が入る
-  const prevMessage = history[history.length - 1];
+  // 判定は生成完了後に走るため、このターンのプロンプトには直前の結果が入る。
+  //
+  // 発火は assistant のメッセージにだけ紐づく。ここで単純に履歴の末尾を見ると、
+  // 送信時はユーザー発言を先に保存してから組み立てるため常に user を指してしまい、
+  // 採用したイベントが実際のプロンプトに載らない（プレビューだけ載る）。
+  // 必ず直近の assistant まで遡ること。
+  const prevMessage = [...history].reverse().find((m) => m.role === 'assistant');
   let eventFacts = '';
   let eventInstructions = '';
   if (eventsEnabled && prevMessage) {

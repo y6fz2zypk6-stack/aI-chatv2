@@ -1,5 +1,17 @@
 // v1.5.3: 進行フラグ（state.vars）と条件付きイベント
-import { api, check, generate, getChat, hhmm, note, reply, setQueue, suite } from './harness.mjs';
+import {
+  api,
+  check,
+  clearMockRequests,
+  generate,
+  getChat,
+  hhmm,
+  mockRequests,
+  note,
+  reply,
+  setQueue,
+  suite,
+} from './harness.mjs';
 
 const T1800 = 877 * 1440 + 18 * 60;
 
@@ -208,6 +220,15 @@ export async function eventsSuite(w) {
     check('注入は次ターンのプロンプトに載る', pv.situationBlock.includes('夜市が出ている'),
       pv.situationBlock.split('\n').slice(-3).join(' / '));
     check('fact は「発生中の出来事」に置かれる', pv.situationBlock.includes('# 発生中の出来事'));
+
+    // プレビューだけでなく、実際に投げるプロンプトにも載っていること。
+    // プレビューはユーザー発言を挟まずに組み立てるので、ここを見ないと差に気づけない
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「賑やかだ」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't3' });
+    const sent = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('実際の生成でも次ターンに注入される', sent.includes('夜市が出ている'),
+      sent.split('\n').find((l) => l.includes('発生中の出来事') || l.includes('夜市')) ?? '注入ブロックが無い');
   }
 
   // instruction は別ブロックへ
