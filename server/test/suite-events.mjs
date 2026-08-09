@@ -231,6 +231,93 @@ export async function eventsSuite(w) {
       sent.split('\n').find((l) => l.includes('発生中の出来事') || l.includes('夜市')) ?? '注入ブロックが無い');
   }
 
+  // 注入は1ターンで消える（発火したターンの「次の1ターン」だけ）
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w);
+    await mkEvent(w.world.id, {
+      title: '一度きりの知らせ', kind: 'ambient', inject_mode: 'fact', check: 'every_turn',
+      trigger: 'once', chance: 1, when: {}, inject: '店に貼り紙が出ている。',
+    });
+
+    // 1ターン目で発火する
+    setQueue([{ text: reply({ char: '「ん？」', elapsed: 10, location: w.shop }) }]);
+    let g = await generate(chat.id, { content: 't1' });
+    check('1ターン目で発火する', (g.done?.firedEvents ?? []).includes('一度きりの知らせ'),
+      JSON.stringify(g.done?.firedEvents));
+
+    // 2ターン目のプロンプトに載る
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「貼り紙か」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't2' });
+    let sent = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('次の1ターンには載る', sent.includes('店に貼り紙が出ている'),
+      sent.includes('貼り紙') ? '' : '注入されていない');
+
+    // 3ターン目には載らない（注入は持ち越さない）
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「行こうか」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't3' });
+    sent = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('その次のターンには載らない（1ターン限り）', !sent.includes('店に貼り紙が出ている'),
+      sent.includes('貼り紙') ? '2ターン以上載っている' : '');
+  }
+
+  // repeat + 毎ターン なら条件が続く限り毎ターン載る
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w);
+    await mkEvent(w.world.id, {
+      title: '雨脚', kind: 'ambient', inject_mode: 'fact', check: 'every_turn',
+      trigger: 'repeat', chance: 1, when: { weather: ['晴'] }, inject: '外は明るい。',
+    });
+
+    setQueue([{ text: reply({ char: '「1」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't1' });
+    const seen = [];
+    for (const t of ['t2', 't3', 't4']) {
+      await clearMockRequests();
+      setQueue([{ text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) }]);
+      await generate(chat.id, { content: t });
+      seen.push((await mockRequests()).map((q) => q.prompt).join('\n').includes('外は明るい'));
+    }
+    check('repeat + 毎ターン は連続して載る', seen.every(Boolean), JSON.stringify(seen));
+  }
+
+  // on_enter は「条件を満たしたターン」ではなく、その次のターンに載る
+  {
+    await resetEvents(w);
+    const { chat } = await newChat(w, { time: T1800 });
+    await mkEvent(w.world.id, {
+      title: '日没後', kind: 'ambient', inject_mode: 'instruction', check: 'on_enter',
+      trigger: 'once', chance: 1, when: { time_after: '19:00' },
+      inject: '暗くなった空気で書くこと。',
+    });
+
+    // 18:10 — 条件を満たさない
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「まだ明るい」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't1' });
+
+    // 19:10 — このターンで条件を満たすが、判定は生成後なので今回のプロンプトには載らない
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「暗くなってきた」', elapsed: 60, location: w.shop }) }]);
+    const g = await generate(chat.id, { content: 't2' });
+    let sent = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('条件を満たしたターン自身には載らない', !sent.includes('暗くなった空気'),
+      sent.includes('暗くなった空気') ? '同ターンに載っている' : '');
+    check('そのターンの終わりに発火する', (g.done?.firedEvents ?? []).includes('日没後'),
+      JSON.stringify(g.done?.firedEvents));
+
+    // 次のターンで載る
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「そうだね」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't3' });
+    sent = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('次のターンに載る', sent.includes('暗くなった空気'),
+      sent.includes('暗くなった空気') ? '' : '注入されていない');
+  }
+
   // instruction は別ブロックへ
   {
     await resetEvents(w);
