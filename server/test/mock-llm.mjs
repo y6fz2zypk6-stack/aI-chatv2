@@ -61,7 +61,16 @@ const server = http.createServer(async (req, res) => {
     // gapMs を指定すると応答を遅らせられる。実行中ガードの検証に使う
     if (item.gapMs) await new Promise((r) => setTimeout(r, item.gapMs));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ choices: [{ message: { content: item.text } }] }));
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: { content: item.text, ...(item.refusal ? { refusal: item.refusal } : {}) },
+            finish_reason: item.finish ?? 'stop',
+          },
+        ],
+      }),
+    );
     return;
   }
 

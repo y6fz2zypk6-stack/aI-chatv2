@@ -3,7 +3,7 @@ import { getChat, updateChat } from '../db/repo/chats.js';
 import { getCharacters, listCharacters } from '../db/repo/characters.js';
 import { createMemory, listMemories } from '../db/repo/memories.js';
 import { messagesAfterSeq } from '../db/repo/messages.js';
-import { completeText } from '../llm/openrouter.js';
+import { complete } from '../llm/openrouter.js';
 
 /**
  * 知識抽出（§8.4）。長期記憶の対象は char のみ。
@@ -27,6 +27,33 @@ export const MIN_EXTRACT_MESSAGES = 8;
 /** 1キャラ・1回の抽出で保存する上限。目標値として働かないようプロンプトには書かない */
 const HARD_CAP = 5;
 
+/**
+ * 応答からJSONオブジェクトの部分だけを取り出す。
+ * コードフェンス（```json ... ```）や前置きを付けて返すモデルがあるため、
+ * 生の文字列をそのまま JSON.parse しない。
+ */
+function extractJsonObject(raw: string): string {
+  const s = raw.trim();
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start === -1 || end <= start) return '';
+  return s.slice(start, end + 1);
+}
+
+/** 空応答・パース失敗の理由を利用者に見せられる形にする */
+function failureNote(name: string, finishReason: string, raw: string): string {
+  if (finishReason === 'length') {
+    return `${name}: 応答が長さの上限で切れました。設定の「最大トークン」か、要約・抽出のモデルを見直してください`;
+  }
+  if (finishReason === 'content_filter') {
+    return `${name}: モデルが内容を拒否しました（content_filter）`;
+  }
+  if (!raw.trim()) {
+    return `${name}: モデルが空の応答を返しました（finish_reason=${finishReason || '不明'}）。要約・抽出のモデルを変えると直ることがあります`;
+  }
+  return `${name}: 応答をJSONとして読めませんでした: ${raw.trim().slice(0, 100)}`;
+}
+
 export interface MemoryCandidate {
   character_id: string;
   character_name: string;
@@ -42,6 +69,8 @@ export interface ExtractResult {
   range: { fromSeq: number; toSeq: number; count: number } | null;
   /** 抽出しなかった理由など、画面に出す短い説明 */
   notes: string[];
+  /** 1人でも応答を読み取れなかった。true なら抽出済み境界を進めない */
+  failed: boolean;
 }
 
 function buildPrompt(input: {
@@ -94,24 +123,26 @@ export async function extractCandidates(
   opts: { ignoreMinimum?: boolean } = {},
 ): Promise<ExtractResult> {
   const notes: string[] = [];
+  let failed = false;
   const chat = getChat(chatId);
-  if (!chat) return { candidates: [], range: null, notes: ['チャットが見つかりません'] };
+  if (!chat) return { candidates: [], range: null, notes: ['チャットが見つかりません'], failed: false };
 
   const targets = messagesAfterSeq(chatId, chat.extracted_up_to_seq ?? 0);
   if (targets.length === 0) {
-    return { candidates: [], range: null, notes: ['新しいメッセージがありません'] };
+    return { candidates: [], range: null, notes: ['新しいメッセージがありません'], failed: false };
   }
   if (!opts.ignoreMinimum && targets.length < MIN_EXTRACT_MESSAGES) {
     return {
       candidates: [],
       range: null,
       notes: [`新しいメッセージが ${targets.length} 件で、抽出の下限（${MIN_EXTRACT_MESSAGES} 件）に達していません`],
+      failed: false,
     };
   }
 
   const participants = getCharacters(chat.participant_ids).filter((c) => !c.is_npc_pool);
   if (participants.length === 0) {
-    return { candidates: [], range: null, notes: ['対象になるキャラクターがいません'] };
+    return { candidates: [], range: null, notes: ['対象になるキャラクターがいません'], failed: false };
   }
 
   // subject は「その人物が在席中のときだけ注入する」判定に使うため、必ず実在のIDにする。
@@ -126,18 +157,35 @@ export async function extractCandidates(
 
   for (const c of participants) {
     const existing = listMemories(c.id).map((m) => m.content);
+    const messages = [
+      { content: buildPrompt({ character: c, idList, existing, convo }), role: 'user' as const },
+    ];
     try {
-      const raw = await completeText({
-        model,
-        messages: [
-          { content: buildPrompt({ character: c, idList, existing, convo }), role: 'user' },
-        ],
-        maxTokens: 1024,
-        json: true,
-      });
-      const parsed = JSON.parse(raw) as {
-        memories?: { subject?: string; content?: string; why?: string }[];
-      };
+      // JSONモードで空を返すモデルがあるので、空だったら素のプロンプトで1度だけ試し直す。
+      // 明示的な拒否と、長さ超過は再試行しても同じなので、そのまま理由として扱う
+      let r = await complete({ model, messages, maxTokens: 2048, json: true });
+      if (!r.refusal && !r.text.trim() && r.finishReason !== 'length') {
+        r = await complete({ model, messages, maxTokens: 2048 });
+      }
+      if (r.refusal) {
+        notes.push(`${c.name}: モデルが拒否しました（${r.refusal.slice(0, 80)}）`);
+        failed = true;
+        continue;
+      }
+      const body = extractJsonObject(r.text);
+      if (!body) {
+        notes.push(failureNote(c.name, r.finishReason, r.text));
+        failed = true;
+        continue;
+      }
+      let parsed: { memories?: { subject?: string; content?: string; why?: string }[] };
+      try {
+        parsed = JSON.parse(body) as typeof parsed;
+      } catch {
+        notes.push(failureNote(c.name, r.finishReason, r.text));
+        failed = true;
+        continue;
+      }
       let taken = 0;
       for (const m of parsed.memories ?? []) {
         const content = (m.content ?? '').trim();
@@ -161,7 +209,8 @@ export async function extractCandidates(
         taken++;
       }
     } catch (err) {
-      notes.push(`${c.name}: 抽出に失敗しました（${(err as Error).message}）`);
+      notes.push(`${c.name}: 抽出の呼び出しに失敗しました（${(err as Error).message}）`);
+      failed = true;
     }
   }
 
@@ -173,25 +222,45 @@ export async function extractCandidates(
       count: targets.length,
     },
     notes,
+    failed,
   };
 }
 
+/**
+ * 失敗したチャットの再開ライン。
+ * 応答を読めなかった範囲は境界を進めずに残すが、毎ターン叩き直さないよう、
+ * 未抽出がこの件数に達するまでは自動実行を見送る。
+ */
+const retryAt = new Map<string, number>();
+
 /** 抽出して保存し、抽出済み境界を進める */
-export async function runExtract(chatId: string, settings: Settings): Promise<number> {
-  if (extracting.has(chatId)) return 0;
+export async function runExtract(
+  chatId: string,
+  settings: Settings,
+): Promise<{ added: number; notes: string[]; failed: boolean }> {
+  if (extracting.has(chatId)) return { added: 0, notes: [], failed: false };
   extracting.add(chatId);
   try {
     const result = await extractCandidates(chatId, settings);
-    if (!result.range) return 0;
+    if (!result.range) return { added: 0, notes: result.notes, failed: false };
+
+    if (result.failed) {
+      // **境界を進めない。** 進めるとこの範囲は二度と抽出されず、
+      // モデルの設定を直しても取り返せなくなる
+      retryAt.set(chatId, result.range.count + Math.max(MIN_EXTRACT_MESSAGES, settings.summary_interval));
+      console.warn(`[memory] 抽出に失敗（範囲は保留）: ${result.notes.join(' / ')}`);
+      return { added: 0, notes: result.notes, failed: true };
+    }
+
     for (const c of result.candidates) {
       createMemory(c.character_id, { subject: c.subject, content: c.content, source: 'auto' });
     }
     const chat = getChat(chatId);
     const targets = chat ? messagesAfterSeq(chatId, chat.extracted_up_to_seq ?? 0) : [];
     const last = targets[targets.length - 1];
-    // 抽出に失敗した場合でも境界は進める。同じ範囲を延々と再試行させない
     if (last) updateChat(chatId, { extracted_up_to: last.id, extracted_up_to_seq: last.seq });
-    return result.candidates.length;
+    retryAt.delete(chatId);
+    return { added: result.candidates.length, notes: result.notes, failed: false };
   } finally {
     extracting.delete(chatId);
   }
@@ -207,8 +276,10 @@ export function maybeExtract(chatId: string, settings: Settings): { needed: bool
   const chat = getChat(chatId);
   if (!chat) return { needed: false };
   const pending = messagesAfterSeq(chatId, chat.extracted_up_to_seq ?? 0).length;
-  // 抽出の間隔は要約と揃える（§10.2）
-  const needed = pending >= Math.max(MIN_EXTRACT_MESSAGES, settings.summary_interval);
+  // 抽出の間隔は要約と揃える（§10.2）。
+  // 直前に失敗している場合は、さらに間隔ぶん貯まるまで待つ
+  const threshold = retryAt.get(chatId) ?? Math.max(MIN_EXTRACT_MESSAGES, settings.summary_interval);
+  const needed = pending >= threshold;
   if (needed) {
     runExtract(chatId, settings).catch((err) =>
       console.error('[memory] 自動抽出に失敗:', (err as Error).message),

@@ -136,6 +136,67 @@ export async function memorySuite(w) {
     check('同じ範囲を再抽出しない', r2.json.added === 0, JSON.stringify(r2.json));
   }
 
+  // 応答が読めないときの扱い
+  {
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+
+    // 空応答（JSONモードで空を返すモデル）→ 素のプロンプトで1度だけ試し直す
+    setQueue([{ text: '' }, { text: memJson([{ content: '再試行で取れた', why: 'x' }]) }]);
+    let p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('空応答なら素のプロンプトで試し直す', p.candidates.length === 1,
+      JSON.stringify(p.notes));
+
+    // 2回とも空 → 失敗として理由を出す
+    setQueue([{ text: '' }, { text: '' }]);
+    p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('2回とも空なら失敗として扱う', p.failed === true, String(p.failed));
+    check('空応答だと分かる説明を出す',
+      p.notes.some((n) => n.includes('空の応答')), JSON.stringify(p.notes));
+
+    // コードフェンス付き → 剥がして読む
+    setQueue([{ text: '```json\n' + memJson([{ content: 'フェンス付き', why: 'x' }]) + '\n```' }]);
+    p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('コードフェンス付きでも読める', p.candidates.length === 1, JSON.stringify(p.notes));
+
+    // 前置き付き
+    setQueue([{ text: '以下が結果です。\n' + memJson([{ content: '前置き付き', why: 'x' }]) }]);
+    p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('前置きが付いていても読める', p.candidates.length === 1, JSON.stringify(p.notes));
+
+    // 途中で切れた（上限到達）
+    setQueue([{ text: '{"memories": [{"content": "とちゅ', finish: 'length' }]);
+    p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('途中で切れたら失敗として扱う', p.failed === true, String(p.failed));
+    check('上限到達だと分かる説明を出す',
+      p.notes.some((n) => n.includes('長さの上限')), JSON.stringify(p.notes));
+
+    // 拒否
+    setQueue([{ text: '', refusal: 'この内容には応じられません' }]);
+    p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('拒否も理由を出す', p.notes.some((n) => n.includes('拒否')), JSON.stringify(p.notes));
+  }
+
+  // 失敗したら抽出済み境界を進めない（範囲を取り返せなくしない）
+  {
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    const before = (await api('GET', `/chats/${chat.id}`)).json.chat.extracted_up_to_seq;
+    setQueue([{ text: '' }, { text: '' }]);
+    const r = await api('POST', `/chats/${chat.id}/extract`);
+    check('失敗時は保存件数0', r.json.added === 0, JSON.stringify(r.json));
+    check('失敗を呼び出し元へ返す', r.json.failed === true);
+    const after = (await api('GET', `/chats/${chat.id}`)).json.chat.extracted_up_to_seq;
+    check('失敗時は境界を進めない', after === before, `${before} → ${after}`);
+
+    // 直したら同じ範囲を拾い直せる
+    setQueue([{ text: memJson([{ content: '直したら取れた', why: 'x' }]) }]);
+    const r2 = await api('POST', `/chats/${chat.id}/extract`);
+    check('直せば同じ範囲を拾い直せる', r2.json.added === 1, JSON.stringify(r2.json));
+    const fixed = (await api('GET', `/chats/${chat.id}`)).json.chat.extracted_up_to_seq;
+    check('成功したら境界が進む', fixed > (before ?? 0), `${before} → ${fixed}`);
+  }
+
   // 抽出が要約から独立している
   {
     await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 1 });

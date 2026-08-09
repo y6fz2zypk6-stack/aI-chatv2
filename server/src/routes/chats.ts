@@ -410,8 +410,7 @@ chatsRouter.post('/chats/:id/extract', async (req, res) => {
     return;
   }
   try {
-    const added = await runExtract(chat.id, getSettings());
-    res.json({ added });
+    res.json(await runExtract(chat.id, getSettings()));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
