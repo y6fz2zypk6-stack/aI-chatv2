@@ -429,6 +429,11 @@ export interface Memory {
    * 絶対値で保存し、表示のときだけ現在時刻と突き合わせる。
    */
   game_time: number | null;
+  /**
+   * 0 なら注入しない。記録としては残す（削除とは別）。
+   * 「もう出てこなくていいが、あった事実は残したい」ためのもの。
+   */
+  enabled: number;
   created_at: number;
   updated_at: number;
 }

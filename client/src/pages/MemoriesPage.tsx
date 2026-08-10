@@ -38,11 +38,15 @@ export default function MemoriesPage() {
     [characters],
   );
 
-  // ピン留めは必ず注入されるので先頭にまとめる
-  const [pinned, rest] = useMemo(
-    () => [memories.filter((m) => m.pinned === 1), memories.filter((m) => m.pinned !== 1)],
-    [memories],
-  );
+  // ピン留めは必ず注入されるので先頭にまとめる。注入しないものは末尾へ
+  const [pinned, rest, off] = useMemo(() => {
+    const on = memories.filter((m) => m.enabled !== 0);
+    return [
+      on.filter((m) => m.pinned === 1),
+      on.filter((m) => m.pinned !== 1),
+      memories.filter((m) => m.enabled === 0),
+    ];
+  }, [memories]);
 
   const add = async () => {
     const content = draft.trim();
@@ -60,7 +64,7 @@ export default function MemoriesPage() {
   const row = (m: MemoryListItem) => (
     <div
       key={m.id}
-      className="memrow"
+      className={`memrow${m.enabled === 0 ? ' off' : ''}`}
       role="button"
       tabIndex={0}
       onClick={() => setEditing({ ...m })}
@@ -88,6 +92,7 @@ export default function MemoriesPage() {
           <span className={`tag${m.source === 'auto' ? '' : ' mute'}`}>
             {m.source === 'auto' ? '自動抽出' : '手動'}
           </span>
+          {m.enabled === 0 && <span className="tag mute">OFF</span>}
           {m.subject && <span>{nameOf(m.subject)}</span>}
           {/* いつの出来事か。生成時は「3日前」等の相対表記になる */}
           {m.game_time_label && <span>{m.game_time_label}</span>}
@@ -103,7 +108,11 @@ export default function MemoriesPage() {
     <>
       <TopBar
         title="メモリー"
-        sub={character ? `${character.name}・${memories.length}件` : undefined}
+        sub={
+          character
+            ? `${character.name}・${memories.length}件${off.length ? `（うちOFF ${off.length}）` : ''}`
+            : undefined
+        }
         back={`/characters/${id}`}
       />
       <div className="content">
@@ -124,6 +133,12 @@ export default function MemoriesPage() {
           <>
             {pinned.length > 0 && <span className="kicker">そのほか</span>}
             {rest.map(row)}
+          </>
+        )}
+        {off.length > 0 && (
+          <>
+            <span className="kicker">注入しない</span>
+            {off.map(row)}
           </>
         )}
       </div>
@@ -225,6 +240,20 @@ function MemoryEditor(props: {
           </select>
         </div>
       </Field>
+      <div className="setting">
+        <div className="txt">
+          <label>注入する</label>
+          <span>OFFにすると記録は残したままAIには渡しません</span>
+        </div>
+        <button
+          className={`toggle${m.enabled !== 0 ? ' on' : ''}`}
+          onClick={() => setM({ ...m, enabled: m.enabled === 0 ? 1 : 0 })}
+          role="switch"
+          aria-checked={m.enabled !== 0}
+        >
+          <span className="knob" />
+        </button>
+      </div>
       <div className="setting">
         <div className="txt">
           <label>ピン留め</label>

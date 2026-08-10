@@ -214,6 +214,15 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       d.exec("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'");
     },
   },
+  {
+    // メモリーの注入オンオフ。ロアブックと同じく、消さずに黙らせるための列。
+    // 既存はすべて有効（＝これまでと同じ挙動）
+    version: 7,
+    up: (d) => {
+      if (hasColumn(d, 'memories', 'enabled')) return;
+      d.exec('ALTER TABLE memories ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
+    },
+  },
 ];
 
 const applied = new Set(

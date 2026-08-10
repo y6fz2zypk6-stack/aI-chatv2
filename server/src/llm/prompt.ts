@@ -220,8 +220,11 @@ export function assembleContext(input: AssembleInput): AssembleResult {
   const presentSet = new Set(input.baseState.present);
   const memoryBlocks: { charName: string; items: Memory[] }[] = [];
   for (const { character, items } of input.memories) {
+    // enabled = 0 は注入しない。記録としては残っている（§10.2）
     const usable = items.filter(
-      (m) => !m.subject || presentSet.has(m.subject) || firedCharIds.has(m.subject),
+      (m) =>
+        m.enabled !== 0 &&
+        (!m.subject || presentSet.has(m.subject) || firedCharIds.has(m.subject)),
     );
     if (usable.length) memoryBlocks.push({ charName: character.name, items: usable });
   }

@@ -202,6 +202,8 @@ CREATE TABLE IF NOT EXISTS memories (
   pinned INTEGER NOT NULL DEFAULT 0,
   -- 記憶が生まれたゲーム内時刻（通算分）。NULL は日付不明
   game_time INTEGER,
+  -- 0 で注入から外す。記録としては残す（削除とは別）
+  enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

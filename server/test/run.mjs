@@ -132,6 +132,7 @@ try {
   await s3.summaryCadenceSuite(mw);
   await s3.noticeSuite(mw);
   await s3.commitSuite(mw);
+  await s3.memoryToggleSuite(mw);
 
   // 再起動して同じ状態が復元されるかを見る
   server.kill('SIGKILL');

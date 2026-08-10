@@ -4,7 +4,10 @@ import type { Memory } from '../../../../shared/types.js';
 
 export function listMemories(characterId: string): Memory[] {
   return db
-    .prepare('SELECT * FROM memories WHERE character_id = ? ORDER BY pinned DESC, created_at ASC')
+    .prepare(
+      // 無効にしたものは一覧の末尾へ回す（記録としては残すが、普段は視界の外へ）
+      'SELECT * FROM memories WHERE character_id = ? ORDER BY enabled DESC, pinned DESC, created_at ASC',
+    )
     .all(characterId) as Memory[];
 }
 
@@ -37,11 +40,12 @@ export function createMemory(characterId: string, input: Partial<Memory>): Memor
     source: input.source === 'auto' ? 'auto' : 'manual',
     pinned: input.pinned ? 1 : 0,
     game_time: normalizeGameTime(input.game_time),
+    enabled: input.enabled === 0 ? 0 : 1,
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    'INSERT INTO memories (id, character_id, subject, content, source, pinned, game_time, created_at, updated_at) VALUES (@id, @character_id, @subject, @content, @source, @pinned, @game_time, @created_at, @updated_at)',
+    'INSERT INTO memories (id, character_id, subject, content, source, pinned, game_time, enabled, created_at, updated_at) VALUES (@id, @character_id, @subject, @content, @source, @pinned, @game_time, @enabled, @created_at, @updated_at)',
   ).run(m);
   return m;
 }
@@ -56,10 +60,11 @@ export function updateMemory(id: string, patch: Partial<Memory>): Memory | undef
     character_id: cur.character_id,
     // patch に game_time が無ければ現状維持。あれば null を含めて素直に採用する
     game_time: 'game_time' in patch ? normalizeGameTime(patch.game_time) : cur.game_time,
+    enabled: 'enabled' in patch ? (patch.enabled === 0 ? 0 : 1) : cur.enabled,
     updated_at: now(),
   };
   db.prepare(
-    'UPDATE memories SET subject=@subject, content=@content, source=@source, pinned=@pinned, game_time=@game_time, updated_at=@updated_at WHERE id=@id',
+    'UPDATE memories SET subject=@subject, content=@content, source=@source, pinned=@pinned, game_time=@game_time, enabled=@enabled, updated_at=@updated_at WHERE id=@id',
   ).run(next);
   return next;
 }

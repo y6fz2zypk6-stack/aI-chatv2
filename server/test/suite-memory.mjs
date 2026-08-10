@@ -782,3 +782,95 @@ export async function commitSuite(w) {
 
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+// メモリーの注入オンオフ（消さずに黙らせる）
+// ===========================================================================
+export async function memoryToggleSuite(w) {
+  suite('メモリーの注入オンオフ');
+
+  const base = (await api('GET', '/settings')).json;
+  await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0 });
+
+  const mk = async (content) =>
+    (await api('POST', `/characters/${w.ashley.id}/memories`, { content })).json;
+  const promptOf = async (chatId) => {
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+    await generate(chatId, { content: 'x' });
+    return (await mockRequests()).map((q) => q.prompt).join('\n');
+  };
+
+  // 既定は有効。OFF にすると注入から外れるが、記録は残る
+  {
+    const on = await mk('残す・注入する');
+    const off = await mk('残す・注入しない');
+    check('既定は有効', on.enabled === 1 && off.enabled === 1, `${on.enabled} / ${off.enabled}`);
+
+    const chat = await newChat(w);
+    let prompt = await promptOf(chat.id);
+    check('OFFにする前は両方載る',
+      prompt.includes('残す・注入する') && prompt.includes('残す・注入しない'), '');
+
+    const r = await api('PUT', `/memories/${off.id}`, { ...off, enabled: 0 });
+    check('OFFにできる', r.json.enabled === 0, String(r.json.enabled));
+
+    prompt = await promptOf(chat.id);
+    check('OFFにすると注入されない', !prompt.includes('残す・注入しない'), 'まだ載っている');
+    check('ONのものは載ったまま', prompt.includes('残す・注入する'), '載らなくなった');
+
+    const list = (await api('GET', `/characters/${w.ashley.id}/memories`)).json;
+    check('記録としては残る', list.some((m) => m.id === off.id && m.content === '残す・注入しない'),
+      '消えている');
+
+    // 戻せる
+    await api('PUT', `/memories/${off.id}`, { ...off, enabled: 1 });
+    prompt = await promptOf(chat.id);
+    check('ONに戻すとまた載る', prompt.includes('残す・注入しない'), '戻らない');
+    await api('DELETE', `/memories/${off.id}`);
+    await api('DELETE', `/memories/${on.id}`);
+  }
+
+  // 触らない更新で勝手に戻らない
+  {
+    const m = await mk('触らない更新の確認');
+    await api('PUT', `/memories/${m.id}`, { ...m, enabled: 0 });
+    const r = await api('PUT', `/memories/${m.id}`, { content: '本文だけ直す' });
+    check('enabled を含まない更新では現状維持', r.json.enabled === 0, String(r.json.enabled));
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  // OFF のものも重複除けには渡す（切ったものが拾い直されない）
+  {
+    const m = await mk('切ったので二度と出さない');
+    await api('PUT', `/memories/${m.id}`, { ...m, enabled: 0 });
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    await clearMockRequests();
+    setQueue([{ text: memJson([]) }]);
+    await api('POST', `/chats/${chat.id}/extract-preview`);
+    const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('OFFのメモリーも既存の記憶として渡す', prompt.includes('切ったので二度と出さない'),
+      '渡していない（同じ内容が拾い直される）');
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  // 書き出し → 取り込みで保たれる
+  {
+    const m = await mk('書き出しでもOFFのまま');
+    await api('PUT', `/memories/${m.id}`, { ...m, enabled: 0 });
+    const dump = (await api('GET', `/worlds/${w.world.id}/export`)).json;
+    const imported = (await api('POST', '/worlds/import', {
+      ...dump, world: { ...dump.world, name: 'toggle_copy' },
+    })).json;
+    const copied = (await api('GET', `/worlds/${imported.world.id}/characters`)).json
+      .find((c) => c.name === 'アシュリー');
+    const copiedMems = (await api('GET', `/characters/${copied.id}/memories`)).json;
+    check('取り込み後もOFFのまま',
+      copiedMems.find((x) => x.content === '書き出しでもOFFのまま')?.enabled === 0,
+      JSON.stringify(copiedMems.map((x) => [x.content, x.enabled])));
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  await api('PUT', '/settings', base);
+}

@@ -177,8 +177,8 @@ try {
   const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 
   console.log('\n── マイグレーション（旧スキーマ → v1.5.3）');
-  check('schema_migrations に6件記録される',
-    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 6,
+  check('schema_migrations に7件記録される',
+    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 7,
     String(d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n));
 
   // #1 seq と一意制約
@@ -248,6 +248,13 @@ try {
   check('既存のメモリーは消えない', mem?.content === '古い記憶', JSON.stringify(mem));
   check('既存のメモリーの日付は NULL（推測で埋めない）', mem?.game_time === null,
     String(mem?.game_time));
+
+  // #7 メモリーの注入オンオフ
+  check('memories.enabled が追加される', cols('memories').includes('enabled'),
+    cols('memories').join(' '));
+  check('既存のメモリーは有効のまま',
+    d.prepare('SELECT enabled FROM memories').get().enabled === 1,
+    String(d.prepare('SELECT enabled FROM memories').get().enabled));
 
   // #6 場面転換マーカーの種別
   check('messages.kind が追加される', cols('messages').includes('kind'), cols('messages').join(' '));

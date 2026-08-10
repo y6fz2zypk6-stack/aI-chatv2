@@ -1274,6 +1274,11 @@ textarea.tall {
   cursor: pointer;
 }
 
+/* 注入しない設定のものは淡く。消してはいないので、読めるところまでで留める */
+.memrow.off .txt {
+  color: var(--muted);
+}
+
 .memrow .body {
   flex: 1;
   min-width: 0;

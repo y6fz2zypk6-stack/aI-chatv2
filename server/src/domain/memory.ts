@@ -161,6 +161,9 @@ export async function extractCandidates(
   const gameTime = targets[targets.length - 1]?.state_after?.time ?? null;
 
   for (const c of participants) {
+    // 重複除けには **注入を切ったものも含める。**
+    // OFF は「もう出さなくていい」という意思表示なので、外すと同じ内容が拾い直されて
+    // 何度でも復活してしまう
     const existing = listMemories(c.id).map((m) => m.content);
     const messages = [
       { content: buildPrompt({ character: c, idList, existing, convo }), role: 'user' as const },
