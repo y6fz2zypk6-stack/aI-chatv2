@@ -225,6 +225,8 @@ export default function ChatPage() {
           void load();
           resolve(null);
         },
+        // 裏で走った要約・抽出の結果。done のあとに届くので、resolve は待たせない
+        onNotice: (n) => toast(n.message, !n.ok),
       });
     });
   };

@@ -405,6 +405,16 @@ export interface Summary {
   created_at: number;
 }
 
+/**
+ * 裏で走った処理（要約・知識抽出）の結果を画面へ知らせるための一言。
+ * 「静かに失敗した」を作らないため、成功・失敗の両方を必ず返す。
+ */
+export interface Notice {
+  kind: 'summary' | 'memory';
+  ok: boolean;
+  message: string;
+}
+
 export interface Memory {
   id: string;
   character_id: string;

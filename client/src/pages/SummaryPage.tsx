@@ -39,8 +39,9 @@ export default function SummaryPage() {
   const runNow = async () => {
     setBusy(true);
     try {
-      const r = await api.post<{ content: string | null }>(`/chats/${id}/summarize`);
-      toast(r.content ? '要約を実行しました' : '要約対象がありません');
+      // 成否と理由はサーバが文章にして返す。ここで組み立て直さない
+      const r = await api.post<{ ok: boolean; message: string }>(`/chats/${id}/summarize`);
+      toast(r.message, !r.ok);
       load();
     } catch (err) {
       toast((err as Error).message, true);

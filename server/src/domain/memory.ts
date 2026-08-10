@@ -1,4 +1,4 @@
-import type { Character, Settings } from '../../../shared/types.js';
+import type { Character, Notice, Settings } from '../../../shared/types.js';
 import { getChat, updateChat } from '../db/repo/chats.js';
 import { getCharacters, listCharacters } from '../db/repo/characters.js';
 import { createMemory, listMemories } from '../db/repo/memories.js';
@@ -239,23 +239,44 @@ export async function extractCandidates(
  */
 const retryAt = new Map<string, number>();
 
-/** 抽出して保存し、抽出済み境界を進める */
-export async function runExtract(
-  chatId: string,
-  settings: Settings,
-): Promise<{ added: number; notes: string[]; failed: boolean }> {
-  if (extracting.has(chatId)) return { added: 0, notes: [], failed: false };
+export interface ExtractRunResult {
+  added: number;
+  notes: string[];
+  failed: boolean;
+  /** 画面に出す一言。成功・失敗のどちらでも必ず入れる */
+  message: string;
+  /** 実行中だったので見送った（通知しない） */
+  skipped: boolean;
+}
+
+/**
+ * 抽出して保存し、抽出済み境界を進める。
+ * **例外を投げず、必ず結果を返す。** 自動抽出はバックグラウンドで走るため、
+ * 投げると理由が誰にも届かない。
+ */
+export async function runExtract(chatId: string, settings: Settings): Promise<ExtractRunResult> {
+  if (extracting.has(chatId)) {
+    return { added: 0, notes: [], failed: false, message: '', skipped: true };
+  }
   extracting.add(chatId);
   try {
     const result = await extractCandidates(chatId, settings);
-    if (!result.range) return { added: 0, notes: result.notes, failed: false };
+    if (!result.range) {
+      return { added: 0, notes: result.notes, failed: false, message: result.notes[0] ?? '', skipped: false };
+    }
 
     if (result.failed) {
       // **境界を進めない。** 進めるとこの範囲は二度と抽出されず、
       // モデルの設定を直しても取り返せなくなる
       retryAt.set(chatId, result.range.count + Math.max(MIN_EXTRACT_MESSAGES, settings.summary_interval));
       console.warn(`[memory] 抽出に失敗（範囲は保留）: ${result.notes.join(' / ')}`);
-      return { added: 0, notes: result.notes, failed: true };
+      return {
+        added: 0,
+        notes: result.notes,
+        failed: true,
+        message: `メモリーの抽出に失敗しました: ${result.notes[0] ?? '理由不明'}`,
+        skipped: false,
+      };
     }
 
     for (const c of result.candidates) {
@@ -271,7 +292,20 @@ export async function runExtract(
     const last = targets[targets.length - 1];
     if (last) updateChat(chatId, { extracted_up_to: last.id, extracted_up_to_seq: last.seq });
     retryAt.delete(chatId);
-    return { added: result.candidates.length, notes: result.notes, failed: false };
+    const added = result.candidates.length;
+    return {
+      added,
+      notes: result.notes,
+      failed: false,
+      message: added
+        ? `メモリーを${added}件保存しました`
+        : `メモリー: ${result.range.count}件を見ましたが、保存に値する内容はありませんでした`,
+      skipped: false,
+    };
+  } catch (err) {
+    const message = `メモリーの抽出に失敗しました: ${(err as Error).message}`;
+    console.warn(`[memory] ${message}`);
+    return { added: 0, notes: [message], failed: true, message, skipped: false };
   } finally {
     extracting.delete(chatId);
   }
@@ -280,21 +314,25 @@ export async function runExtract(
 /**
  * 応答保存直後のバックグラウンド判定。
  * 自動要約とは独立に判定する（auto_summarize を切っても自動抽出は動く）。
+ * 起動した場合は `done` に結果が入る。呼び出し側はこれを待って通知を出す。
  */
-export function maybeExtract(chatId: string, settings: Settings): { needed: boolean } {
-  if (settings.auto_extract !== 1) return { needed: false };
-  if (extracting.has(chatId)) return { needed: false };
+export function maybeExtract(
+  chatId: string,
+  settings: Settings,
+): { needed: boolean; done: Promise<Notice | null> } {
+  const none = { needed: false, done: Promise.resolve(null) };
+  if (settings.auto_extract !== 1) return none;
+  if (extracting.has(chatId)) return none;
   const chat = getChat(chatId);
-  if (!chat) return { needed: false };
+  if (!chat) return none;
   const pending = messagesAfterSeq(chatId, chat.extracted_up_to_seq ?? 0).length;
   // 抽出の間隔は要約と揃える（§10.2）。
   // 直前に失敗している場合は、さらに間隔ぶん貯まるまで待つ
   const threshold = retryAt.get(chatId) ?? Math.max(MIN_EXTRACT_MESSAGES, settings.summary_interval);
-  const needed = pending >= threshold;
-  if (needed) {
-    runExtract(chatId, settings).catch((err) =>
-      console.error('[memory] 自動抽出に失敗:', (err as Error).message),
-    );
-  }
-  return { needed };
+  if (pending < threshold) return none;
+
+  const done = runExtract(chatId, settings).then((r) =>
+    r.skipped || !r.message ? null : { kind: 'memory' as const, ok: !r.failed, message: r.message },
+  );
+  return { needed: true, done };
 }

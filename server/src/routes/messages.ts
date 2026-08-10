@@ -7,6 +7,7 @@ import type {
   EventEvalRow,
   Location,
   Message,
+  Notice,
   Settings,
   StateDelta,
   Utterance,
@@ -253,7 +254,14 @@ function sseInit(res: Response): (event: string, data: unknown) => void {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
   return (event, data) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    // done のあとも notice のために開けたままにするので、その間に画面を閉じられ得る。
+    // 切れたソケットへの書き込みで落とさない
+    if (res.writableEnded || res.destroyed) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      /* 接続が切れただけ。生成側の処理は続行する */
+    }
   };
 }
 
@@ -582,9 +590,11 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
   setChatState(chatId, finalState);
 
   // 要約・知識抽出はバックグラウンド（§8.3・§8.4）。
-  // 互いに独立して判定する（auto_summarize を切っても自動抽出は動く）
-  const { needed: needsSummary } = maybeSummarize(chatId, settings);
-  maybeExtract(chatId, settings);
+  // 互いに独立して判定する（auto_summarize を切っても自動抽出は動く）。
+  // 結果は done のあとに notice として流す（§5.9）
+  const summaryTask = maybeSummarize(chatId, settings);
+  const extractTask = maybeExtract(chatId, settings);
+  const needsSummary = summaryTask.needed;
 
   // オートプレイの継続判定（§8.7）: 区切りが良ければ自動停止
   let autoplayShouldStop = false;
@@ -608,8 +618,39 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     generationStatus: status,
     autoplayShouldStop,
   });
+
+  // 裏で走った要約・抽出の結果を、ストリームを閉じる前に流す（§5.9）。
+  // done は先に送っているので画面はもう待たされていない。inflight も解放済みなので
+  // 次のターンを始めることもできる。
+  for (const n of await settleNotices([summaryTask.done, extractTask.done])) {
+    send('notice', n);
+  }
   res.end();
 });
+
+/**
+ * バックグラウンド処理の結果を待つ。
+ * 応答生成そのものは終わっているので、ここで無限に待たない。
+ * 打ち切った分は通知が出ないだけで、処理自体は最後まで走る。
+ */
+const NOTICE_WAIT_MS = 60_000;
+
+async function settleNotices(tasks: Promise<Notice | null>[]): Promise<Notice[]> {
+  const timeout = new Promise<null>((resolve) => {
+    const t = setTimeout(() => resolve(null), NOTICE_WAIT_MS);
+    // Node のイベントループをこのタイマーで引き延ばさない
+    if (typeof t.unref === 'function') t.unref();
+  });
+  const settled = await Promise.all(
+    tasks.map((task) =>
+      Promise.race([task, timeout]).catch((err) => {
+        console.error('[notice] バックグラウンド処理が失敗:', (err as Error).message);
+        return null;
+      }),
+    ),
+  );
+  return settled.filter((n): n is Notice => !!n);
+}
 
 /** CONTINUE/STOP の継続判定（§8.7）。判定不能時は継続 */
 async function judgeAutoplayStop(

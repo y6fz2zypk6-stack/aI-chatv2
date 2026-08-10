@@ -1,4 +1,4 @@
-import type { ChatState, GameTime, Utterance } from '@shared/types';
+import type { ChatState, GameTime, Notice, Utterance } from '@shared/types';
 
 export class ApiError extends Error {
   status: number;
@@ -59,6 +59,11 @@ export interface StreamHandlers {
   onDelta: (text: string) => void;
   onDone: (payload: DonePayload) => void;
   onError: (message: string, status?: number) => void;
+  /**
+   * 裏で走った要約・抽出の結果。done のあとに届く。
+   * 生成そのものは done で終わっているので、これを待たせてはいけない。
+   */
+  onNotice?: (notice: Notice) => void;
 }
 
 export async function streamGenerate(
@@ -108,6 +113,7 @@ export async function streamGenerate(
       if (event === 'delta') handlers.onDelta(payload.text as string);
       else if (event === 'done') handlers.onDone(payload as DonePayload);
       else if (event === 'error') handlers.onError(payload.message as string);
+      else if (event === 'notice') handlers.onNotice?.(payload as Notice);
     } catch {
       /* 不完全なブロックは無視 */
     }

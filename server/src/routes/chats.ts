@@ -374,12 +374,9 @@ chatsRouter.post('/chats/:id/summarize', async (req, res) => {
     res.status(404).json({ error: 'チャットが見つかりません' });
     return;
   }
-  try {
-    const content = await runSummarize(chat.id, getSettings());
-    res.json({ content });
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
+  // runSummarize は投げずに結果を返す。理由付きのメッセージをそのまま画面へ渡す
+  const r = await runSummarize(chat.id, getSettings());
+  res.json(r.skipped ? { ...r, message: '要約はすでに実行中です' } : r);
 });
 
 chatsRouter.delete('/chats/:id/summary', (req, res) => {

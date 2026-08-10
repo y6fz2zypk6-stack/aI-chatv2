@@ -554,3 +554,114 @@ export async function memoryDateSuite(w) {
 
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+// 裏で走った要約・抽出の結果を知らせる（成功も失敗も）
+// ===========================================================================
+export async function noticeSuite(w) {
+  suite('要約・抽出の通知');
+
+  const base = (await api('GET', '/settings')).json;
+
+  // 自動要約が成功したら通知が届く
+  {
+    await api('PUT', '/settings', { auto_summarize: 1, auto_extract: 0, summary_interval: 8 });
+    const chat = await newChat(w);
+    let fired = null;
+    for (let t = 1; t <= 6 && !fired; t++) {
+      setQueue([
+        { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+        { text: `あらすじ${t}` },
+      ]);
+      const g = await generate(chat.id, { content: `t${t}` });
+      const n = (g.notices ?? []).find((x) => x.kind === 'summary');
+      if (n) fired = n;
+    }
+    check('要約が走ったら通知が届く', !!fired, JSON.stringify(fired));
+    check('成功として届く', fired?.ok === true, JSON.stringify(fired));
+    check('件数が分かる文言になっている', /\d+件を要約しました/.test(fired?.message ?? ''),
+      fired?.message);
+  }
+
+  // 要約が空応答なら失敗として届く（「変更なし」で黙らせない）
+  {
+    await api('PUT', '/settings', { auto_summarize: 1, auto_extract: 0, summary_interval: 8 });
+    const chat = await newChat(w);
+    let fired = null;
+    for (let t = 1; t <= 6 && !fired; t++) {
+      setQueue([
+        { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+        { text: '' },
+      ]);
+      const g = await generate(chat.id, { content: `t${t}` });
+      const n = (g.notices ?? []).find((x) => x.kind === 'summary');
+      if (n) fired = n;
+    }
+    check('空応答でも通知が届く', !!fired, JSON.stringify(fired));
+    check('失敗として届く', fired?.ok === false, JSON.stringify(fired));
+    check('理由が分かる文言になっている', (fired?.message ?? '').includes('空の応答'), fired?.message);
+    const sum = (await api('GET', `/chats/${chat.id}/summary`)).json;
+    check('失敗時はあらすじを保存しない', !sum, JSON.stringify(sum));
+  }
+
+  // 自動抽出の成功・失敗
+  {
+    await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 1, summary_interval: 8 });
+    const chat = await newChat(w);
+    let fired = null;
+    for (let t = 1; t <= 6 && !fired; t++) {
+      setQueue([
+        { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+        { text: memJson([{ subject: '', content: `通知の確認${t}`, why: 'x' }]) },
+      ]);
+      const g = await generate(chat.id, { content: `t${t}` });
+      const n = (g.notices ?? []).find((x) => x.kind === 'memory');
+      if (n) fired = n;
+    }
+    check('抽出が走ったら通知が届く', !!fired, JSON.stringify(fired));
+    check('保存件数が分かる', /メモリーを\d+件保存しました/.test(fired?.message ?? ''), fired?.message);
+  }
+
+  {
+    await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 1, summary_interval: 8 });
+    const chat = await newChat(w);
+    let fired = null;
+    for (let t = 1; t <= 6 && !fired; t++) {
+      setQueue([
+        { text: reply({ char: `「${t}」`, elapsed: 10, location: w.shop }) },
+        { text: '' },
+        { text: '' },
+      ]);
+      const g = await generate(chat.id, { content: `t${t}` });
+      const n = (g.notices ?? []).find((x) => x.kind === 'memory');
+      if (n) fired = n;
+    }
+    check('抽出の失敗も通知が届く', fired?.ok === false, JSON.stringify(fired));
+    check('抽出の失敗理由が分かる', (fired?.message ?? '').includes('空の応答'), fired?.message);
+  }
+
+  // 走らなかったターンでは通知を出さない（毎ターン出ると邪魔になる）
+  {
+    await api('PUT', '/settings', { auto_summarize: 1, auto_extract: 1, summary_interval: 64 });
+    const chat = await newChat(w);
+    setQueue([{ text: reply({ char: '「静か」', elapsed: 10, location: w.shop }) }]);
+    const g = await generate(chat.id, { content: 't' });
+    check('何も走らなければ通知は出ない', (g.notices ?? []).length === 0, JSON.stringify(g.notices));
+  }
+
+  // 手動要約も同じ文言を返す
+  {
+    await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0, summary_interval: 8 });
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    setQueue([{ text: '手で作ったあらすじ' }]);
+    let r = (await api('POST', `/chats/${chat.id}/summarize`)).json;
+    check('手動要約は成功の文言を返す', r.ok === true && /件を要約しました/.test(r.message), JSON.stringify(r));
+
+    setQueue([{ text: '' }]);
+    r = (await api('POST', `/chats/${chat.id}/summarize`)).json;
+    check('手動要約の失敗も文言で返す', r.ok === false && r.message.includes('空の応答'), JSON.stringify(r));
+  }
+
+  await api('PUT', '/settings', base);
+}

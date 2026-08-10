@@ -1067,13 +1067,25 @@ textarea.tall {
   color: var(--muted-strong);
 }
 
-.state-bar .loc {
-  color: var(--text);
-}
-
 .state-bar svg {
   display: block;
   flex: 0 0 auto;
+}
+
+/* バーの中のボタンは行の高さを押し広げない。
+   .icon-btn の 40px をそのまま入れるとバーが 36px → 55px に伸びる。
+   箱は 20px に抑え、当たり判定だけ疑似要素で広げる（バーの中には収める） */
+.state-bar .icon-btn {
+  width: 20px;
+  height: 20px;
+  color: inherit;
+  position: relative;
+}
+
+.state-bar .icon-btn::after {
+  content: '';
+  position: absolute;
+  inset: -7px -6px;
 }
 
 /* ===== コンポーザー ===== */

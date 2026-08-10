@@ -350,7 +350,25 @@ SSE。`delta` → `done` / `error`。
 サニタイズ → フェンス分離 → 発話パース → applyDelta
   → メッセージ／候補の保存 → イベント判定パイプライン（complete時のみ）
   → chats.state 更新 → 要約・抽出のバックグラウンド起動 → done送出
+  → 要約・抽出の完了を待って notice 送出 → ストリームを閉じる
 ```
+
+### 5.9 notice — バックグラウンド処理の結果を返す
+
+自動要約・自動抽出は生成の後ろで走るので、成否がどこにも出ない。
+**「静かに失敗した」を作らないため、結果を必ず画面へ返す。**
+
+- `maybeSummarize` / `maybeExtract` は `{ needed, done: Promise<Notice | null> }` を返す
+- `done` を送ったあと（＝画面はもう待っていない）に `done` を待ち、`notice` イベントで流してから閉じる
+- `runSummarize` / `runExtract` は**例外を投げない**。バックグラウンド実行では投げても理由が誰にも届かないため、
+  必ず `{ ok, message }` を返す
+- 待ち時間は 60 秒で打ち切る。打ち切っても処理自体は最後まで走る（通知が出ないだけ）
+- `inflight` は生成の終了時に解放済みなので、待っている間も次のターンを始められる
+- ストリームを開けたまま待つので、その間に画面を閉じられ得る。
+  切れたソケットへの書き込みで落とさないよう `send` で防ぐ
+
+要約が空応答を返した場合は「変更なし」ではなく**失敗**として扱う。
+黙って流すと、あらすじが更新されないまま毎ターン再挑戦することになる（§10.2 と同じ方針）。
 
 ---
 
@@ -944,7 +962,11 @@ event: done    { messageId, content, utterances, state, gameTime, needsSummary,
                  firedEvents, eventRows, warnings, stateWarnings,
                  fenceMissingStreak, autoJoinSuggested, generationStatus, autoplayShouldStop }
 event: error   { message }
+event: notice  { kind: 'summary' | 'memory', ok, message }   ← done のあとに0〜2件（§5.9）
 ```
+
+`notice` は `done` より**後**に届く。クライアントは `done` で待ちを解除し、
+ストリームは読み続けること（`done` で読み取りを打ち切ると通知を取りこぼす）。
 
 ---
 
@@ -1130,6 +1152,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | `lastTrainSuite` | 終電行の呼び方の差し替え・オンオフ・差分更新 |
 | `summarySuite` | 要約プロンプトの骨組みと方針の分離・差し替え・空文字のフォールバック |
 | `summaryCadenceSuite` | 要約が毎ターン走らないこと・間隔が interval に比例すること |
+| `noticeSuite` | 要約・抽出の成否が `notice` で届くこと・走らないターンでは出ないこと・手動実行も同じ文言 |
 | `areasSuite` | エリアの改名・並べ替え・追加・削除拒否・書き出し取り込み |
 | `varsSuite` | 進行フラグの権限・範囲・`private_note` 非注入 |
 | `eventsSuite` | 条件式・チェック方式・トリガー・抽選のシード固定・履歴整合・**実際に送られたプロンプトへの注入** |
@@ -1169,6 +1192,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | 20 | APIキーをブラウザへ渡さない | 鍵が漏れる |
 | 21 | 移行でユーザーのデータを消さない | 候補が失われる |
 | 22 | DBは1ファイルで完結する | バックアップが不完全になる |
+| 25 | 要約・抽出の成否は必ず画面へ返す（`notice`） | 裏で失敗し続けても気づけない |
 | 23 | 「場面を進める」は生成ターンと同じ `applyDelta` → `runEventPipeline` を通る | 手で日付を変えたときだけ抽選が起きない |
 | 24 | メモリーの `game_time` は絶対値で保存し、相対表記は表示時に作る | 別チャットで「-150日前」になる |
 

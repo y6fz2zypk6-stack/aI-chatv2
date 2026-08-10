@@ -58,6 +58,7 @@ export async function generate(chatId, body) {
   let done = null;
   let error = null;
   let deltas = '';
+  const notices = [];
   for (;;) {
     const r = await reader.read();
     if (r.done) break;
@@ -77,9 +78,10 @@ export async function generate(chatId, body) {
       if (ev === 'delta') deltas += p.text;
       else if (ev === 'done') done = p;
       else if (ev === 'error') error = p.message;
+      else if (ev === 'notice') notices.push(p);
     }
   }
-  return { httpStatus: 200, done, error, deltas };
+  return { httpStatus: 200, done, error, deltas, notices };
 }
 
 export async function getChat(chatId) {
