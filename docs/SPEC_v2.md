@@ -798,6 +798,21 @@ retain = min(retain, n - 2)                     ← 1回で最低2件は前へ�
 `POST /chats/:id/extract-preview` は**保存せずに候補と理由だけ**返す。
 抽出条件を調整するための確認用で、最小範囲の判定も無視する。
 
+見た候補をそのまま保存するのが `POST /chats/:id/extract/commit`。
+**`/extract` を呼び直さない**のは、抽出のコールをもう一度払ううえ、モデルの出力は
+毎回同じとは限らず「見たものと保存されるものが違う」ことになるため。
+自動抽出が失敗し続けたとき（クレジット切れなど）の立て直しにも使う。
+
+中身はクライアント由来なので、サーバで引き直す:
+
+- `character_id` は**そのチャットの参加キャラ**に限る。外れたものは保存せず件数を返す
+- `subject` は既知の人物IDでなければ空文字（＝常時注入）へ落とす
+- `game_time` は申告値ではなく、`toSeq` のメッセージの `state_after.time` から取る
+- `toSeq` は現在の境界より後、かつ実在する seq であること
+
+保存したら**抽出済み境界を進める**（進めないと自動抽出が同じ範囲を拾って重複する）。
+失敗後のバックオフもここで解除する。
+
 ---
 
 ## 11. 候補・再生成・分岐
@@ -918,6 +933,7 @@ POST /chats/:id/fork { message_id, variant_index? }
 | POST | `/scenarios/:id/chats` | シナリオからChatを作る |
 | POST | `/chats/:id/messages` | **SSE。** `content` / `regenerate` / `retry` / `autoContinue` のいずれか1つ |
 | POST | `/chats/:id/stop` | 生成中断 |
+| POST | `/chats/:id/extract/commit` | プレビューで見た候補をそのまま保存し、境界を進める |
 | POST | `/chats/:id/advance` | **場面を進める（§4.6）。** `minutes` か `game_time` を指定。LLMは呼ばない |
 | POST | `/chats/:id/fork` | |
 | GET / PUT | `/chats/:id/state` | 進行フラグ・発火履歴を含む |
@@ -1152,6 +1168,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | `lastTrainSuite` | 終電行の呼び方の差し替え・オンオフ・差分更新 |
 | `summarySuite` | 要約プロンプトの骨組みと方針の分離・差し替え・空文字のフォールバック |
 | `summaryCadenceSuite` | 要約が毎ターン走らないこと・間隔が interval に比例すること |
+| `commitSuite` | 見た候補をそのまま保存できること・再抽出しないこと・サーバ側の検証・失敗後の立て直し |
 | `noticeSuite` | 要約・抽出の成否が `notice` で届くこと・走らないターンでは出ないこと・手動実行も同じ文言 |
 | `areasSuite` | エリアの改名・並べ替え・追加・削除拒否・書き出し取り込み |
 | `varsSuite` | 進行フラグの権限・範囲・`private_note` 非注入 |

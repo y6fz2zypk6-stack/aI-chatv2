@@ -33,7 +33,7 @@ import type { Chat, VarValue } from '../../../shared/types.js';
 import { getWorld } from '../db/repo/worlds.js';
 import { memoryDateLabel, toGameTime, toMinutes } from '../domain/calendar.js';
 import { applyManualVars } from '../domain/vars.js';
-import { extractCandidates, runExtract } from '../domain/memory.js';
+import { commitCandidates, extractCandidates, runExtract } from '../domain/memory.js';
 import { normalizeState } from '../domain/state.js';
 import { runSummarize } from '../domain/summary.js';
 import { assembleContext } from '../llm/prompt.js';
@@ -408,6 +408,30 @@ chatsRouter.post('/chats/:id/extract-preview', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+// プレビューで見た候補をそのまま保存する。
+// /extract を呼び直すと抽出のコールをもう一度払ううえ、内容がずれる
+chatsRouter.post('/chats/:id/extract/commit', (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  const body = (req.body ?? {}) as {
+    candidates?: { character_id?: string; subject?: string; content?: string }[];
+    toSeq?: number;
+  };
+  if (!Array.isArray(body.candidates) || !Number.isFinite(body.toSeq)) {
+    res.status(400).json({ error: 'candidates と toSeq を指定してください' });
+    return;
+  }
+  const r = commitCandidates(chat.id, { candidates: body.candidates, toSeq: body.toSeq! });
+  if (r.error) {
+    res.status(400).json({ error: r.error });
+    return;
+  }
+  res.json(r);
 });
 
 chatsRouter.post('/chats/:id/extract', async (req, res) => {

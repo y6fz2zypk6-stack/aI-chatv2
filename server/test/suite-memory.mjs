@@ -665,3 +665,120 @@ export async function noticeSuite(w) {
 
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+// プレビューで見た候補をそのまま保存する
+// ===========================================================================
+export async function commitSuite(w) {
+  suite('メモリー候補の保存');
+
+  const base = (await api('GET', '/settings')).json;
+  await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0 });
+
+  const commit = (chatId, body) => api('POST', `/chats/${chatId}/extract/commit`, body);
+  const mems = async () => (await api('GET', `/characters/${w.ashley.id}/memories`)).json;
+
+  // プレビュー → そのまま保存
+  {
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    await clearMockRequests();
+    setQueue([
+      {
+        text: memJson([
+          { subject: w.toby.id, content: '見たまま保存される', why: 'x' },
+          { subject: '', content: 'これも保存される', why: 'y' },
+        ]),
+      },
+    ]);
+    const p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    check('プレビューが2件返る', p.candidates.length === 2, JSON.stringify(p.notes));
+
+    await clearMockRequests();
+    const r = await commit(chat.id, {
+      candidates: p.candidates.map((c) => ({
+        character_id: c.character_id, subject: c.subject, content: c.content,
+      })),
+      toSeq: p.range.toSeq,
+    });
+    check('保存できる', r.json.added === 2, JSON.stringify(r.json));
+    check('抽出をやり直さない（LLMを呼ばない）', (await mockRequests()).length === 0,
+      `${(await mockRequests()).length}回呼んでいる`);
+
+    const saved = await mems();
+    const one = saved.find((m) => m.content === '見たまま保存される');
+    check('内容がそのまま入る', !!one, JSON.stringify(saved.map((m) => m.content)));
+    check('対象タグも保たれる', one?.subject === w.toby.id, one?.subject);
+    check('自動抽出と同じ扱いになる', one?.source === 'auto', one?.source);
+    check('ゲーム内日付が入る', one?.game_time === T1800 + 50, String(one?.game_time));
+
+    // 境界が進み、同じ範囲を自動抽出が拾い直さない
+    const d = (await api('GET', `/chats/${chat.id}`)).json;
+    check('抽出済み境界が進む', d.chat.extracted_up_to_seq === p.range.toSeq,
+      `${d.chat.extracted_up_to_seq} / ${p.range.toSeq}`);
+    const again = await commit(chat.id, { candidates: [], toSeq: p.range.toSeq });
+    check('同じ範囲は二度保存できない', again.status === 400, String(again.status));
+  }
+
+  // 中身はサーバで検証する（クライアントを信用しない）
+  {
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    const p = (await api('GET', `/chats/${chat.id}`)).json;
+    const toSeq = p.messages[p.messages.length - 1].seq;
+    const before = (await mems()).length;
+
+    const r = await commit(chat.id, {
+      candidates: [
+        { character_id: 'not_a_character', subject: '', content: '参加者でないので落ちる' },
+        { character_id: w.ashley.id, subject: 'トビー', content: '対象が名前なら常時扱い' },
+        { character_id: w.ashley.id, subject: '', content: '   ' },
+      ],
+      toSeq,
+    });
+    check('参加者でないキャラ宛ては保存しない', r.json.added === 1, JSON.stringify(r.json));
+    check('落としたことを知らせる', r.json.message.includes('除きました'), r.json.message);
+    const saved = await mems();
+    check('空の内容は保存しない',
+      saved.length === before + 1, `${before} → ${saved.length}`);
+    check('解決できない対象は常時扱いに落とす',
+      saved.find((m) => m.content === '対象が名前なら常時扱い')?.subject === '', '');
+  }
+
+  // 範囲の検証
+  {
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    const d = (await api('GET', `/chats/${chat.id}`)).json;
+    const lastSeq = d.messages[d.messages.length - 1].seq;
+    check('存在しない範囲は400',
+      (await commit(chat.id, { candidates: [], toSeq: lastSeq + 99 })).status === 400);
+    check('toSeq が無ければ400',
+      (await commit(chat.id, { candidates: [] })).status === 400);
+    check('candidates が配列でなければ400',
+      (await commit(chat.id, { candidates: 'x', toSeq: lastSeq })).status === 400);
+  }
+
+  // 抽出に失敗したあとの立て直しに使える（クレジット切れなどからの復帰）
+  {
+    await api('PUT', '/settings', { auto_extract: 1, summary_interval: 8 });
+    const chat = await newChat(w);
+    await advance(chat.id, w, 5);
+    setQueue([{ text: '' }, { text: '' }]);
+    const failed = await api('POST', `/chats/${chat.id}/extract`);
+    check('まず失敗させる', failed.json.failed === true, JSON.stringify(failed.json));
+
+    const d = (await api('GET', `/chats/${chat.id}`)).json;
+    const toSeq = d.messages[d.messages.length - 1].seq;
+    const r = await commit(chat.id, {
+      candidates: [{ character_id: w.ashley.id, subject: '', content: '立て直して保存' }],
+      toSeq,
+    });
+    check('失敗後でも手で保存できる', r.json.added === 1, JSON.stringify(r.json));
+    const after = (await api('GET', `/chats/${chat.id}`)).json;
+    check('保存すると境界も進む', after.chat.extracted_up_to_seq === toSeq,
+      `${after.chat.extracted_up_to_seq} / ${toSeq}`);
+  }
+
+  await api('PUT', '/settings', base);
+}

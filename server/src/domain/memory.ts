@@ -2,7 +2,7 @@ import type { Character, Notice, Settings } from '../../../shared/types.js';
 import { getChat, updateChat } from '../db/repo/chats.js';
 import { getCharacters, listCharacters } from '../db/repo/characters.js';
 import { createMemory, listMemories } from '../db/repo/memories.js';
-import { messagesAfterSeq } from '../db/repo/messages.js';
+import { messageAtSeq, messagesAfterSeq } from '../db/repo/messages.js';
 import { complete } from '../llm/openrouter.js';
 
 /**
@@ -309,6 +309,66 @@ export async function runExtract(chatId: string, settings: Settings): Promise<Ex
   } finally {
     extracting.delete(chatId);
   }
+}
+
+/** 1件の記憶の長さの上限。プレビューの内容をそのまま保存するので、ここで歯止めを置く */
+const MAX_CONTENT_CHARS = 2000;
+/** 1回の保存で受け付ける件数の上限 */
+const MAX_COMMIT = 20;
+
+/**
+ * プレビューで見た候補を **そのまま** 保存する。
+ *
+ * `runExtract` を呼び直すと抽出のコールをもう一度払ううえ、モデルの出力は毎回同じとは
+ * 限らないので「見たものと保存されるものが違う」ことになる。それを避けるための経路。
+ *
+ * 中身はクライアント由来なので、キャラID・subject・日付・範囲はすべてサーバで引き直す。
+ */
+export function commitCandidates(
+  chatId: string,
+  input: { candidates: { character_id?: string; subject?: string; content?: string }[]; toSeq: number },
+): { added: number; message: string; error?: string } {
+  const chat = getChat(chatId);
+  if (!chat) return { added: 0, message: '', error: 'チャットが見つかりません' };
+
+  const from = chat.extracted_up_to_seq ?? 0;
+  const toSeq = Math.floor(input.toSeq);
+  if (!Number.isFinite(toSeq) || toSeq <= from) {
+    return { added: 0, message: '', error: 'その範囲はすでに抽出済みです' };
+  }
+  const boundary = messageAtSeq(chatId, toSeq);
+  if (!boundary) return { added: 0, message: '', error: '指定された範囲が見つかりません' };
+
+  // 保存先は「このチャットの参加キャラ」に限る。プレビューもそこからしか作らない
+  const allowed = new Set(getCharacters(chat.participant_ids).map((c) => c.id));
+  const knownIds = new Set(listCharacters(chat.world_id).map((c) => c.id));
+  // 日付はクライアントの申告ではなく、範囲末尾のステートから引き直す
+  const gameTime = boundary.state_after?.time ?? null;
+
+  const items = (input.candidates ?? []).slice(0, MAX_COMMIT);
+  let added = 0;
+  let rejected = 0;
+  for (const c of items) {
+    const content = (c.content ?? '').trim().slice(0, MAX_CONTENT_CHARS);
+    if (!content) continue;
+    if (!c.character_id || !allowed.has(c.character_id)) {
+      rejected++;
+      continue;
+    }
+    const subject = c.subject && knownIds.has(c.subject) ? c.subject : '';
+    createMemory(c.character_id, { subject, content, source: 'auto', game_time: gameTime });
+    added++;
+  }
+
+  // 保存したら境界を進める。進めないと自動抽出が同じ範囲をもう一度拾って重複する。
+  // 直前の失敗で待たせていた分もここで解除する
+  updateChat(chatId, { extracted_up_to: boundary.id, extracted_up_to_seq: boundary.seq });
+  retryAt.delete(chatId);
+
+  const parts = [added ? `メモリーを${added}件保存しました` : 'メモリーは保存しませんでした'];
+  if (rejected) parts.push(`${rejected}件は対象のキャラクターではないため除きました`);
+  parts.push(`ここまでを抽出済みにしました`);
+  return { added, message: parts.join('。') };
 }
 
 /**

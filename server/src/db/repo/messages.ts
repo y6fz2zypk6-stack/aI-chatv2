@@ -67,6 +67,14 @@ export function previousMessage(chatId: string, beforeSeq: number): Message | un
   return row ? toApi(row) : undefined;
 }
 
+/** seq でメッセージを引く（抽出済み境界の指定など、seq が外から来る経路で使う） */
+export function messageAtSeq(chatId: string, seq: number): Message | undefined {
+  const row = db
+    .prepare('SELECT * FROM messages WHERE chat_id = ? AND seq = ?')
+    .get(chatId, seq) as Row | undefined;
+  return row ? toApi(row) : undefined;
+}
+
 export function lastMessage(chatId: string): Message | undefined {
   const row = db
     .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY seq DESC LIMIT 1')

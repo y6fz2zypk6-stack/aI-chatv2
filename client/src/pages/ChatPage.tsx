@@ -122,6 +122,7 @@ export default function ChatPage() {
   const [showChatSettings, setShowChatSettings] = useState(false);
   const [memPreview, setMemPreview] = useState<MemoryPreview | null>(null);
   const [memLoading, setMemLoading] = useState(false);
+  const [memSaving, setMemSaving] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
   const [advanceOpen, setAdvanceOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -229,6 +230,31 @@ export default function ChatPage() {
         onNotice: (n) => toast(n.message, !n.ok),
       });
     });
+  };
+
+  /**
+   * プレビューで見た候補をそのまま保存する。
+   * 抽出をやり直さないので、コールを二重に払わず、見たものと保存されるものが一致する。
+   */
+  const saveCandidates = async () => {
+    if (!memPreview?.range) return;
+    setMemSaving(true);
+    try {
+      const r = await api.post<{ added: number; message: string }>(`/chats/${id}/extract/commit`, {
+        candidates: memPreview.candidates.map((c) => ({
+          character_id: c.character_id,
+          subject: c.subject,
+          content: c.content,
+        })),
+        toSeq: memPreview.range.toSeq,
+      });
+      toast(r.message);
+      setMemPreview(null);
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setMemSaving(false);
+    }
   };
 
   const send = () => {
@@ -579,13 +605,23 @@ export default function ChatPage() {
       )}
 
       {(memLoading || memPreview) && (
-        <Modal title="メモリー候補" onClose={() => { setMemPreview(null); setMemLoading(false); }}>
+        <Modal
+          title="メモリー候補"
+          onClose={() => { setMemPreview(null); setMemLoading(false); }}
+          actions={
+            memPreview?.range && memPreview.candidates.length > 0 ? (
+              <button className="pill sm primary" disabled={memSaving} onClick={() => void saveCandidates()}>
+                {memSaving ? '保存中…' : `${memPreview.candidates.length}件を保存`}
+              </button>
+            ) : undefined
+          }
+        >
           {memLoading && <div className="empty-note">抽出中…</div>}
           {memPreview && (
             <>
               <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
                 {memPreview.range
-                  ? `未抽出の ${memPreview.range.count} 件（seq ${memPreview.range.fromSeq}〜${memPreview.range.toSeq}）が対象です。ここでは保存しません。`
+                  ? `未抽出の ${memPreview.range.count} 件（seq ${memPreview.range.fromSeq}〜${memPreview.range.toSeq}）が対象です。保存すると、ここまでを抽出済みにします。`
                   : '対象がありません。'}
               </div>
               {memPreview.candidates.length === 0 && memPreview.range && (
