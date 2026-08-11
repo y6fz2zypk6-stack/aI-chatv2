@@ -169,7 +169,7 @@ export async function memorySuite(w) {
     p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
     check('途中で切れたら失敗として扱う', p.failed === true, String(p.failed));
     check('上限到達だと分かる説明を出す',
-      p.notes.some((n) => n.includes('長さの上限')), JSON.stringify(p.notes));
+      p.notes.some((n) => n.includes('要約・抽出の最大トークン')), JSON.stringify(p.notes));
 
     // 拒否
     setQueue([{ text: '', refusal: 'この内容には応じられません' }]);
@@ -870,6 +870,67 @@ export async function memoryToggleSuite(w) {
       copiedMems.find((x) => x.content === '書き出しでもOFFのまま')?.enabled === 0,
       JSON.stringify(copiedMems.map((x) => [x.content, x.enabled])));
     await api('DELETE', `/memories/${m.id}`);
+  }
+
+  await api('PUT', '/settings', base);
+}
+
+// ===========================================================================
+// 要約・抽出の出力上限（本文の max_tokens とは別枠）
+// ===========================================================================
+export async function utilityTokensSuite(w) {
+  suite('要約・抽出の最大トークン');
+
+  const base = (await api('GET', '/settings')).json;
+  const chat = await newChat(w);
+  await advance(chat.id, w, 5);
+
+  // 抽出に使われる値は utility_max_tokens。本文の max_tokens ではない
+  {
+    await api('PUT', '/settings', { max_tokens: 2048, utility_max_tokens: 8192 });
+    await clearMockRequests();
+    setQueue([{ text: memJson([]) }]);
+    await api('POST', `/chats/${chat.id}/extract-preview`);
+    const [call] = await mockRequests();
+    check('抽出は utility_max_tokens を使う', call?.maxTokens === 8192, String(call?.maxTokens));
+    check('本文の max_tokens は使わない', call?.maxTokens !== 2048, String(call?.maxTokens));
+  }
+
+  // 設定を変えると反映される
+  {
+    await api('PUT', '/settings', { utility_max_tokens: 16384 });
+    await clearMockRequests();
+    setQueue([{ text: memJson([]) }]);
+    await api('POST', `/chats/${chat.id}/extract-preview`);
+    const [call] = await mockRequests();
+    check('設定した値が使われる', call?.maxTokens === 16384, String(call?.maxTokens));
+  }
+
+  // 要約も同じ値を使う（あらすじの必要量が上回るときはそちら）
+  {
+    await api('PUT', '/settings', { utility_max_tokens: 4096, summary_max_chars: 700 });
+    await clearMockRequests();
+    setQueue([{ text: 'あらすじ' }]);
+    await api('POST', `/chats/${chat.id}/summarize`);
+    const [call] = await mockRequests();
+    check('要約も utility_max_tokens を使う', call?.maxTokens === 4096, String(call?.maxTokens));
+
+    await api('PUT', '/settings', { utility_max_tokens: 1024, summary_max_chars: 3000 });
+    await clearMockRequests();
+    setQueue([{ text: 'あらすじ2' }]);
+    await api('POST', `/chats/${chat.id}/summarize`);
+    const [c2] = await mockRequests();
+    check('あらすじの必要量が上回ればそちらを使う', c2?.maxTokens === 6000, String(c2?.maxTokens));
+  }
+
+  // 上限で切れたときの説明が、正しい設定項目を指す
+  {
+    await api('PUT', '/settings', { utility_max_tokens: 4096 });
+    setQueue([{ text: '{"memories": [{"content": "とちゅ', finish: 'length' }]);
+    const p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+    const note = p.notes.join(' / ');
+    check('要約・抽出側の上限だと分かる', note.includes('要約・抽出の最大トークン 4096'), note);
+    check('本文側の設定を案内しない', !note.includes('設定の「最大トークン」'), note);
   }
 
   await api('PUT', '/settings', base);

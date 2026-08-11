@@ -41,9 +41,11 @@ function extractJsonObject(raw: string): string {
 }
 
 /** 空応答・パース失敗の理由を利用者に見せられる形にする */
-function failureNote(name: string, finishReason: string, raw: string): string {
+function failureNote(name: string, finishReason: string, raw: string, cap: number): string {
   if (finishReason === 'length') {
-    return `${name}: 応答が長さの上限で切れました。設定の「最大トークン」か、要約・抽出のモデルを見直してください`;
+    // 本文生成の「最大トークン」ではなく、要約・抽出用の上限であることを明示する。
+    // 別物なので、本文側を上げても直らない
+    return `${name}: 応答が上限（要約・抽出の最大トークン ${cap}）で切れました。設定でこの値を上げるか、要約・抽出のモデルを変えてください`;
   }
   if (finishReason === 'content_filter') {
     return `${name}: モデルが内容を拒否しました（content_filter）`;
@@ -155,6 +157,8 @@ export async function extractCandidates(
 
   const convo = targets.map((m) => m.content).join('\n');
   const model = settings.utility_model || settings.default_model;
+  // 出力の上限。本文生成の max_tokens とは別枠（§14）
+  const maxTokens = Math.max(256, settings.utility_max_tokens);
   const candidates: MemoryCandidate[] = [];
   // 「いつの出来事か」は抽出範囲の末尾のゲーム内時刻とする。
   // 範囲内で日をまたぐこともあるが、記憶は範囲全体をまとめた1件なので末尾に寄せる
@@ -171,9 +175,9 @@ export async function extractCandidates(
     try {
       // JSONモードで空を返すモデルがあるので、空だったら素のプロンプトで1度だけ試し直す。
       // 明示的な拒否と、長さ超過は再試行しても同じなので、そのまま理由として扱う
-      let r = await complete({ model, messages, maxTokens: 2048, json: true });
+      let r = await complete({ model, messages, maxTokens, json: true });
       if (!r.refusal && !r.text.trim() && r.finishReason !== 'length') {
-        r = await complete({ model, messages, maxTokens: 2048 });
+        r = await complete({ model, messages, maxTokens });
       }
       if (r.refusal) {
         notes.push(`${c.name}: モデルが拒否しました（${r.refusal.slice(0, 80)}）`);
@@ -182,7 +186,7 @@ export async function extractCandidates(
       }
       const body = extractJsonObject(r.text);
       if (!body) {
-        notes.push(failureNote(c.name, r.finishReason, r.text));
+        notes.push(failureNote(c.name, r.finishReason, r.text, maxTokens));
         failed = true;
         continue;
       }
@@ -190,7 +194,7 @@ export async function extractCandidates(
       try {
         parsed = JSON.parse(body) as typeof parsed;
       } catch {
-        notes.push(failureNote(c.name, r.finishReason, r.text));
+        notes.push(failureNote(c.name, r.finishReason, r.text, maxTokens));
         failed = true;
         continue;
       }

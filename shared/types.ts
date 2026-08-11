@@ -453,6 +453,12 @@ export interface Settings {
   fallback_context_length: number;
   default_model: string;
   utility_model: string;
+  /**
+   * 要約・知識抽出の1回あたりの出力上限（トークン）。
+   * 本文生成の max_tokens とは別枠。推論（thinking）を行うモデルは
+   * 考えている分もここから引かれるため、切れるようなら増やす。
+   */
+  utility_max_tokens: number;
   auto_summarize: number;
   summary_interval: number;
   summary_max_chars: number;

@@ -51,6 +51,7 @@ const server = http.createServer(async (req, res) => {
     stream: !!reqJson.stream,
     at: Date.now(),
     prompt: (reqJson.messages ?? []).map((m) => m.content).join('\n---\n'),
+    maxTokens: reqJson.max_tokens ?? null,
   });
   const item = popQueue() ?? {
     text: 'ナレーター: （既定応答）\n\n@@@STATE\nelapsed_minutes: 10\n@@@END',

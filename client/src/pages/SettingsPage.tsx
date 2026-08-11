@@ -60,7 +60,7 @@ export default function SettingsPage() {
               </select>
             </div>
           </Field>
-          <SettingRow label="最大トークン" hint="1回の応答の長さの上限">
+          <SettingRow label="最大トークン" hint="1回の応答の長さの上限（本文の生成だけに効きます）">
             <Stepper
               value={settings.max_tokens}
               step={256}
@@ -162,6 +162,18 @@ export default function SettingsPage() {
               </select>
             </div>
           </Field>
+          <SettingRow
+            label="要約・抽出の最大トークン"
+            hint="上の「最大トークン」とは別枠です。「上限で切れました」と出るときはここを上げてください（考えてから答えるモデルは、考えている分もここから引かれます）"
+          >
+            <Stepper
+              value={settings.utility_max_tokens}
+              step={1024}
+              min={512}
+              max={65536}
+              onChange={(v) => void set({ utility_max_tokens: v })}
+            />
+          </SettingRow>
         </div>
 
         <div className="section">

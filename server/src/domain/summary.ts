@@ -117,10 +117,15 @@ ${prev?.content || '（なし）'}
 # 今回の会話（各行の [日付] はゲーム内日付）
 ${lines}`;
 
+  // 出力の上限。あらすじの文字数から要る分を見積もり、設定値を下回らないようにする
+  const maxTokens = Math.max(
+    settings.utility_max_tokens,
+    Math.ceil(settings.summary_max_chars * 2),
+  );
   const r = await complete({
     model,
     messages: [{ role: 'user', content: prompt }],
-    maxTokens: Math.max(1024, Math.ceil(settings.summary_max_chars * 2)),
+    maxTokens,
   });
   const content = r.text.trim();
   if (!content) {
@@ -129,7 +134,7 @@ ${lines}`;
     const why = r.refusal
       ? `モデルが拒否しました（${r.refusal.slice(0, 80)}）`
       : r.finishReason === 'length'
-        ? '応答が長さの上限で切れました'
+        ? `応答が上限（要約・抽出の最大トークン ${maxTokens}）で切れました`
         : `モデルが空の応答を返しました（finish_reason=${r.finishReason || '不明'}）`;
     return {
       ok: false,
