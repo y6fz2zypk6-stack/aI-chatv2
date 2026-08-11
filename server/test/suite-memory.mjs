@@ -935,3 +935,104 @@ export async function utilityTokensSuite(w) {
 
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+// 「現在の状況」の日付と日の出・日没
+// ===========================================================================
+export async function situationSuite(w) {
+  suite('現在の状況の日時');
+
+  const chat = await newChat(w); // 3年8月10日 18:00 開始
+  const pv = (await api('GET', `/chats/${chat.id}/prompt-preview`)).json;
+  const line1 = pv.situationBlock.split('\n')[1] ?? '';
+  const line2 = pv.situationBlock.split('\n')[2] ?? '';
+
+  check('1行目に年月日が入る', line1.startsWith('3年8月10日'), line1);
+  check('季節・週・曜日も残っている', line1.includes('（秋・第2週の火曜日）'), line1);
+  check('時刻も入る', line1.includes('18:00'), line1);
+  check('場所も並ぶ', line1.includes('場所:'), line1);
+  // この世界の「店」は屋内なので天候は省かれる（既存の規則）
+  check('屋内では天候を出さない', !line1.includes('天候:'), line1);
+
+  check('2行目に日照の状態が入る', /^(日の出前|日中|日没後)/.test(line2), line2);
+  check('日の出の時刻が入る', /日の出 \d{2}:\d{2}/.test(line2), line2);
+  check('日没の時刻が入る', /日没 \d{2}:\d{2}/.test(line2), line2);
+}
+
+// ===========================================================================
+// メモリーの予算削減（1件ずつ・古い順・ピン留めは残す）
+// ===========================================================================
+export async function memoryBudgetSuite(w) {
+  suite('メモリーの予算削減');
+
+  const base = (await api('GET', '/settings')).json;
+  await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0 });
+
+  // 既存のメモリーを片付けてから始める
+  for (const c of [w.ashley, w.toby]) {
+    for (const m of (await api('GET', `/characters/${c.id}/memories`)).json) {
+      await api('DELETE', `/memories/${m.id}`);
+    }
+  }
+
+  // 長めの記憶を古い順に作る。ピン留めは1件だけ
+  const pad = 'あ'.repeat(300);
+  const made = [];
+  for (const [i, name] of ['最古', '2番目', '3番目', '最新'].entries()) {
+    const m = (await api('POST', `/characters/${w.ashley.id}/memories`, {
+      content: `${name}の記憶${pad}`,
+    })).json;
+    made.push(m);
+    if (i === 0) await api('PUT', `/memories/${m.id}`, { ...m, pinned: 1 }); // 最古をピン留め
+    await new Promise((r) => setTimeout(r, 5)); // created_at をずらす
+  }
+  const other = (await api('POST', `/characters/${w.toby.id}/memories`, {
+    content: `トビーの記憶${pad}`,
+  })).json;
+
+  const chat = await newChat(w);
+  const preview = async () => (await api('GET', `/chats/${chat.id}/prompt-preview`)).json;
+
+  // 予算に余裕があるうちは全部載る
+  const full = await preview();
+  check('余裕があれば全部載る', full.trimmed.memories === 0, JSON.stringify(full.trimmed));
+
+  /**
+   * 入力予算は `context − (max_tokens + 200) − safety` なので、max_tokens を動かせば
+   * 予算だけを狙った値にできる。モデルのcontext長を直接書かずに済むよう、
+   * いまの予算から逆算する。
+   */
+  const squeezeTo = async (wantTokens) => {
+    await api('PUT', '/settings', {
+      max_tokens: full.inputBudget + base.max_tokens - Math.round(wantTokens),
+    });
+    return preview();
+  };
+  const perMemory = Math.ceil((pad.length + 8) * 1.1); // 1件あたりの概算トークン
+
+  // 軽く絞る → 古いものだけが落ちる
+  {
+    const pv = await squeezeTo(full.estimatedTokens - perMemory * 1.5);
+    check('予算が足りないと削られる', pv.trimmed.memories > 0, JSON.stringify(pv.trimmed));
+    check('全部は落ちない', pv.trimmed.memories < 3, `${pv.trimmed.memories}件`);
+    check('ピン留めは残る', pv.system.includes('最古の記憶'), 'ピン留めが落ちている');
+    check('古いものから落ちる（2番目が先に消える）',
+      !pv.system.includes('2番目の記憶'), '2番目が残っている');
+    check('新しいものは残る', pv.system.includes('最新の記憶'), `削減 ${pv.trimmed.memories}件`);
+    // ブロックまるごとではなく1件単位であること
+    check('同じキャラの他の記憶まで巻き添えにしない',
+      pv.system.includes('が記憶している事実'), '見出しごと消えている');
+  }
+
+  // 限界まで絞ってもピン留めは残る
+  {
+    const pv = await squeezeTo(full.estimatedTokens - perMemory * 4);
+    check('限界まで削ってもピン留めは残る', pv.system.includes('最古の記憶'),
+      `削減 ${pv.trimmed.memories}件`);
+    check('ピン留め以外は落ちる', !pv.system.includes('最新の記憶'),
+      `削減 ${pv.trimmed.memories}件`);
+  }
+
+  for (const m of [...made, other]) await api('DELETE', `/memories/${m.id}`);
+  await api('PUT', '/settings', base);
+}

@@ -241,3 +241,30 @@ export function formatGameTime(gt: GameTime): string {
   return `${gt.season}・第${gt.week}週の${gt.weekday}曜日 ${String(gt.hh).padStart(2, '0')}:${String(gt.mm).padStart(2, '0')}`;
 }
 
+/**
+ * 「現在の状況」1行目の日時（§6.4）。
+ * 「3年8月10日（秋・第2週の火曜日） 18:40」
+ *
+ * **日付を渡す。** あらすじは `[3年8月10日(秋)]`、メモリーは `(3日前)` の形で
+ * 日付入りの情報をモデルへ渡しているのに、現在日付が無いと突き合わせられない。
+ * モデルに時刻を「書かせない」規則（§5.1）は別途プロンプトで課しているので、
+ * 参照点として渡すぶんには衝突しない。
+ */
+export function formatSituationTime(cfg: CalendarConfig, time: number): string {
+  const gt = toGameTime(cfg, time);
+  const hhmm = `${String(gt.hh).padStart(2, '0')}:${String(gt.mm).padStart(2, '0')}`;
+  return `${gt.year}年${gt.month}月${gt.day}日（${gt.season}・第${gt.week}週の${gt.weekday}曜日） ${hhmm}`;
+}
+
+/**
+ * 「現在の状況」2行目の日照（§6.4）。
+ * 「日没後（日の出 08:10 ／ 日没 16:20）。」
+ *
+ * 状態だけだと「あと何時間明るいか」が書けないので、時刻も添える。
+ */
+export function daylightLine(cfg: CalendarConfig, time: number): string {
+  const gt = toGameTime(cfg, time);
+  const { riseMin, setMin } = sunTimes(cfg, gt.month);
+  return `${daylightOf(cfg, time)}（日の出 ${minToHhmm(riseMin)} ／ 日没 ${minToHhmm(setMin)}）。`;
+}
+

@@ -14,8 +14,8 @@ import type {
   World,
 } from '../../../shared/types.js';
 import {
-  daylightOf,
-  formatGameTime,
+  daylightLine,
+  formatSituationTime,
   lastTrainLine,
   memoryDateLabel,
   openStatusOf,
@@ -79,19 +79,18 @@ export interface SituationInput {
 
 export function buildSituationBlock(input: SituationInput): string {
   const { calendar, state, locations } = input;
-  const gt = toGameTime(calendar, state.time);
   const loc = locations.find((l) => l.id === state.location);
   const locName = state.location_note || loc?.name || state.location || '不明';
   const lines: string[] = ['# 現在の状況'];
 
-  // 行1: 季節・週・曜日・時刻 ／ 場所 ／ 天候（屋内なら天候省略）
-  let line1 = `${formatGameTime(gt)} ／ 場所:${locName}`;
+  // 行1: 日付・季節・週・曜日・時刻 ／ 場所 ／ 天候（屋内なら天候省略）
+  let line1 = `${formatSituationTime(calendar, state.time)} ／ 場所:${locName}`;
   const indoor = !state.location_note && loc?.indoor === 1;
   if (!indoor && state.weather) line1 += ` ／ 天候:${state.weather}`;
   lines.push(line1);
 
-  // 行2: 日照状態
-  lines.push(`${daylightOf(calendar, state.time)}。`);
+  // 行2: 日照状態と日の出・日没の時刻（「あと何時間明るいか」を書けるようにする）
+  lines.push(daylightLine(calendar, state.time));
 
   // 行3: 現在地と同じ area の店の営業状況（location_note 使用中・該当なしは省略）
   if (!state.location_note && loc?.area) {
@@ -264,9 +263,23 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     const label = memoryDateLabel(input.calendar, m.game_time, input.baseState.time);
     return label ? `- (${label}) ${m.content}` : `- ${m.content}`;
   };
-  let memories = memoryBlocks.map(
-    (b) => `# ${b.charName}が記憶している事実\n${b.items.map(memoryLine).join('\n')}`,
-  );
+  /**
+   * 予算削減は **1件ずつ・古い順** に落とす（§6.5）。
+   * キャラ単位のブロックごと落とすと、1件超えただけでその人の記憶が全部消える。
+   * ピン留めは対象外なので、ここには入れない。
+   */
+  const droppable: Memory[] = [];
+  for (const b of memoryBlocks) for (const m of b.items) if (m.pinned !== 1) droppable.push(m);
+  droppable.sort((a, b) => a.created_at - b.created_at);
+  const dropped = new Set<string>();
+
+  const renderMemories = (): string[] =>
+    memoryBlocks
+      .map((b) => ({ ...b, items: b.items.filter((m) => !dropped.has(m.id)) }))
+      .filter((b) => b.items.length > 0)
+      .map((b) => `# ${b.charName}が記憶している事実\n${b.items.map(memoryLine).join('\n')}`);
+
+  let memories = renderMemories();
   const summaryBlock = input.summary?.content
     ? `# これまでのあらすじ\n${input.summary.content}`
     : '';
@@ -347,8 +360,11 @@ export function assembleContext(input: AssembleInput): AssembleResult {
       trimmed.lore++;
     }
   }
-  while (overBudgetNow() && memories.length) {
-    memories = memories.slice(0, -1);
+  // 古いものから1件ずつ。ピン留めは droppable に入っていないので必ず残る
+  for (const m of droppable) {
+    if (!overBudgetNow()) break;
+    dropped.add(m.id);
+    memories = renderMemories();
     trimmed.memories++;
   }
 
