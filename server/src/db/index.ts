@@ -2,12 +2,15 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fromRoot } from '../env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const DB_PATH = process.env.DB_PATH || './data/app.sqlite';
+// env.ts を先に評価させることで、DBを開く前に .env が読まれることを保証する。
+// 相対パスは cwd ではなくリポジトリルート基準（cwd は -w server で server/ になる）
+const DB_PATH = fromRoot(process.env.DB_PATH || './data/app.sqlite');
 
-fs.mkdirSync(path.dirname(path.resolve(DB_PATH)), { recursive: true });
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 export const db = new Database(DB_PATH);
 

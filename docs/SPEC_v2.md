@@ -92,8 +92,15 @@ npm install
 cp .env.example .env
 npm run dev     # server:3000（API） / client:5173（Vite、/api をプロキシ）
 npm run build && npm start   # 本番。Expressが client/dist を配信する
-npm test        # マイグレーション検証 → BIND検証 → 機能テスト
+npm test        # .env基準の検証 → マイグレーション検証 → BIND検証 → 機能テスト
 ```
+
+**`.env` と相対 `DB_PATH` はリポジトリルート基準**（`server/src/env.ts`）。
+cwd は使わない。ルートの npm script は `-w server` 付きで走るため cwd が `server/` になり、
+`dotenv/config` のままだと `server/.env` が読まれてルートの `.env` が無視される。
+`server/.env` を置いても読まれず、起動時に注意が出る。
+`server/data/` に旧いDBが残っている状態では**起動を中止する**（空DBに初期データを入れて
+既存の会話が消えたように見えるのを防ぐ）。
 
 ### 2.3 環境変数
 
@@ -115,7 +122,7 @@ npm test        # マイグレーション検証 → BIND検証 → 機能テス
 
 **DBは1ファイル（SQLite）で完結させる。** アバター画像も外部ファイルにせず、
 320px WebP の data URL として `characters.avatar` / `personas.avatar` に埋める（1枚 2〜3KB）。
-`DB_PATH` のファイルをコピーすれば全データが揃うことを保つ。
+`DB_PATH` のファイル（既定 `<リポジトリルート>/data/app.sqlite`）をコピーすれば全データが揃うことを保つ。
 
 ---
 
@@ -1372,6 +1379,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | 20 | APIキーをブラウザへ渡さない | 鍵が漏れる |
 | 21 | 移行でユーザーのデータを消さない | 候補が失われる |
 | 22 | DBは1ファイルで完結する | バックアップが不完全になる |
+| 22b | `.env` と相対 `DB_PATH` はリポジトリルート基準。cwd に依存しない | 設定が黙って無視され、別のDBを開く |
 | 26 | 生成ロックは受付直後に取り、ステート確定まで保持する | userが二重に保存され、並びが崩れる |
 | 27 | SSEは終端イベントが無くても必ず呼び出し側へ返す | 生成中のまま画面が固まる |
 | 28 | 世界の取り込みは1トランザクション | 半端な世界が残る |

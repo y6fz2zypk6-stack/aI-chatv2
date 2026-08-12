@@ -1,4 +1,7 @@
-import 'dotenv/config';
+// .env の読み込み。**最上段の副作用importであることに意味がある**（env.ts の説明を参照）。
+// ESMは本体より先に全importを評価するので、ここを本体側の呼び出しに変えると
+// 下の './db/index.js' が DB_PATH 未設定のままDBを開いてしまう
+import './env.js';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import express from 'express';

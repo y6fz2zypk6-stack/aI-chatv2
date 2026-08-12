@@ -37,6 +37,9 @@ npm install
 cp .env.example .env   # OPENROUTER_API_KEY 等を設定
 ```
 
+`.env` は**リポジトリルート**に置きます（`server/.env` は読まれません）。
+`DB_PATH` の相対パスもルート基準で解決されます。
+
 ### 開発
 
 ```bash
@@ -78,7 +81,7 @@ HTTPSで公開する場合は `COOKIE_SECURE=1`、リバースプロキシ配下
 設定してください（未設定だと起動時に警告が出ます）。ログインは同一IPから5回失敗すると
 15分ロックされます。
 
-DBは `DB_PATH`（既定 `./data/app.sqlite`）の1ファイルです。バックアップはこのファイルの
+DBは `DB_PATH`（既定 `./data/app.sqlite` = リポジトリルート基準）の1ファイルです。バックアップはこのファイルの
 コピーで完了します。スキーマは起動時に自動マイグレーションされます。
 
 ### Tailscale（tailnet内だけに公開する）

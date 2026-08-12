@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json && mkdir -p dist/server/src/db && cp src/db/schema.sql dist/server/src/db/schema.sql",
     "start": "node dist/server/src/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node test/migrate.mjs && node test/bind.mjs && node test/run.mjs"
+    "test": "npm run build && node test/env.mjs && node test/migrate.mjs && node test/bind.mjs && node test/run.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
