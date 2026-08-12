@@ -126,6 +126,25 @@ export default function CharacterPage() {
           />
         </Field>
 
+        {/* イベント条件（present_has など）やメモリーの対象指定はIDで書くので、
+            チャットのプロンプト確認まで行かなくても拾えるようにする */}
+        <Field label="キャラクターID（イベント条件などで使います。タップでコピー）">
+          <button
+            className="id-copy"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(c.id);
+                toast('IDをコピーしました');
+              } catch {
+                toast('コピーできませんでした。長押しで選択してください', true);
+              }
+            }}
+          >
+            <span className="mono">{c.id}</span>
+            <Icon.copy size={15} />
+          </button>
+        </Field>
+
         <div className="setting">
           <div className="txt">
             <label>準レギュラー</label>

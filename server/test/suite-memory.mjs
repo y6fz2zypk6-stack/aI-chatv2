@@ -1036,3 +1036,83 @@ export async function memoryBudgetSuite(w) {
   for (const m of [...made, other]) await api('DELETE', `/memories/${m.id}`);
   await api('PUT', '/settings', base);
 }
+
+// ===========================================================================
+// 参加キャラの後編集と、初期投入データ
+// ===========================================================================
+export async function participantsSuite(w) {
+  suite('参加キャラの編集');
+
+  const npc = (await api('POST', `/worlds/${w.world.id}/characters`, {
+    name: 'サーニャ', persona: 'サーニャの人物像です', is_npc_pool: 1,
+  })).json;
+  // 名前がキーワード・対象キャラは未指定（＝共通）
+  await api('POST', `/worlds/${w.world.id}/lorebook`, {
+    title: 'サーニャの噂', keys: ['サーニャ'], content: '# サーニャ\n濃紺の髪の女性。', character_id: null,
+  });
+
+  const chat = await newChat(w);
+  const sheetIn = async () => {
+    const pv = (await api('GET', `/chats/${chat.id}/prompt-preview`)).json;
+    return pv.system.includes('サーニャの人物像です');
+  };
+
+  // 準レギュラーのまま・対象キャラ未指定では注入されない（今回の調査結果の固定）
+  setQueue([{ text: reply({ char: '「サーニャの話をしましょう」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'サーニャさんの話' });
+  check('準レギュラー＋対象キャラ未指定では定義が載らない', (await sheetIn()) === false, '載っている');
+
+  // 参加キャラに加えると必ず載る
+  let r = await api('PUT', `/chats/${chat.id}`, {
+    participant_ids: [...chat.participant_ids, npc.id],
+  });
+  check('参加キャラを後から足せる', r.json.participant_ids.includes(npc.id),
+    JSON.stringify(r.json.participant_ids));
+  check('加えると定義が載る', (await sheetIn()) === true, '載らない');
+
+  // 外すと戻る
+  r = await api('PUT', `/chats/${chat.id}`, { participant_ids: chat.participant_ids });
+  check('参加キャラから外せる', !r.json.participant_ids.includes(npc.id),
+    JSON.stringify(r.json.participant_ids));
+  check('外すと定義も載らなくなる', (await sheetIn()) === false, 'まだ載っている');
+
+  // 対象キャラを指定すれば、準レギュラーのままでも載る
+  const entry = (await api('GET', `/worlds/${w.world.id}/lorebook`)).json
+    .find((e) => e.title === 'サーニャの噂');
+  await api('PUT', `/lorebook/${entry.id}`, { ...entry, character_id: npc.id });
+  check('対象キャラを指定すれば準レギュラーでも載る', (await sheetIn()) === true, '載らない');
+
+  await api('DELETE', `/lorebook/${entry.id}`);
+  await api('DELETE', `/characters/${npc.id}`);
+}
+
+export async function seedSuite() {
+  suite('初期投入データ');
+
+  const worlds = (await api('GET', '/worlds')).json;
+  const seeded = worlds.find((x) => x.name === '桜坂学園の世界');
+  check('初期世界が入っている', !!seeded, worlds.map((x) => x.name).join(', '));
+  if (!seeded) return;
+
+  const locs = (await api('GET', `/worlds/${seeded.id}/locations`)).json;
+  check('場所が入っている', locs.length >= 15, `${locs.length}件`);
+  check('屋内・屋外が混ざっている',
+    locs.some((l) => l.indoor === 1) && locs.some((l) => l.indoor === 0));
+  check('営業時間のある場所がある', locs.some((l) => l.open_min !== null && l.close_min !== null));
+
+  const areas = seeded.areas.map((a) => a.id);
+  check('エリアが世界に登録されている', areas.length >= 4, areas.join(','));
+  check('場所のエリアはすべて登録済み',
+    locs.every((l) => !l.area || areas.includes(l.area)),
+    locs.filter((l) => l.area && !areas.includes(l.area)).map((l) => l.id).join(','));
+
+  const cal = (await api('GET', `/worlds/${seeded.id}/calendar`)).json;
+  check('現代の暦になっている', cal.days_per_month === 30 && cal.months_per_year === 12,
+    `${cal.months_per_year}ヶ月 / ${cal.days_per_month}日`);
+  check('四季が12ヶ月ぶん割り当てられている',
+    Object.values(cal.seasons).flat().sort((a, b) => a - b).join(',') === '1,2,3,4,5,6,7,8,9,10,11,12',
+    JSON.stringify(cal.seasons));
+  check('天候表が全季節ぶんある',
+    Object.keys(cal.seasons).every((s) => cal.weather_table[s]),
+    Object.keys(cal.weather_table).join(','));
+}

@@ -953,6 +953,27 @@ textarea.tall {
   color: var(--muted);
 }
 
+/* IDのコピー行。入力欄と同じ面に揃えて、値であることを見せる */
+.id-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  color: var(--field-ink);
+  text-align: left;
+}
+
+.id-copy .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-note.err {
   color: var(--danger);
   text-align: left;

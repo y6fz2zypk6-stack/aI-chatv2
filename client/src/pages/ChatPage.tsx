@@ -257,6 +257,23 @@ export default function ChatPage() {
     }
   };
 
+  /** 参加キャラの加除。0人にすると誰の定義も渡らなくなるので、最後の1人は外させない */
+  const toggleParticipant = async (cid: string) => {
+    const cur = chat.participant_ids;
+    const next = cur.includes(cid) ? cur.filter((x) => x !== cid) : [...cur, cid];
+    if (next.length === 0) {
+      toast('参加キャラを0人にはできません', true);
+      return;
+    }
+    try {
+      await api.put(`/chats/${id}`, { participant_ids: next });
+      toast(cur.includes(cid) ? '参加キャラから外しました' : '参加キャラに加えました');
+      await load();
+    } catch (err) {
+      toast((err as Error).message, true);
+    }
+  };
+
   const send = () => {
     const content = draft.trim();
     if (!content || busy) return;
@@ -650,6 +667,32 @@ export default function ChatPage() {
 
       {showChatSettings && (
         <Modal title="この会話の設定" onClose={() => setShowChatSettings(false)}>
+          {/* シナリオの参加キャラは会話を作った時点でコピーされるので、
+              あとから足したい／外したいときはここで直す（§4.6・§15.2） */}
+          <Field label="参加キャラ（タップで加除）">
+            <div className="row wrap">
+              {characters.map((c) => {
+                const on = chat.participant_ids.includes(c.id);
+                return (
+                  <span
+                    key={c.id}
+                    className={`chip${on ? ' on' : ''}`}
+                    onClick={() => void toggleParticipant(c.id)}
+                  >
+                    {c.name}
+                    {c.is_npc_pool === 1 && !on && '（準レギュラー）'}
+                  </span>
+                );
+              })}
+              {characters.length === 0 && <span className="empty-note">キャラクターがいません</span>}
+            </div>
+          </Field>
+          <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
+            参加キャラの定義は毎ターン必ず渡します。準レギュラーは、
+            <b>対象キャラを指定したロアが発火したターンだけ</b>渡します。
+            出ずっぱりになった相手はここで参加キャラに加えてください。
+          </div>
+
           <Field label="条件付きイベント">
             <TriToggle
               value={chat.events_enabled}

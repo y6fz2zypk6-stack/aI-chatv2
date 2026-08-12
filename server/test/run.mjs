@@ -136,6 +136,8 @@ try {
   await s3.utilityTokensSuite(mw);
   await s3.situationSuite(mw);
   await s3.memoryBudgetSuite(mw);
+  await s3.participantsSuite(mw);
+  await s3.seedSuite();
 
   // 再起動して同じ状態が復元されるかを見る
   server.kill('SIGKILL');
