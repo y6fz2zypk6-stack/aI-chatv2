@@ -330,6 +330,61 @@ export async function abnormal(w) {
       `${again.httpStatus ?? 200} / ${again.done?.generationStatus ?? again.error}`);
   }
 
+  // 上流が黙り込んだとき（タイムアウト）。
+  // ロックは finally で外す作りなので、そこへ到達できないと以後ずっと409になる。
+  // タイムアウト値はテスト用に 1200ms へ落としてある（run.mjs）
+  {
+    const cases = [
+      {
+        label: '接続確立前',
+        queue: { text: reply({ char: '「来ない」' }), headDelayMs: 5000 },
+        expect: '応答が始まりません',
+      },
+      {
+        label: 'ヘッダだけ来て本文が来ない',
+        queue: { text: reply({ char: '「来ない」' }), stallMs: 5000, stallAfter: 0 },
+        expect: '応答が途切れました',
+      },
+      {
+        label: '途中まで来て止まる',
+        queue: { text: reply({ char: '「途中まで」' }), stallMs: 5000, stallAfter: 6 },
+        expect: '応答が途切れました',
+      },
+    ];
+
+    for (const c of cases) {
+      const { chat } = await newChat(w);
+      setQueue([c.queue]);
+      const started = Date.now();
+      const g = await generate(chat.id, { content: c.label });
+      const took = Date.now() - started;
+
+      check(`${c.label}: 待ち続けずに打ち切る`, took < 4000, `${took}ms`);
+      check(`${c.label}: 上流の無応答だと分かる説明を返す`,
+        (g.error ?? '').includes(c.expect), g.error ?? '（エラーなし）');
+      check(`${c.label}: 「停止しました」にはしない`, !(g.error ?? '').includes('停止'), g.error);
+      check(`${c.label}: assistant は保存しない`,
+        (await getChat(chat.id)).messages.slice(-1)[0].role === 'user',
+        (await getChat(chat.id)).messages.slice(-2).map((m) => m.role).join(','));
+
+      // ロックが解放されていること
+      setQueue([{ text: reply({ char: '「復帰」', elapsed: 10, location: w.shop }) }]);
+      const again = await generate(chat.id, { content: 'やり直し' });
+      check(`${c.label}: そのあと生成できる（409にならない）`,
+        again.done?.generationStatus === 'complete',
+        `${again.httpStatus ?? 200} / ${again.done?.generationStatus ?? again.error}`);
+    }
+
+    // 受信済みの本文を捨てたことは伝える（黙って消さない）
+    {
+      const { chat } = await newChat(w);
+      setQueue([{ text: reply({ char: '「途中まで」' }), stallMs: 5000, stallAfter: 6 }]);
+      const g = await generate(chat.id, { content: '捨てたことを伝える' });
+      check('途中まで受信していたら、その文字数を伝える',
+        /受信していた\d+文字は保存していません/.test(g.error ?? ''), g.error);
+    }
+  }
+
   // STATEフェンスが欠落
   {
     const { chat } = await newChat(w);

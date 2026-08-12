@@ -57,7 +57,7 @@ import { maybeExtract } from '../domain/memory.js';
 import { applyDelta } from '../domain/state.js';
 import { maybeSummarize } from '../domain/summary.js';
 import { extractStateSeparate } from '../llm/extract.js';
-import { completeText, contextLengthOf, streamChat } from '../llm/openrouter.js';
+import { completeText, contextLengthOf, streamChat, streamTimeoutSeconds } from '../llm/openrouter.js';
 import {
   FENCE_OPEN,
   fallbackDelta,
@@ -423,6 +423,15 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
       });
       full = result.text;
       aborted = result.outcome === 'user_abort';
+      // 上流の無応答は「停止」ではない。stopped として握り潰すと、
+      // 中途半端な本文が保存されたうえに原因が利用者に伝わらない（§5.7）
+      if (result.outcome === 'connect_timeout' || result.outcome === 'idle_timeout') {
+        const reason = result.outcome === 'connect_timeout'
+          ? `モデルからの応答が始まりませんでした（${streamTimeoutSeconds.connect}秒待ちました）`
+          : `モデルからの応答が途切れました（${streamTimeoutSeconds.idle}秒待ちました）`;
+        const got = result.text.length > 0 ? `（受信していた${result.text.length}文字は保存していません）` : '';
+        failed = `${reason}。生成を中断しました${got}。もう一度試してください`;
+      }
       emitVisible(true);
     } catch (err) {
       // streamChat が停止を拾いきれなかった場合の受け皿。

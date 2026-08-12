@@ -73,6 +73,9 @@ function startServer() {
       DEFAULT_MODEL: 'anthropic/claude-opus-5',
       UTILITY_MODEL: 'anthropic/claude-sonnet-5',
       APP_PASSWORD: '',
+      // 上流無応答の検証を現実的な時間で回すため短くする（既定は60秒）
+      STREAM_CONNECT_TIMEOUT_MS: '1200',
+      STREAM_IDLE_TIMEOUT_MS: '1200',
       // BINDを絞らず無認証で起動するので、明示しないと安全側で止まる（§16）
       ALLOW_UNAUTHENTICATED: '1',
     },

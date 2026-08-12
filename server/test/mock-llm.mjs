@@ -94,29 +94,47 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // headDelayMs: レスポンスヘッダを返すまで待つ。
-  // 「接続は受けたがヘッダがまだ」の窓で停止された場合の挙動を見るために使う
-  if (item.headDelayMs) {
-    let aborted = false;
-    req.on('close', () => (aborted = true));
-    await new Promise((r) => setTimeout(r, item.headDelayMs));
-    if (aborted) return;
-  }
+  /** 指定時間だけ黙る。切断されたら true（呼び出し側は打ち切る） */
+  const stall = (ms) =>
+    new Promise((resolve) => {
+      const t = setTimeout(() => resolve(false), ms);
+      req.on('close', () => {
+        clearTimeout(t);
+        resolve(true);
+      });
+    });
+
+  // headDelayMs: レスポンスヘッダを返すまで黙る。
+  // 「接続は受けたがヘッダがまだ」の窓（停止・接続確立タイムアウト）を作るために使う
+  if (item.headDelayMs && (await stall(item.headDelayMs))) return;
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
   });
+  // 実際のSSEサーバと同じく、本文を待たせるときもヘッダは先に送り出す。
+  // これをしないと「ヘッダは来たが本文が来ない」状態が作れず、
+  // 接続確立タイムアウトと idle タイムアウトの区別を検証できない
+  res.flushHeaders?.();
 
   // 1文字ずつ流す。gapMs を指定すると遅くなるので停止テストに使える
   let closed = false;
   req.on('close', () => {
     closed = true;
   });
+  // stallMs: stallAfter 文字まで流したところで黙り込む（idleタイムアウトの検証用）。
+  // stallAfter を省くと1文字も流さないまま黙る（ヘッダだけ返して本文が来ないケース）
+  let sent = 0;
   for (const ch of [...item.text]) {
     if (closed) break;
+    if (item.stallMs && sent === (item.stallAfter ?? 0)) {
+      if (await stall(item.stallMs)) return;
+      closed = true;
+      break;
+    }
     res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: ch } }] })}\n\n`);
+    sent++;
     if (item.gapMs) await new Promise((r) => setTimeout(r, item.gapMs));
   }
   if (!closed) {

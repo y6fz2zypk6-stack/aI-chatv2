@@ -61,15 +61,35 @@ export interface StreamOptions {
 
 /**
  * ストリームがどう終わったか。
- * **停止操作と通信の失敗を混ぜないための区別。** 混ざると、利用者が自分で押した停止が
- * 「通信・API失敗」として表示される（§5.7）。
+ * **停止操作・上流の無応答・通信の失敗を混ぜないための区別。** 混ざると、利用者が自分で
+ * 押した停止が「通信・API失敗」として表示されたり、上流が黙っただけなのに
+ * 「停止しました」と表示されたりする（§5.7）。
  */
-export type StreamOutcome = 'complete' | 'user_abort';
+export type StreamOutcome = 'complete' | 'user_abort' | 'connect_timeout' | 'idle_timeout';
 
 export interface StreamResult {
   text: string;
   outcome: StreamOutcome;
 }
+
+/**
+ * ストリームの待ち時間の上限（§5.7）。
+ *
+ * **上限が無いと、上流が接続を保ったまま黙った場合に `reader.read()` で永久に止まる。**
+ * 生成ロックは `finally` で外す作りなので、そこへ到達できないとそのチャットは
+ * 以後ずっと409になり、プロセスを再起動するしか戻せない。
+ *
+ * 2つに分ける理由: 接続確立はモデルのキュー待ちで長くなることがあり、
+ * ストリーム開始後の沈黙とは意味が違う。環境変数で調整できるようにしてある。
+ */
+const CONNECT_TIMEOUT_MS = Number(process.env.STREAM_CONNECT_TIMEOUT_MS) || 60_000;
+const IDLE_TIMEOUT_MS = Number(process.env.STREAM_IDLE_TIMEOUT_MS) || 60_000;
+
+/** 画面に出す説明で使う（秒） */
+export const streamTimeoutSeconds = {
+  connect: Math.round(CONNECT_TIMEOUT_MS / 1000),
+  idle: Math.round(IDLE_TIMEOUT_MS / 1000),
+};
 
 /**
  * 利用者の停止操作によるものか。
@@ -83,71 +103,109 @@ function isUserAbort(err: unknown, signal?: AbortSignal): boolean {
   return signal?.aborted === true;
 }
 
-/** SSEストリーミングで生成し、全文を返す。停止時はそれまでの分を返す */
+/** SSEストリーミングで生成し、全文を返す。停止・タイムアウト時はそれまでの分を返す */
 export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/chat/completions`, {
-      method: 'POST',
-      headers: headers(),
-      signal: opts.signal,
-      body: JSON.stringify({
-        model: opts.model,
-        messages: opts.messages,
-        max_tokens: opts.maxTokens,
-        stop: opts.stop,
-        stream: true,
-      }),
-    });
-  } catch (err) {
-    // **レスポンスヘッダが返る前に停止されると fetch 自体が投げる。**
-    // 読み取りループだけを try で囲んでいると、この窓の停止が通常のエラー経路に落ち、
-    // 「This operation was aborted」がそのまま画面に出る
-    if (isUserAbort(err, opts.signal)) return { text: '', outcome: 'user_abort' };
-    throw err;
-  }
+  // 停止（外側のsignal）とタイムアウト（内側のタイマー）の両方でabortできるようにする。
+  // 内側で abort したときは timedOut に理由が入るので、停止と区別できる
+  const ctl = new AbortController();
+  let timedOut: 'connect_timeout' | 'idle_timeout' | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const clearTimer = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = (ms: number, why: 'connect_timeout' | 'idle_timeout'): void => {
+    clearTimer();
+    if (ms <= 0) return;
+    timer = setTimeout(() => {
+      timedOut = why;
+      ctl.abort();
+    }, ms);
+  };
+  const relay = (): void => ctl.abort();
+  opts.signal?.addEventListener('abort', relay, { once: true });
+  if (opts.signal?.aborted) ctl.abort();
 
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`OpenRouter error ${res.status}: ${text.slice(0, 300)}`);
-  }
+  /** 例外の原因を判定する。**timedOut を先に見ること**（内側のabortもAbortErrorになる） */
+  const outcomeOf = (err: unknown): StreamOutcome | null => {
+    if (timedOut) return timedOut;
+    if (isUserAbort(err, opts.signal)) return 'user_abort';
+    return null;
+  };
 
   let full = '';
-  let aborted = false;
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf('\n')) !== -1) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const json = JSON.parse(data) as {
-            choices?: { delta?: { content?: string } }[];
-          };
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) {
-            full += delta;
-            opts.onDelta(delta);
+    let res: Response;
+    arm(CONNECT_TIMEOUT_MS, 'connect_timeout');
+    try {
+      res = await fetch(`${BASE}/chat/completions`, {
+        method: 'POST',
+        headers: headers(),
+        signal: ctl.signal,
+        body: JSON.stringify({
+          model: opts.model,
+          messages: opts.messages,
+          max_tokens: opts.maxTokens,
+          stop: opts.stop,
+          stream: true,
+        }),
+      });
+    } catch (err) {
+      // **レスポンスヘッダが返る前に止まると fetch 自体が投げる。**
+      // 読み取りループだけを try で囲んでいると、この窓の停止が通常のエラー経路に落ち、
+      // 「This operation was aborted」がそのまま画面に出る
+      const outcome = outcomeOf(err);
+      if (outcome) return { text: '', outcome };
+      throw err;
+    }
+
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`OpenRouter error ${res.status}: ${text.slice(0, 300)}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    // ここから先は「最後にデータが届いてからの沈黙」を計る
+    arm(IDLE_TIMEOUT_MS, 'idle_timeout');
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        arm(IDLE_TIMEOUT_MS, 'idle_timeout'); // 届いたので待ち直す
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const json = JSON.parse(data) as {
+              choices?: { delta?: { content?: string } }[];
+            };
+            const delta = json.choices?.[0]?.delta?.content;
+            if (delta) {
+              full += delta;
+              opts.onDelta(delta);
+            }
+          } catch {
+            // 不完全なJSON断片は無視
           }
-        } catch {
-          // 不完全なJSON断片は無視
         }
       }
+    } catch (err) {
+      const outcome = outcomeOf(err);
+      if (outcome) return { text: full, outcome };
+      throw err;
     }
-  } catch (err) {
-    if (isUserAbort(err, opts.signal)) aborted = true;
-    else throw err;
+    return { text: full, outcome: 'complete' };
+  } finally {
+    clearTimer();
+    opts.signal?.removeEventListener('abort', relay);
   }
-  return { text: full, outcome: aborted ? 'user_abort' : 'complete' };
 }
 
 /** 要約・抽出など、非ストリーミングの1回コール */
