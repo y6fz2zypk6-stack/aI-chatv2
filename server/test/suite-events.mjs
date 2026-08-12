@@ -583,7 +583,9 @@ export async function eventsSuite(w) {
     await mk('半角', { time_after: '19:00' });
     await mk('全角コロン', { time_after: '19：00' });
     await mk('区切り無し', { time_after: '1900' });
-    await mk('読めない', { time_after: 'よる' });
+    // 読めない時刻はいま保存で弾かれる。評価側の挙動は下の「未知キー」ブロックで見る
+    const unreadable = await mk('読めない', { time_after: 'よる' });
+    check('読めない時刻は保存させない', unreadable.status === 400, String(unreadable.status));
 
     const { chat } = await newChat(w, { time: 877 * 1440 + 20 * 60 }); // 20:00
     const rows = (await api('POST', `/worlds/${w.world.id}/events/evaluate`, { chat_id: chat.id }))
@@ -594,8 +596,101 @@ export async function eventsSuite(w) {
     check('半角の time_after が効く', passed('半角'), by['半角']);
     check('全角コロンでも同じに扱う', passed('全角コロン'), by['全角コロン']);
     check('区切り無しでも同じに扱う', passed('区切り無し'), by['区切り無し']);
-    check('読めない時刻は「満たさない」にする（常時真にしない）',
-      by['読めない'] === 'condition', by['読めない']);
+  }
+
+  // 条件式のキーの誤字。保存で弾き、既に入っているものは評価で真にしない
+  {
+    await resetEvents(w);
+    const base = { kind: 'ambient', trigger: 'repeat', chance: 1, check: 'every_turn' };
+
+    // 1. 保存できない
+    const bad = await mkEvent(w.world.id, { title: '誤字', when: { seazon: '秋' }, ...base });
+    check('未知のキーは400で弾く', bad.status === 400, `${bad.status} / ${JSON.stringify(bad.json)}`);
+    check('どの項目かを返す', String(bad.json?.error ?? '').includes('seazon'), bad.json?.error);
+
+    const noVar = await mkEvent(w.world.id, { title: '比較子だけ', when: { eq: 1 }, ...base });
+    check('var の無い比較子は弾く', noVar.status === 400, String(noVar.status));
+
+    const twoCmp = await mkEvent(w.world.id, {
+      title: '比較子2つ', when: { var: 'case_phase', gte: 1, lte: 3 }, ...base,
+    });
+    check('比較子を2つ書いたら弾く', twoCmp.status === 400, String(twoCmp.status));
+
+    const badTime = await mkEvent(w.world.id, { title: '時刻', when: { time_after: 'よる' }, ...base });
+    check('読めない時刻は保存でも弾く', badTime.status === 400, String(badTime.status));
+
+    const badLoc = await mkEvent(w.world.id, { title: '場所', when: { location: 'nowhere' }, ...base });
+    check('実在しない場所IDを弾く', badLoc.status === 400, badLoc.json?.error);
+
+    const badVar = await mkEvent(w.world.id, { title: 'フラグ', when: { var: 'no_such_key' }, ...base });
+    check('vars_schema に無いキーを弾く', badVar.status === 400, badVar.json?.error);
+
+    const nested = await mkEvent(w.world.id, {
+      title: '入れ子', when: { all: [{ season: '秋' }, { seazon: '冬' }] }, ...base,
+    });
+    check('入れ子の中の誤字も見る', nested.status === 400, nested.json?.error);
+    check('場所を指し示す', String(nested.json?.error ?? '').includes('when.all[1]'), nested.json?.error);
+
+    // 2. 保存はできるが決して満たされない書き方は警告として返す
+    const crossing = await mkEvent(w.world.id, {
+      title: '日跨ぎ', when: { time_after: '22:00', time_before: '02:00' }, ...base,
+      inject: '日跨ぎ。',
+    });
+    check('日跨ぎの時刻指定は保存できる', crossing.status === 201, String(crossing.status));
+    check('日跨ぎは警告で知らせる',
+      (crossing.json?.warnings ?? []).some((m) => m.includes('any で2つに分けて')),
+      JSON.stringify(crossing.json?.warnings));
+
+    // 3. 正しい条件式はそのまま通る
+    const ok = await mkEvent(w.world.id, {
+      title: '正しい', when: { all: [{ season: '秋' }, { not: { weather: '雨' } }] }, ...base,
+      inject: '正しい。',
+    });
+    check('正しい条件式は通る', ok.status === 201, `${ok.status} / ${JSON.stringify(ok.json?.error)}`);
+    check('警告も出ない', (ok.json?.warnings ?? []).length === 0, JSON.stringify(ok.json?.warnings));
+
+    // 4. 弾かれた更新で既存の条件式を壊さない
+    const rejected = await api('PUT', `/events/${ok.json.id}`, { when: { seazon: '秋' } });
+    check('弾かれた更新は400', rejected.status === 400, String(rejected.status));
+    const untouched = (await api('GET', `/worlds/${w.world.id}/events`)).json
+      .find((e) => e.id === ok.json.id);
+    check('弾かれた更新では条件式が変わらない',
+      JSON.stringify(untouched.when)
+        === JSON.stringify({ all: [{ season: '秋' }, { not: { weather: '雨' } }] }),
+      JSON.stringify(untouched.when));
+
+    // 5. 検証より前に保存された未知キーは、評価で「満たさない」に倒す。
+    //    取り込みは復元用の経路なので検証しない（1件の誤字で世界全体を弾かない）。
+    //    そこから入った条件式が常時真になっていないことを、実際に評価して確かめる
+    const imported = await api('POST', '/worlds/import', {
+      format: 'character_chat_world',
+      world: { name: 'ev_legacy_when' },
+      locations: [{ id: 'ev_legacy_loc', name: '広場', indoor: 0, area: 'center' }],
+      events: [
+        { title: '誤字が残っている', when: { seazon: '秋' }, ...base, inject: 'x。' },
+        { title: '比較子だけ残っている', when: { eq: 1 }, ...base, inject: 'y。' },
+        { title: '読めない時刻が残っている', when: { time_after: 'よる' }, ...base, inject: 'w。' },
+        { title: '正しい', when: {}, ...base, inject: 'z。' },
+      ],
+    });
+    check('取り込みは通す（復元を1件の誤字で止めない）', imported.status === 201,
+      `${imported.status} / ${JSON.stringify(imported.json?.error)}`);
+
+    const legacyWorld = imported.json.world.id;
+    const legacyChat = await api('POST', `/worlds/${legacyWorld}/scenarios`, {
+      title: 'legacy', initial_state: { time: 877 * 1440 + 20 * 60, location: 'ev_legacy_loc' },
+    });
+    const lc = (await api('POST', `/scenarios/${legacyChat.json.id}/chats`, {})).json;
+    const legacyRows = (await api('POST', `/worlds/${legacyWorld}/events/evaluate`, { chat_id: lc.id }))
+      .json.rows;
+    const outcome = Object.fromEntries(legacyRows.map((r) => [r.title, r.outcome]));
+    check('既に入っている未知キーは条件で落とす', outcome['誤字が残っている'] === 'condition',
+      outcome['誤字が残っている']);
+    check('var の無い比較子も条件で落とす', outcome['比較子だけ残っている'] === 'condition',
+      outcome['比較子だけ残っている']);
+    check('読めない時刻も条件で落とす（常時真にしない）',
+      outcome['読めない時刻が残っている'] === 'condition', outcome['読めない時刻が残っている']);
+    check('隣の正しいイベントは通る', outcome['正しい'] !== 'condition', outcome['正しい']);
   }
 
   // 条件式の評価API

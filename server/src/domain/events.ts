@@ -33,6 +33,38 @@ function asList<T>(v: T | T[] | undefined): T[] | undefined {
   return Array.isArray(v) ? v : [v];
 }
 
+/**
+ * 述語の一覧。**評価器とバリデータでここを共有する**（片方だけ増えると
+ * 「保存できるのに効かない」「効くのに保存できない」がすぐ生まれる）。
+ */
+const PREDICATE_KEYS = [
+  'season', 'month', 'week', 'weekday',
+  'time_after', 'time_before',
+  'location', 'location_area', 'weather',
+  'present_has', 'present_lacks',
+  'var', 'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in',
+] as const;
+const NESTED_KEYS = ['all', 'any', 'not'] as const;
+const COMPARATOR_KEYS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in'] as const;
+const KNOWN_KEYS: ReadonlySet<string> = new Set<string>([...PREDICATE_KEYS, ...NESTED_KEYS]);
+
+/**
+ * 知らないキーが混ざっていないか。
+ *
+ * **これが無いと、キー名の誤字が「常に真」になる。** 述語を1つずつ見て
+ * 「該当しなければ次へ」という作りなので、`{ seazon: "秋" }` はどの分岐にも
+ * 引っかからないまま最後の `return true` に落ちる。EVENTS.md §14 は失敗を
+ * すべて「静かに発火しない」側で説明しているのに、ここだけ逆へ振れてしまう。
+ *
+ * 比較子だけあって `var` が無い形（`{ eq: 1 }`）も同じ理由で弾く。
+ */
+function hasOnlyKnownKeys(cond: EventCondition): boolean {
+  const keys = Object.keys(cond);
+  if (keys.some((k) => !KNOWN_KEYS.has(k))) return false;
+  if (cond.var === undefined && COMPARATOR_KEYS.some((k) => cond[k] !== undefined)) return false;
+  return true;
+}
+
 function compareVar(cond: EventCondition, value: VarValue | undefined): boolean {
   if (value === undefined) return false;
   if (cond.eq !== undefined) return value === cond.eq;
@@ -49,6 +81,10 @@ function compareVar(cond: EventCondition, value: VarValue | undefined): boolean 
 
 export function evalCondition(cond: EventCondition | null | undefined, ctx: EvalContext): boolean {
   if (!cond || Object.keys(cond).length === 0) return true;
+
+  // 保存時にバリデータで弾いているが、それ以前に保存された条件式が残っている。
+  // 解釈できないものは「満たさない」に倒す（time_after の扱いと揃える）
+  if (!hasOnlyKnownKeys(cond)) return false;
 
   if (cond.all && !cond.all.every((c) => evalCondition(c, ctx))) return false;
   if (cond.any && !cond.any.some((c) => evalCondition(c, ctx))) return false;
@@ -100,6 +136,139 @@ export function evalCondition(cond: EventCondition | null | undefined, ctx: Eval
   }
 
   return true;
+}
+
+// ---- 条件式の検証（保存時） ----
+
+/** 実在チェックに使う参照先。渡さなかった項目は照合しない */
+export interface ConditionRefs {
+  locationIds?: Set<string>;
+  areaIds?: Set<string>;
+  varKeys?: Set<string>;
+}
+
+export interface ConditionCheck {
+  errors: string[];
+  /** 保存はできるが、ほぼ確実に意図と違う書き方 */
+  warnings: string[];
+}
+
+const STRING_LIST_KEYS = ['season', 'weekday', 'location', 'location_area', 'weather',
+  'present_has', 'present_lacks'] as const;
+const NUMBER_LIST_KEYS = ['month', 'week'] as const;
+
+/**
+ * 条件式を保存前に検証する（§5.2）。
+ *
+ * 誤りを保存させないのが目的。評価器は「解釈できない＝満たさない」に倒すので、
+ * 検証が無いと「保存はできたが永久に発火しない（あるいは常に発火する）」イベントが
+ * 静かに出来上がる。
+ */
+export function validateCondition(cond: unknown, refs: ConditionRefs = {}): ConditionCheck {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const walk = (node: unknown, path: string): void => {
+    if (node === null || node === undefined) return;
+    if (typeof node !== 'object' || Array.isArray(node)) {
+      errors.push(`${path} はオブジェクトで書いてください`);
+      return;
+    }
+    const c = node as Record<string, unknown>;
+
+    for (const key of Object.keys(c)) {
+      if (!KNOWN_KEYS.has(key)) {
+        errors.push(`${path}.${key} は知らない項目です（近い綴りの誤りかもしれません）`);
+      }
+    }
+
+    // 入れ子
+    for (const key of ['all', 'any'] as const) {
+      if (c[key] === undefined) continue;
+      if (!Array.isArray(c[key])) {
+        errors.push(`${path}.${key} は配列で書いてください`);
+        continue;
+      }
+      (c[key] as unknown[]).forEach((child, i) => walk(child, `${path}.${key}[${i}]`));
+    }
+    if (c.not !== undefined) walk(c.not, `${path}.not`);
+
+    // 値の型
+    for (const key of STRING_LIST_KEYS) {
+      const v = c[key];
+      if (v === undefined) continue;
+      const list = Array.isArray(v) ? v : [v];
+      if (list.some((x) => typeof x !== 'string' || x === '')) {
+        errors.push(`${path}.${key} は文字列（または文字列の配列）で書いてください`);
+      }
+    }
+    for (const key of NUMBER_LIST_KEYS) {
+      const v = c[key];
+      if (v === undefined) continue;
+      const list = Array.isArray(v) ? v : [v];
+      if (list.some((x) => typeof x !== 'number' || !Number.isInteger(x))) {
+        errors.push(`${path}.${key} は整数（または整数の配列）で書いてください`);
+      }
+    }
+
+    // 時刻
+    const times: Record<string, number> = {};
+    for (const key of ['time_after', 'time_before'] as const) {
+      const v = c[key];
+      if (v === undefined) continue;
+      const t = typeof v === 'string' ? parseHhmm(v) : null;
+      if (t === null) errors.push(`${path}.${key} は "17:00" の形式で書いてください`);
+      else times[key] = t;
+    }
+    if (times.time_after !== undefined && times.time_before !== undefined
+      && times.time_after > times.time_before) {
+      warnings.push(
+        `${path} の time_after が time_before より後です。この書き方では決して満たされません` +
+          '（日をまたぐ時間帯は any で2つに分けてください）',
+      );
+    }
+
+    // 進行フラグ
+    const comparators = COMPARATOR_KEYS.filter((k) => c[k] !== undefined);
+    if (c.var === undefined) {
+      if (comparators.length > 0) {
+        errors.push(`${path}.${comparators[0]} は var と一緒に書いてください`);
+      }
+    } else {
+      if (typeof c.var !== 'string' || c.var === '') {
+        errors.push(`${path}.var は進行フラグのキー名で書いてください`);
+      } else if (refs.varKeys && !refs.varKeys.has(c.var)) {
+        errors.push(`${path}.var の "${c.var}" は、この世界の進行フラグにありません`);
+      }
+      if (comparators.length > 1) {
+        errors.push(`${path} の比較子は1つだけにしてください（${comparators.join(' / ')}）`);
+      }
+      if (c.in !== undefined && !Array.isArray(c.in)) {
+        errors.push(`${path}.in は配列で書いてください`);
+      }
+      for (const key of ['gt', 'gte', 'lt', 'lte'] as const) {
+        if (c[key] !== undefined && typeof c[key] !== 'number') {
+          errors.push(`${path}.${key} は数値で書いてください`);
+        }
+      }
+    }
+
+    // 実在チェック
+    const check = (key: 'location' | 'location_area', ids: Set<string> | undefined, label: string) => {
+      const v = c[key];
+      if (v === undefined || !ids) return;
+      for (const x of Array.isArray(v) ? v : [v]) {
+        if (typeof x === 'string' && x !== '' && !ids.has(x)) {
+          errors.push(`${path}.${key} の "${x}" は、この世界の${label}にありません`);
+        }
+      }
+    };
+    check('location', refs.locationIds, '場所');
+    check('location_area', refs.areaIds, 'エリア');
+  };
+
+  walk(cond, 'when');
+  return { errors, warnings };
 }
 
 // ===========================================================================

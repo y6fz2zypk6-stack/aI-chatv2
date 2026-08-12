@@ -14,7 +14,7 @@ import { listLocations } from '../db/repo/locations.js';
 import { getScenario } from '../db/repo/scenarios.js';
 import { getSettings, resolveFlag } from '../db/repo/settings.js';
 import { getWorld } from '../db/repo/worlds.js';
-import { runEventPipeline } from '../domain/events.js';
+import { runEventPipeline, validateCondition, type ConditionCheck } from '../domain/events.js';
 import { visitIdOf } from './messages.js';
 
 export const eventsRouter = Router();
@@ -24,21 +24,59 @@ eventsRouter.get('/worlds/:id/events', (req, res) => {
   res.json(events);
 });
 
+/**
+ * 条件式を保存前に検証する（§5.2）。
+ * `when` を送っていないときは触らない（部分更新を壊さないため）。
+ * 警告は保存を止めず、そのまま返して画面に出させる。
+ */
+function checkWhen(worldId: string, body: Record<string, unknown>): ConditionCheck | null {
+  if (!('when' in body)) return null;
+  const world = getWorld(worldId);
+  if (!world) return null;
+  return validateCondition(body.when, {
+    locationIds: new Set(listLocations(worldId).map((l) => l.id)),
+    areaIds: new Set(world.areas.map((a) => a.id)),
+    varKeys: new Set(world.vars_schema.map((v) => v.key)),
+  });
+}
+
 eventsRouter.post('/worlds/:id/events', (req, res) => {
   if (!getWorld(req.params.id)) {
     res.status(404).json({ error: '世界が見つかりません' });
     return;
   }
-  res.status(201).json(createEvent(req.params.id, req.body ?? {}));
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const checked = checkWhen(req.params.id, body);
+  if (checked && checked.errors.length > 0) {
+    res.status(400).json({ error: checked.errors.join('\n'), warnings: checked.warnings });
+    return;
+  }
+  res.status(201).json({ ...createEvent(req.params.id, body), warnings: checked?.warnings ?? [] });
 });
 
 eventsRouter.put('/events/:id', (req, res) => {
-  const e = updateEvent(req.params.id, req.body ?? {});
+  // 世界を跨いだ書き換えを防ぐため、先に所有元を引く（他ルートと揃える）
+  const cur = getEvent(req.params.id);
+  if (!cur) {
+    res.status(404).json({ error: 'イベントが見つかりません' });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (typeof body.world_id === 'string' && body.world_id !== cur.world_id) {
+    res.status(400).json({ error: 'イベントの世界は変更できません' });
+    return;
+  }
+  const checked = checkWhen(cur.world_id, body);
+  if (checked && checked.errors.length > 0) {
+    res.status(400).json({ error: checked.errors.join('\n'), warnings: checked.warnings });
+    return;
+  }
+  const e = updateEvent(req.params.id, body);
   if (!e) {
     res.status(404).json({ error: 'イベントが見つかりません' });
     return;
   }
-  res.json(e);
+  res.json({ ...e, warnings: checked?.warnings ?? [] });
 });
 
 // §8.9: WorldEvent は参照されないため無条件で削除可（発火履歴はCASCADE）

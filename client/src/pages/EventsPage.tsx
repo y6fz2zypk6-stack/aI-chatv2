@@ -242,8 +242,14 @@ function EventEditor(props: {
     try {
       const when = JSON.parse(whenJson || '{}');
       const set_vars = JSON.parse(varsJson || '[]');
-      await api.put(`/events/${e.id}`, { ...e, when, set_vars });
-      toast('保存しました');
+      // 条件式はサーバで検証される。誤りは400、書けるが効かない書き方は warnings で返る
+      const saved = await api.put<WorldEvent & { warnings?: string[] }>(`/events/${e.id}`, {
+        ...e,
+        when,
+        set_vars,
+      });
+      if (saved.warnings?.length) toast(saved.warnings.join('\n'), true);
+      else toast('保存しました');
       props.onSaved();
     } catch (err) {
       toast(`保存できません: ${(err as Error).message}`, true);
