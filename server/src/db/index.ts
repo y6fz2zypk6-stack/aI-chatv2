@@ -14,6 +14,28 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 export const db = new Database(DB_PATH);
 
+/** いま開いているDBファイルの絶対パス */
+export const DB_FILE = DB_PATH;
+
+/**
+ * どのDBを開いたかを1行で説明する（§2.4）。
+ *
+ * **設定を切り替えたときに「別のDBを見ている」と気づける唯一の場所。**
+ * DBを取り違えても画面は正常に動いてしまい（空の状態から始まるだけ）、
+ * データが消えたようにしか見えない。パスと件数を毎回出しておけば、
+ * 起動ログを見た瞬間に分かる。
+ */
+export function describeDb(): string {
+  const count = (table: string): number =>
+    (db.prepare(`SELECT COUNT(*) c FROM ${table}`).get() as { c: number }).c;
+  try {
+    return `${DB_FILE}（世界${count('worlds')} / チャット${count('chats')} / メッセージ${count('messages')}）`;
+  } catch {
+    // マイグレーション前など、まだ表が無い場合はパスだけ
+    return DB_FILE;
+  }
+}
+
 // §8.10: SQLiteは既定OFFのため接続ごとに必ず有効化
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');

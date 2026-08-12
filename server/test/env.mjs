@@ -65,6 +65,11 @@ try {
     });
     check('相対 DB_PATH はルート基準', existsSync(path.join(rootTmp, 'app.sqlite')), r.brief);
     check('cwd（server/）の下には作らない', !existsSync(path.join(serverTmp, 'app.sqlite')));
+    // DBを取り違えても画面は動いてしまうので、開いた先を起動ログに出す
+    check('開いたDBのパスを起動ログに出す', r.out.includes(path.join(rootTmp, 'app.sqlite')),
+      r.out.split('\n').find((l) => l.startsWith('[db] 使用中')) ?? '出ていない');
+    check('件数も添える', /世界\d+ \/ チャット\d+ \/ メッセージ\d+/.test(r.out),
+      r.out.split('\n').find((l) => l.startsWith('[db] 使用中')) ?? '出ていない');
   }
 
   // 2. 旧い場所にDBが残っていたら起動を止める（空DBを作って初期データを流し込まない）

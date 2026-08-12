@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // DB初期化（import順が重要: db/index.ts がスキーマ適用を行う）
-import './db/index.js';
+import { describeDb } from './db/index.js';
 import { seedIfEmpty } from './db/seed.js';
 
 import { bindsAllInterfaces, isReachRestricted } from './bind.js';
@@ -30,6 +30,10 @@ import { worldsRouter } from './routes/worlds.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 seedIfEmpty();
+
+// **どのDBを開いたかを必ず出す。** 取り違えても画面は正常に動いてしまう
+// （空の状態から始まるだけ）ので、これが無いとデータが消えたようにしか見えない
+console.log('[db] 使用中:', describeDb());
 
 const app = express();
 
