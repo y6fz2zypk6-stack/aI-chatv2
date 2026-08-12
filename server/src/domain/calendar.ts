@@ -216,10 +216,14 @@ export function formatGameDate(cfg: CalendarConfig, time: number): string {
 }
 
 /**
- * 記憶の日付をプロンプト・UIに出す表記（§8.4）。
+ * 記憶の日付をプロンプト・UIに出す表記（§8.4）。「3年3月3日 / 3日前」の形。
+ *
+ * **絶対日付は常に出す。** あらすじの日付（[3年8月10日(秋)]）と突き合わせられるようにするため。
+ * 相対表記はそこに足す形で、意味が通るときだけ添える。
+ *
  * memories はチャットではなくキャラクターに紐づくので、同じ世界の別チャットが
- * 別の日付にいると差が負になったり極端に開いたりする。相対表記は
- * 「過去1年以内」に限り、それ以外は絶対日付に落として破綻を避ける。
+ * 別の日付にいると差が負にも極端にもなる。1年より前は相対表記を省き、
+ * 未来の側は「まだ起きていない」と明示する。
  */
 export function memoryDateLabel(
   cfg: CalendarConfig,
@@ -227,13 +231,21 @@ export function memoryDateLabel(
   nowTime: number | null,
 ): string {
   if (memTime == null || !Number.isFinite(memTime)) return '';
-  if (nowTime == null || !Number.isFinite(nowTime)) return formatGameDate(cfg, memTime);
+  const date = formatGameDate(cfg, memTime);
+  // 「いまが何日か」を持たない場面（メモリー一覧など）は絶対日付だけ
+  if (nowTime == null || !Number.isFinite(nowTime)) return date;
+
   const days = toTotalDay(nowTime) - toTotalDay(memTime);
-  if (days === 0) return '今日';
-  if (days === 1) return '昨日';
   const daysPerYear = cfg.months_per_year * cfg.days_per_month;
-  if (days > 1 && days <= daysPerYear) return `${days}日前`;
-  return formatGameDate(cfg, memTime);
+  let relative = '';
+  if (days === 0) relative = '今日';
+  else if (days === 1) relative = '昨日';
+  else if (days > 1 && days <= daysPerYear) relative = `${days}日前`;
+  // 別のチャットをより過去の時点で始めると、記憶の方が未来になる。
+  // 絶対日付だけだと「ずっと昔の記憶」と見分けが付かないので、明示する
+  else if (days < 0) relative = 'まだ起きていない出来事';
+
+  return relative ? `${date} / ${relative}` : date;
 }
 
 /** 「秋・第2週の水曜日 18:40」形式 */

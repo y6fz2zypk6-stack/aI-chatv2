@@ -94,7 +94,7 @@ export default function MemoriesPage() {
           </span>
           {m.enabled === 0 && <span className="tag mute">OFF</span>}
           {m.subject && <span>{nameOf(m.subject)}</span>}
-          {/* いつの出来事か。生成時は「3日前」等の相対表記になる */}
+          {/* いつの出来事か。注入時は「3年8月7日 / 3日前」の形になる */}
           {m.game_time_label && <span>{m.game_time_label}</span>}
         </div>
       </div>
@@ -283,7 +283,7 @@ function MemoryEditor(props: {
           </button>
         ) : (
           <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
-            日付を入れると、AIへ渡すときに「3日前」のように現在の日付から見た形で載ります
+            日付を入れると、AIへ渡すときに「3年8月7日 / 3日前」のように現在の日付と並べて載ります
           </div>
         )}
       </Field>

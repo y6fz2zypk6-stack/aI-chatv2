@@ -415,9 +415,10 @@ export default function ChatPage() {
 
       {/* ステートバー（§10.2）: タップでステート編集へ */}
       <div className="state-bar" onClick={() => navigate(`/chats/${id}/state`)}>
+        {/* 日付・曜日・時刻。季節はプロンプトの「現在の状況」側に出るのでここでは省く */}
         <span>
-          {gameTime.season} {gameTime.weekday} {String(gameTime.hh).padStart(2, '0')}:
-          {String(gameTime.mm).padStart(2, '0')}
+          {gameTime.month}/{gameTime.day} {gameTime.weekday}{' '}
+          {String(gameTime.hh).padStart(2, '0')}:{String(gameTime.mm).padStart(2, '0')}
         </span>
         <span className="loc">{locName}</span>
         <span>{chat.state.weather}</span>

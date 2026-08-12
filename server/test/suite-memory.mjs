@@ -512,7 +512,8 @@ export async function memoryDateSuite(w) {
   setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
   await generate(chat.id, { content: 'x' });
   let prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
-  check('同じ日は「今日」として注入する', prompt.includes('- (今日) 港で待ち合わせると約束した'),
+  check('同じ日は「今日」として注入する',
+    prompt.includes('- (3年8月10日 / 今日) 港で待ち合わせると約束した'),
     prompt.split('\n').filter((l) => l.includes('港で')).join(' | '));
 
   // 日をまたぐと相対表記が動く
@@ -522,7 +523,8 @@ export async function memoryDateSuite(w) {
   setQueue([{ text: reply({ char: '「ええ」', elapsed: 10, location: w.shop }) }]);
   await generate(chat.id, { content: 'y' });
   prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
-  check('3日経つと「3日前」になる', prompt.includes('- (3日前) 港で待ち合わせると約束した'),
+  check('3日経つと「3日前」になる',
+    prompt.includes('- (3年8月10日 / 3日前) 港で待ち合わせると約束した'),
     prompt.split('\n').filter((l) => l.includes('港で')).join(' | '));
 
   // 手動追加は日付を持たない（実時間から推測しない）
@@ -1168,7 +1170,7 @@ export async function memoryDateEditSuite(w) {
     await api('DELETE', `/memories/${m.id}`);
   }
 
-  // 手で付けた日付が注入にも効く
+  // 手で付けた日付が注入にも効く。絶対日付と相対表記を並べる
   {
     const chat = await newChat(w); // 3年8月10日 18:00 開始
     const m = await mk('手で付けた日付が効く', { game_time_parts: { year: 3, month: 8, day: 7 } });
@@ -1176,8 +1178,37 @@ export async function memoryDateEditSuite(w) {
     setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
     await generate(chat.id, { content: 'x' });
     const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
-    check('相対表記で注入される', prompt.includes('- (3日前) 手で付けた日付が効く'),
+    check('絶対日付＋相対表記で注入される',
+      prompt.includes('- (3年8月7日 / 3日前) 手で付けた日付が効く'),
       prompt.split('\n').find((l) => l.includes('手で付けた')) ?? '載っていない');
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  // memories はキャラに紐づくので、より過去から始めたチャットでは未来日付になりうる
+  {
+    const chat = await newChat(w); // 3年8月10日 18:00 開始
+    const m = await mk('まだ先の出来事', { game_time_parts: { year: 3, month: 8, day: 20 } });
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'x' });
+    const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('未来の記憶は「まだ起きていない出来事」と明示する',
+      prompt.includes('- (3年8月20日 / まだ起きていない出来事) まだ先の出来事'),
+      prompt.split('\n').find((l) => l.includes('まだ先の')) ?? '載っていない');
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  // 1年より前は相対表記が意味を持たないので絶対日付だけ
+  {
+    const chat = await newChat(w);
+    const m = await mk('ずっと昔の出来事', { game_time_parts: { year: 1, month: 1, day: 1 } });
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'x' });
+    const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('遠い過去は絶対日付だけで注入する',
+      prompt.includes('- (1年1月1日) ずっと昔の出来事'),
+      prompt.split('\n').find((l) => l.includes('ずっと昔')) ?? '載っていない');
     await api('DELETE', `/memories/${m.id}`);
   }
 }
