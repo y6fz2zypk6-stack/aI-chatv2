@@ -69,6 +69,13 @@ const server = http.createServer(async (req, res) => {
     text: 'ナレーター: （既定応答）\n\n@@@STATE\nelapsed_minutes: 10\n@@@END',
   };
 
+  // status を指定すると上流エラーを再現できる（停止との区別を見るため）
+  if (item.status && item.status >= 400) {
+    res.writeHead(item.status, { 'Content-Type': 'text/plain' });
+    res.end(item.text ?? 'error');
+    return;
+  }
+
   // 非ストリーミング（要約・抽出・継続判定）
   if (!reqJson.stream) {
     // gapMs を指定すると応答を遅らせられる。実行中ガードの検証に使う
@@ -85,6 +92,15 @@ const server = http.createServer(async (req, res) => {
       }),
     );
     return;
+  }
+
+  // headDelayMs: レスポンスヘッダを返すまで待つ。
+  // 「接続は受けたがヘッダがまだ」の窓で停止された場合の挙動を見るために使う
+  if (item.headDelayMs) {
+    let aborted = false;
+    req.on('close', () => (aborted = true));
+    await new Promise((r) => setTimeout(r, item.headDelayMs));
+    if (aborted) return;
   }
 
   res.writeHead(200, {

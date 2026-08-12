@@ -284,6 +284,52 @@ export async function abnormal(w) {
       last.content.length > 0 && last.state_after.time === T1800, `${last.content.length}文字`);
   }
 
+  // ヘッダが返る前に停止（送信直後に止めた場合）
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: reply({ char: '「届かない」', elapsed: 40, location: w.cafe }), headDelayMs: 3000 }]);
+    const p = generate(chat.id, { content: '送ってすぐ止める' });
+    await new Promise((r) => setTimeout(r, 300)); // まだヘッダは返っていない
+    const stopRes = await api('POST', `/chats/${chat.id}/stop`);
+    const g = await p;
+    check('ヘッダ前の停止: /stop が 200', stopRes.status === 200, String(stopRes.status));
+    // abort が fetch 側で起きても通信エラーにしない（§5.7）
+    check('ヘッダ前の停止: 通信エラー扱いにしない',
+      !/aborted|AbortError|fetch failed/i.test(g.error ?? ''), g.error ?? '（エラーなし）');
+    check('ヘッダ前の停止: 停止だと分かる説明を返す',
+      (g.error ?? '').includes('停止'), g.error ?? '（エラーなし）');
+
+    const d = await getChat(chat.id);
+    check('ヘッダ前の停止: assistant は保存しない（末尾は user のまま）',
+      d.messages[d.messages.length - 1].role === 'user',
+      d.messages.slice(-2).map((m) => m.role).join(','));
+    check('ヘッダ前の停止: 時間も進まない', hhmm(d.chat.state.time) === '18:00', hhmm(d.chat.state.time));
+
+    // ロックが解けていること。解けていないと以後ずっと409になる
+    setQueue([{ text: reply({ char: '「今度は届く」', elapsed: 10, location: w.shop }) }]);
+    const again = await generate(chat.id, { content: 'やり直し' });
+    check('ヘッダ前の停止: そのあと再試行できる（409にならない）',
+      again.done?.generationStatus === 'complete',
+      `${again.httpStatus ?? 200} / ${again.done?.generationStatus ?? again.error}`);
+  }
+
+  // 通常のAPIエラーは停止と区別する
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ status: 502, text: 'upstream is down' }]);
+    const g = await generate(chat.id, { content: '失敗させる' });
+    check('APIエラー: エラーとして返る', !!g.error, g.error ?? '（エラーなし）');
+    check('APIエラー: 停止とは違う説明になる', !(g.error ?? '').includes('停止'), g.error);
+    const d = await getChat(chat.id);
+    check('APIエラー: assistant は保存しない',
+      d.messages[d.messages.length - 1].role === 'user',
+      d.messages.slice(-2).map((m) => m.role).join(','));
+    setQueue([{ text: reply({ char: '「復帰」', elapsed: 10, location: w.shop }) }]);
+    const again = await generate(chat.id, { content: 'やり直し' });
+    check('APIエラー: そのあと再試行できる', again.done?.generationStatus === 'complete',
+      `${again.httpStatus ?? 200} / ${again.done?.generationStatus ?? again.error}`);
+  }
+
   // STATEフェンスが欠落
   {
     const { chat } = await newChat(w);

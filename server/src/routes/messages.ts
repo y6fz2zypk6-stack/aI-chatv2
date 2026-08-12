@@ -422,10 +422,13 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
         },
       });
       full = result.text;
-      aborted = result.aborted;
+      aborted = result.outcome === 'user_abort';
       emitVisible(true);
     } catch (err) {
-      failed = (err as Error).message;
+      // streamChat が停止を拾いきれなかった場合の受け皿。
+      // 停止操作を「通信・API失敗」として見せないための最後の砦（§5.7）
+      if (abort.signal.aborted) aborted = true;
+      else failed = (err as Error).message;
     }
 
 

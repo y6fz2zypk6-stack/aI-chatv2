@@ -59,20 +59,54 @@ export interface StreamOptions {
   onDelta: (text: string) => void;
 }
 
-/** SSEストリーミングで生成し、全文を返す。abort時はそれまでの分を返す */
-export async function streamChat(opts: StreamOptions): Promise<{ text: string; aborted: boolean }> {
-  const res = await fetch(`${BASE}/chat/completions`, {
-    method: 'POST',
-    headers: headers(),
-    signal: opts.signal,
-    body: JSON.stringify({
-      model: opts.model,
-      messages: opts.messages,
-      max_tokens: opts.maxTokens,
-      stop: opts.stop,
-      stream: true,
-    }),
-  });
+/**
+ * ストリームがどう終わったか。
+ * **停止操作と通信の失敗を混ぜないための区別。** 混ざると、利用者が自分で押した停止が
+ * 「通信・API失敗」として表示される（§5.7）。
+ */
+export type StreamOutcome = 'complete' | 'user_abort';
+
+export interface StreamResult {
+  text: string;
+  outcome: StreamOutcome;
+}
+
+/**
+ * 利用者の停止操作によるものか。
+ * abort のタイミングによって投げ手が変わる（fetch 本体・リーダー・undici の内部）ので、
+ * 例外の名前だけでなく signal の状態も見る。
+ */
+function isUserAbort(err: unknown, signal?: AbortSignal): boolean {
+  const e = err as { name?: string; cause?: { name?: string } } | null;
+  if (e?.name === 'AbortError' || e?.cause?.name === 'AbortError') return true;
+  // ここまで来た例外は、停止済みなら停止が原因とみなす（/stop 以外では abort しない）
+  return signal?.aborted === true;
+}
+
+/** SSEストリーミングで生成し、全文を返す。停止時はそれまでの分を返す */
+export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/chat/completions`, {
+      method: 'POST',
+      headers: headers(),
+      signal: opts.signal,
+      body: JSON.stringify({
+        model: opts.model,
+        messages: opts.messages,
+        max_tokens: opts.maxTokens,
+        stop: opts.stop,
+        stream: true,
+      }),
+    });
+  } catch (err) {
+    // **レスポンスヘッダが返る前に停止されると fetch 自体が投げる。**
+    // 読み取りループだけを try で囲んでいると、この窓の停止が通常のエラー経路に落ち、
+    // 「This operation was aborted」がそのまま画面に出る
+    if (isUserAbort(err, opts.signal)) return { text: '', outcome: 'user_abort' };
+    throw err;
+  }
+
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '');
     throw new Error(`OpenRouter error ${res.status}: ${text.slice(0, 300)}`);
@@ -110,10 +144,10 @@ export async function streamChat(opts: StreamOptions): Promise<{ text: string; a
       }
     }
   } catch (err) {
-    if ((err as Error).name === 'AbortError') aborted = true;
+    if (isUserAbort(err, opts.signal)) aborted = true;
     else throw err;
   }
-  return { text: full, aborted };
+  return { text: full, outcome: aborted ? 'user_abort' : 'complete' };
 }
 
 /** 要約・抽出など、非ストリーミングの1回コール */
