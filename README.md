@@ -139,7 +139,7 @@ sudo ufw deny 3000
 |---|---|
 | `OPENROUTER_API_KEY` | 必須。サーバ側のみが保持しブラウザには渡さない |
 | `APP_PASSWORD` | 公開VPSでは必須。単一パスワード + httpOnly Cookieセッション |
-| `SESSION_SECRET` | ランダムな長い文字列 |
+| `SESSION_SECRET` | ログインパスワードの比較に使うHMAC鍵（ランダムな長い文字列）。未設定なら `APP_PASSWORD` を代用。セッションIDの署名には使いません |
 | `COOKIE_SECURE` | 認証Cookieに `Secure` を付ける。未設定なら `APP_URL` が https:// のときだけ有効 |
 | `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
 | `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5` / `anthropic/claude-sonnet-5` |

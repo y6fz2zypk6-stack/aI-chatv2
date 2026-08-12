@@ -108,7 +108,7 @@ cwd は使わない。ルートの npm script は `-w server` 付きで走るた
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | 必須。**ブラウザには渡さない** |
 | `APP_PASSWORD` | 空 | 空だと認証が素通り。**公開VPSでは必須** |
-| `SESSION_SECRET` | `APP_PASSWORD` | セッション比較のHMAC鍵 |
+| `SESSION_SECRET` | `APP_PASSWORD` | ログインパスワードを定数時間比較するためのHMAC鍵。セッションIDの署名には使わない |
 | `DEFAULT_MODEL` | `anthropic/claude-opus-5` | |
 | `UTILITY_MODEL` | `anthropic/claude-sonnet-5` | 要約・抽出・継続判定 |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 3000 / `./data/app.sqlite` / … | |
