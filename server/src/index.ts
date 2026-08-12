@@ -43,12 +43,39 @@ if (trustProxy) {
 }
 
 app.use(compression());
-app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser());
+
+// ---- JSONボディの上限（§16.3） ----
+//
+// **未認証のリクエストに大きなボディをパースさせない。** 通常APIは小さい上限で足り、
+// 大きいのは取り込みだけ。共通パーサを1つ置いて後から大きいのを足す形にはできない
+// （先に小さい方が413にしてしまい、後段のパーサへ到達しない）ので、
+// **1リクエストにパーサを1つだけ通す**形にしてある。
+const smallJson = express.json({ limit: '256kb' });
+const bigJson = express.json({ limit: '20mb' });
+
+/**
+ * 大きなボディを許すルート（`/api` を除いたパスで判定）。
+ * 世界の丸ごと取り込みと、画像を含み得るカード形式の取り込みだけ。
+ */
+const BIG_BODY_PATHS: RegExp[] = [
+  /^\/worlds\/import$/,
+  /^\/worlds\/[^/]+\/characters\/import$/,
+  /^\/worlds\/[^/]+\/lorebook\/import$/,
+];
+
+// 認証より前に body を読むのは /api/login だけ。ここは小さい上限で通す
+app.use('/api/login', smallJson);
 
 // 認証（§9: APP_PASSWORD 未設定時は素通り）
 app.use('/api', authRouter);
 app.use('/api', requireAuth);
+
+// ここから先は認証済み。パスに応じて上限を選ぶ
+app.use('/api', (req, res, next) => {
+  const parser = BIG_BODY_PATHS.some((re) => re.test(req.path)) ? bigJson : smallJson;
+  parser(req, res, next);
+});
 
 app.use('/api', settingsRouter);
 app.use('/api', exportsRouter);
@@ -85,10 +112,26 @@ if (clientDist) {
 }
 
 // エラーハンドラ
+//
+// **ミドルウェアが付けた status を尊重する。** 一律500にすると、たとえば
+// ボディの上限超え（body-parser の 413）が「サーバ内部エラー」として画面に出て、
+// 設定どおりに拒否したのか壊れたのかが区別できなくなる。
 app.use(
-  (err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('[server]', err);
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+  (err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const e = err as Error & { status?: number; statusCode?: number; type?: string };
+    const status = Number(e.status ?? e.statusCode) || 500;
+    if (status >= 500) console.error('[server]', err);
+    else console.warn(`[server] ${status} ${req.method} ${req.originalUrl}: ${err.message}`);
+    if (res.headersSent) return;
+    if (status === 413) {
+      res.status(413).json({ error: '送信されたデータが大きすぎます' });
+      return;
+    }
+    if (e.type === 'entity.parse.failed') {
+      res.status(400).json({ error: 'JSONとして読めませんでした' });
+      return;
+    }
+    res.status(status).json({ error: err.message });
   },
 );
 

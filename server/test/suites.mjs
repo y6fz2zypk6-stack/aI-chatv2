@@ -1034,6 +1034,59 @@ export async function importRollbackSuite() {
 }
 
 // ===========================================================================
+// JSONボディの上限（未認証のリクエストに大きなボディをパースさせない）
+// ===========================================================================
+export async function bodyLimitSuite(w) {
+  suite('JSONボディの上限');
+
+  // 通常APIは小さい上限。1MB は通らない
+  {
+    const big = 'あ'.repeat(400_000); // UTF-8で約1.2MB
+    const r = await api('PUT', `/worlds/${w.world.id}`, { name: 'x', system_prompt: big });
+    check('通常APIで1MB超は拒否する', r.status === 413, `status=${r.status}`);
+  }
+
+  // 実運用で通したい大きさは通る（長いプロンプト・アバター付きの更新）
+  {
+    const prose = 'あ'.repeat(50_000); // 約150KB
+    const r = await api('PUT', `/worlds/${w.world.id}`, { system_prompt: prose });
+    check('150KB程度のプロンプトは通る', r.status === 200, `status=${r.status}`);
+    await api('PUT', `/worlds/${w.world.id}`, { system_prompt: '' });
+
+    // 320px WebP のアバターは実測2〜3KB。余裕を見て30KB相当で試す
+    const avatar = `data:image/webp;base64,${'A'.repeat(40_000)}`;
+    const c = await api('POST', `/worlds/${w.world.id}/characters`, { name: 'アバター付き', avatar });
+    check('アバター付きのキャラクター作成は通る', c.status === 201, `status=${c.status}`);
+    if (c.status === 201) {
+      const up = await api('PUT', `/characters/${c.json.id}`, { ...c.json, avatar });
+      check('アバター付きの更新も通る', up.status === 200, `status=${up.status}`);
+      await api('DELETE', `/characters/${c.json.id}`);
+    }
+  }
+
+  // 取り込みルートだけは大きいボディを許す
+  {
+    const filler = 'あ'.repeat(400_000);
+    const r = await api('POST', '/worlds/import', {
+      format: 'character_chat_world',
+      world: { name: '大きな取り込み', description: filler },
+      scenarios: [],
+    });
+    check('取り込みは1MB超でも通る', r.status === 201, `status=${r.status} ${r.json?.error ?? ''}`);
+    if (r.status === 201) await api('DELETE', `/worlds/${r.json.world.id}`);
+  }
+
+  // ログインは認証前に body を読むが、上限は小さい
+  {
+    const r = await api('POST', '/login', { password: 'あ'.repeat(400_000) });
+    check('ログインでも1MB超は拒否する', r.status === 413, `status=${r.status}`);
+    // 通常のログインは（パスワード未設定なので素通りだが）読めている
+    const ok = await api('POST', '/login', { password: 'x' });
+    check('通常サイズのログインbodyは読める', ok.status !== 413, `status=${ok.status}`);
+  }
+}
+
+// ===========================================================================
 // 生成ロックの取得タイミング（受付直後〜組み立ての間にも入れさせない）
 // ===========================================================================
 // 前提: サーバを再起動した直後に呼ぶこと。
