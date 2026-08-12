@@ -4,7 +4,7 @@ import { getChat } from '../db/repo/chats.js';
 import { DEFAULT_SUMMARY_POLICY } from '../db/repo/settings.js';
 import { insertSummary, latestSummary } from '../db/repo/summaries.js';
 import { messagesAfterSeq } from '../db/repo/messages.js';
-import { toGameTime } from './calendar.js';
+import { formatGameDate } from './calendar.js';
 import { complete } from '../llm/openrouter.js';
 
 /** 同じチャットで要約が重ならないようにする（重なると毎ターン走る） */
@@ -24,7 +24,7 @@ function buildRules(maxChars: number): string {
   出来事・約束・未解決の項目は落とさない。
 - 今回の会話は生の記録である。下の「要約の方針」に従って取捨選択する。
 - 人物の設定（容姿・口調・経歴・立場）は書かない。ロアブックが保持している。
-- 出来事には [5年9月10日(秋)] の形式でゲーム内日付を添える。
+- 出来事には [5年9月10日(金)] の形式でゲーム内日付を添える。
 - 全体を${maxChars}文字程度に収める。
 - あらすじ本文のみを出力する。前置き・説明・見出し以外の装飾を書かない。`;
 }
@@ -95,12 +95,10 @@ async function summarizeOnce(chatId: string, settings: Settings): Promise<Summar
   }
 
   const calendar = getCalendar(chat.world_id);
-  const fmtDate = (m: Message) => {
-    const gt = toGameTime(calendar, m.state_after.time);
-    return `${gt.year}年${gt.month}月${gt.day}日(${gt.season})`;
-  };
-
-  const lines = targets.map((m) => `[${fmtDate(m)}] ${m.content}`).join('\n');
+  // メモリーの日付（§10.2）と同じ表記にして、突き合わせられるようにする
+  const lines = targets
+    .map((m) => `[${formatGameDate(calendar, m.state_after.time)}] ${m.content}`)
+    .join('\n');
   const model = settings.utility_model || settings.default_model;
   const policy = settings.summary_policy?.trim() || DEFAULT_SUMMARY_POLICY;
   const prompt = `以下はロールプレイ会話の記録である。

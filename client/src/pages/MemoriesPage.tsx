@@ -94,7 +94,7 @@ export default function MemoriesPage() {
           </span>
           {m.enabled === 0 && <span className="tag mute">OFF</span>}
           {m.subject && <span>{nameOf(m.subject)}</span>}
-          {/* いつの出来事か。注入時は「3年8月7日 / 3日前」の形になる */}
+          {/* いつの出来事か。注入時は「3年8月7日(土) / 3日前」の形になる */}
           {m.game_time_label && <span>{m.game_time_label}</span>}
         </div>
       </div>
@@ -172,6 +172,12 @@ export default function MemoriesPage() {
 type DateParts = { year: number | null; month: number | null; day: number | null };
 const EMPTY_DATE: DateParts = { year: null, month: null, day: null };
 
+/** 送った日付がそのまま返ってきたかを見る（キーの順序に依らず比べる） */
+function samePart(a: DateParts | null, b: DateParts | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.year === b.year && a.month === b.month && a.day === b.day;
+}
+
 function MemoryEditor(props: {
   memory: MemoryListItem;
   characters: Character[];
@@ -195,7 +201,17 @@ function MemoryEditor(props: {
     }
     try {
       // 年月日はサーバで通算分へ直してもらう。空なら日付なしに戻す
-      await api.put(`/memories/${m.id}`, { ...m, game_time_parts: dateComplete ? date : null });
+      const saved = await api.put<MemoryListItem>(`/memories/${m.id}`, {
+        ...m,
+        game_time_parts: dateComplete ? date : null,
+      });
+      // 日付を解さないサーバ（更新前のビルドが動いているなど）は 200 のまま素通りする。
+      // そのまま閉じると「保存したのに戻っている」になるので、往復した結果を確かめる
+      if (!samePart(saved.game_time_parts ?? null, dateComplete ? date : null)) {
+        props.toast('日付を保存できませんでした。サーバ側が最新か確認してください', true);
+        return;
+      }
+      props.toast('保存しました');
       props.onDone();
     } catch (err) {
       props.toast((err as Error).message, true);
@@ -283,7 +299,7 @@ function MemoryEditor(props: {
           </button>
         ) : (
           <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
-            日付を入れると、AIへ渡すときに「3年8月7日 / 3日前」のように現在の日付と並べて載ります
+            日付を入れると、AIへ渡すときに「3年8月7日(土) / 3日前」のように現在の日付と並べて載ります
           </div>
         )}
       </Field>

@@ -355,7 +355,11 @@ export async function summarySuite(w) {
     check('統合の指示がある', p.includes('統合し、1本のあらすじとして書き直す'));
     check('前回分を落とさない指示がある', p.includes('出来事・約束・未解決の項目は落とさない'));
     check('人物設定を除外する指示がある', p.includes('人物の設定'));
-    check('日付の形式を指定している', p.includes('[5年9月10日(秋)] の形式'));
+    check('日付の形式を指定している（季節ではなく曜日）', p.includes('[5年9月10日(金)] の形式'));
+    // 会話ログの日付マーカーもメモリーと同じ表記にする（突き合わせられるように）
+    check('会話ログに曜日つきの日付マーカーが付く', p.includes('[3年8月10日(火)] '),
+      p.split('\n').find((l) => /^\[\d+年/.test(l)) ?? 'マーカーが無い');
+    check('日付マーカーに季節を出さない', !p.includes('(秋)'), '');
     check('文字数が反映される', p.includes('700文字程度'), '');
     check('「古い出来事も消さずに残し」は無くなった', !p.includes('古い出来事も消さずに残し'));
     check('方針が本文に入る', p.includes('# 要約の方針') && p.includes('# 何を落とすか'));
@@ -505,7 +509,7 @@ export async function memoryDateSuite(w) {
 
   const m = await find('港で待ち合わせると約束した');
   check('抽出範囲末尾のゲーム内時刻を保存する', m?.game_time === at, String(m?.game_time));
-  check('一覧では絶対日付を返す', m?.game_time_label === '3年8月10日', m?.game_time_label);
+  check('一覧では絶対日付を返す', m?.game_time_label === '3年8月10日(火)', m?.game_time_label);
 
   // 同じ日なら「今日」として注入される
   await clearMockRequests();
@@ -513,7 +517,7 @@ export async function memoryDateSuite(w) {
   await generate(chat.id, { content: 'x' });
   let prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
   check('同じ日は「今日」として注入する',
-    prompt.includes('- (3年8月10日 / 今日) 港で待ち合わせると約束した'),
+    prompt.includes('- (3年8月10日(火) / 今日) 港で待ち合わせると約束した'),
     prompt.split('\n').filter((l) => l.includes('港で')).join(' | '));
 
   // 日をまたぐと相対表記が動く
@@ -524,7 +528,7 @@ export async function memoryDateSuite(w) {
   await generate(chat.id, { content: 'y' });
   prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
   check('3日経つと「3日前」になる',
-    prompt.includes('- (3年8月10日 / 3日前) 港で待ち合わせると約束した'),
+    prompt.includes('- (3年8月10日(火) / 3日前) 港で待ち合わせると約束した'),
     prompt.split('\n').filter((l) => l.includes('港で')).join(' | '));
 
   // 手動追加は日付を持たない（実時間から推測しない）
@@ -1144,7 +1148,7 @@ export async function memoryDateEditSuite(w) {
     });
     check('年月日で設定できる', r.json.game_time === dayOf(3, 8, 10),
       `${r.json.game_time} / 期待 ${dayOf(3, 8, 10)}`);
-    check('ラベルが返る', r.json.game_time_label === '3年8月10日', r.json.game_time_label);
+    check('ラベルが返る', r.json.game_time_label === '3年8月10日(火)', r.json.game_time_label);
     check('編集欄用の年月日も返る',
       JSON.stringify(r.json.game_time_parts) === JSON.stringify({ year: 3, month: 8, day: 10 }),
       JSON.stringify(r.json.game_time_parts));
@@ -1166,7 +1170,7 @@ export async function memoryDateEditSuite(w) {
   {
     const m = await mk('作成時に日付を付ける', { game_time_parts: { year: 2, month: 3, day: 4 } });
     check('作成時に日付を付けられる', m.game_time === dayOf(2, 3, 4), String(m.game_time));
-    check('作成時のラベルも返る', m.game_time_label === '2年3月4日', m.game_time_label);
+    check('作成時のラベルも返る', m.game_time_label === '2年3月4日(水)', m.game_time_label);
     await api('DELETE', `/memories/${m.id}`);
   }
 
@@ -1179,7 +1183,7 @@ export async function memoryDateEditSuite(w) {
     await generate(chat.id, { content: 'x' });
     const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
     check('絶対日付＋相対表記で注入される',
-      prompt.includes('- (3年8月7日 / 3日前) 手で付けた日付が効く'),
+      prompt.includes('- (3年8月7日(土) / 3日前) 手で付けた日付が効く'),
       prompt.split('\n').find((l) => l.includes('手で付けた')) ?? '載っていない');
     await api('DELETE', `/memories/${m.id}`);
   }
@@ -1193,7 +1197,7 @@ export async function memoryDateEditSuite(w) {
     await generate(chat.id, { content: 'x' });
     const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
     check('未来の記憶は「まだ起きていない出来事」と明示する',
-      prompt.includes('- (3年8月20日 / まだ起きていない出来事) まだ先の出来事'),
+      prompt.includes('- (3年8月20日(金) / まだ起きていない出来事) まだ先の出来事'),
       prompt.split('\n').find((l) => l.includes('まだ先の')) ?? '載っていない');
     await api('DELETE', `/memories/${m.id}`);
   }
@@ -1207,7 +1211,7 @@ export async function memoryDateEditSuite(w) {
     await generate(chat.id, { content: 'x' });
     const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
     check('遠い過去は絶対日付だけで注入する',
-      prompt.includes('- (1年1月1日) ずっと昔の出来事'),
+      prompt.includes('- (1年1月1日(日)) ずっと昔の出来事'),
       prompt.split('\n').find((l) => l.includes('ずっと昔')) ?? '載っていない');
     await api('DELETE', `/memories/${m.id}`);
   }
