@@ -17,6 +17,8 @@ function popQueue() {
 /** 直近のリクエスト本文。プロンプトの中身と呼び出し回数を検証するために保持する */
 const seen = [];
 
+let modelsDelayMs = 0;
+
 const server = http.createServer(async (req, res) => {
   // テスト用: 受け取ったリクエストを覗く / 消す
   if (req.url.endsWith('/__requests')) {
@@ -26,7 +28,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // モデル一覧の応答を遅らせる（受付直後のraceを観測するため）
+  if (req.url.endsWith('/__models_delay')) {
+    let body = '';
+    for await (const c of req) body += c;
+    modelsDelayMs = Number(JSON.parse(body || '{}').ms) || 0;
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+    return;
+  }
+
   if (req.url.endsWith('/models')) {
+    if (modelsDelayMs) await new Promise((r) => setTimeout(r, modelsDelayMs));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({

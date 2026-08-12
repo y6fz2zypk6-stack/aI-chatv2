@@ -275,11 +275,6 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     res.status(404).json({ error: 'チャットが見つかりません' });
     return;
   }
-  if (inflight.has(chatId)) {
-    res.status(409).json({ error: '他の端末で生成中です' });
-    return;
-  }
-
   const body = req.body ?? {};
   const modes = (['content', 'regenerate', 'retry', 'autoContinue'] as const).filter(
     (k) => body[k] !== undefined && body[k] !== null && body[k] !== false && body[k] !== '',
@@ -290,359 +285,381 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
   }
   const mode = modes[0];
 
-  const settings = getSettings();
-  const last = lastMessage(chatId);
-
-  // ---- 基準ステートの決定（§8.1 ★重要）----
-  let baseState: ChatState;
-  let target: Message | null = null; // regenerate 対象
-
-  if (mode === 'content') {
-    const content = String(body.content ?? '').trim();
-    if (!content) {
-      res.status(400).json({ error: '本文が空です' });
-      return;
-    }
-    // userメッセージの state_after は直前の値をコピー（§4.7）
-    const userState = last?.state_after ?? chat.state;
-    const persona =
-      (chat.persona_id ? getPersona(chat.persona_id) : undefined) ?? getDefaultPersona();
-    insertMessage({
-      chat_id: chatId,
-      role: 'user',
-      content,
-      utterances: [
-        { speaker: 'user', name: persona?.name || 'あなた', text: content },
-      ],
-      state_after: userState,
-    });
-    if (!chat.title) {
-      updateChat(chatId, { title: content.slice(0, 24) });
-    }
-    baseState = userState;
-  } else if (mode === 'regenerate') {
-    // 末尾assistantに候補を追加。基準は対象の1つ前のメッセージ（§8.5・§8.1）
-    if (!last || last.role !== 'assistant') {
-      res.status(400).json({ error: 'regenerate はチャット末尾がassistantの場合のみ可能です' });
-      return;
-    }
-    // 場面転換マーカーは生成された応答ではないので、作り直しの対象にしない
-    // （やり直すと場面転換が消えて普通の応答に化ける）
-    if (last.kind === 'scene_break') {
-      res.status(400).json({ error: '場面転換は作り直せません。消してから進め直してください' });
-      return;
-    }
-    target = last;
-    const prev = previousMessage(chatId, last.seq);
-    // 直前が無い（＝先頭メッセージの再生成）場合はChatの初期ステートを基準にする。
-    // chats.state を使うと再生成のたびに経過時間が積み重なる（§8.1）。
-    baseState = prev?.state_after ?? chat.initial_state;
-  } else if (mode === 'retry') {
-    // retry: 末尾userへの応答再試行。userは追加保存しない（§5.6）
-    if (!last || last.role !== 'user') {
-      res.status(400).json({ error: 'retry はチャット末尾がuserの場合のみ可能です' });
-      return;
-    }
-    baseState = last.state_after;
-  } else {
-    // autoContinue: ユーザー入力なしでターンを進める（§8.7）。基準は現在の最後のメッセージ
-    if (!last || last.role !== 'assistant') {
-      res.status(400).json({ error: 'autoContinue はチャット末尾がassistantの場合のみ可能です' });
-      return;
-    }
-    baseState = last.state_after;
-  }
-
-  // ---- コンテキスト組み立て ----
-  let gathered: GatherResult;
-  try {
-    gathered = await gatherContext(chatId, baseState, target?.id ?? null);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+  // ---- ここからステート確定までが1区間（§5.4）----
+  // ロックは「userメッセージの保存」「コンテキスト組み立て」より前に取る。
+  // 組み立てはモデル情報の取得で待つことがあり（キャッシュが冷えているとき）、
+  // その隙に2本目が入ると user が二重に保存され、AbortController も上書きされる。
+  if (inflight.has(chatId)) {
+    res.status(409).json({ error: '他の端末で生成中です' });
     return;
   }
-  if (mode === 'autoContinue') gathered.input.autoContinueNudge = true;
-  const assembled = assembleContext(gathered.input);
-  if (assembled.overBudget) {
-    // 必須項目だけで上限超過（§6.5）
-    res.status(413).json({
-      error: `必須コンテキストがモデルの入力予算を超えています（推定${assembled.estimatedTokens}tok / 予算${assembled.inputBudget}tok）`,
-    });
-    return;
-  }
-
-  // ---- SSEストリーミング（§5.3）----
-  const send = sseInit(res);
   const abort = new AbortController();
   inflight.set(chatId, abort);
-
-  // @@@STATE 出現以降は画面に流さない。フェンス断片の誤表示を防ぐため
-  // 末尾 FENCE_OPEN.length 文字は常に保留してから送る
-  let full = '';
-  let visibleEmitted = 0;
-  const emitVisible = (flushAll: boolean) => {
-    const fenceIdx = full.indexOf(FENCE_OPEN);
-    const limit =
-      fenceIdx !== -1
-        ? fenceIdx
-        : flushAll
-          ? full.length
-          : Math.max(visibleEmitted, full.length - FENCE_OPEN.length);
-    if (limit > visibleEmitted) {
-      send('delta', { text: full.slice(visibleEmitted, limit) });
-      visibleEmitted = limit;
-    }
+  // 何度呼んでも安全にする。区間の終わりで明示的に外し、
+  // 途中で return / throw した場合は末尾の finally が拾う
+  let lockHeld = true;
+  const releaseLock = (): void => {
+    if (!lockHeld) return;
+    lockHeld = false;
+    inflight.delete(chatId);
   };
 
-  let aborted = false;
-  let failed: string | null = null;
   try {
-    const result = await streamChat({
-      model: gathered.model,
-      messages: assembled.messages,
-      maxTokens: settings.max_tokens + 200, // §5.7: max_tokens到達でフェンスが切れる対策
-      stop: assembled.stop,
-      signal: abort.signal,
-      onDelta: (text) => {
-        full += text;
-        emitVisible(false);
-      },
-    });
-    full = result.text;
-    aborted = result.aborted;
-    emitVisible(true);
-  } catch (err) {
-    failed = (err as Error).message;
-  }
+    const settings = getSettings();
+    const last = lastMessage(chatId);
 
+    // ---- 基準ステートの決定（§8.1 ★重要）----
+    let baseState: ChatState;
+    let target: Message | null = null; // regenerate 対象
 
-  // 生成〜ステート確定までを1つの区間として扱う（§5.4）。
-  // ストリームが終わった時点でロックを外すと、assistant・候補・発火履歴・
-  // chats.state を書き終える前に次のターンが始まり、古い lastMessage を
-  // 基準にしてしまう（メッセージの並び自体も崩れる）。
-  // done 以降の要約・知識抽出はこの区間に含めない。
-  let messageId = '';
-  let content = '';
-  let utterances: Utterance[] = [];
-  let status: GenerationStatus = 'complete';
-  let finalState: ChatState = baseState;
-  let warnings: string[] = [];
-  let firedTitles: string[] = [];
-  let eventRows: EventEvalRow[] = [];
-  let autoJoinSuggested: string[] = [];
-  try {
-    if (failed) {
-      // 生成失敗: assistantは保存しない。末尾がuserのまま残るので retry で再試行できる（§5.6）
-      send('error', { message: failed });
-      res.end();
-      return;
-    }
-
-    // ---- 後処理: サニタイズ → フェンス分離 → 発話パース → ステート適用 ----
-    const sanitized = sanitizeResponse(full, gathered.personaName);
-    const { body: text, fence } = splitFence(sanitized);
-
-    if (!text.trim()) {
-      send('error', { message: aborted ? '生成が停止されました（本文なし）' : '生成結果が空でした' });
-      res.end();
-      return;
-    }
-
-    let delta: StateDelta;
-    if (settings.state_enabled !== 1) {
-      delta = fallbackDelta(0);
-    } else if (aborted) {
-      // §5.8: 停止時は elapsed 0 のフォールバック。停止操作でゲーム内時間を進めない
-      delta = fallbackDelta(0);
-    } else if (settings.state_extraction_mode === 'separate_call') {
-      // §5.7-3: 本文生成後に軽量モデルで差分だけ抽出する
-      const extracted = await extractStateSeparate({
-        model: settings.utility_model || settings.default_model,
-        body: text,
-        baseState,
-        locations: gathered.input.locations,
-        characters: [...gathered.input.participants, ...gathered.input.npcPool],
-      });
-      if (extracted) {
-        delta = extracted;
-        fenceMissStreak.set(chatId, 0);
-      } else {
-        delta = fallbackDelta(10);
-        fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
+    if (mode === 'content') {
+      const content = String(body.content ?? '').trim();
+      if (!content) {
+        res.status(400).json({ error: '本文が空です' });
+        return;
       }
-    } else {
-      const parsed = parseStateDelta(fence);
-      if (parsed) {
-        delta = parsed;
-        fenceMissStreak.set(chatId, 0);
-      } else {
-        // §5.7: フェンス欠落時は elapsed 10、その他変更なし
-        delta = fallbackDelta(10);
-        fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
-      }
-    }
-
-    const parseResult = parseUtterances(text, gathered.parseCtx);
-    content = text;
-    utterances = parseResult.utterances;
-    autoJoinSuggested = parseResult.autoJoinCharacterIds;
-
-    const pl = gathered.pipeline;
-    const applied = applyDelta(
-      gathered.input.calendar,
-      baseState,
-      delta,
-      gathered.input.locations,
-      pl.characters,
-      {
-        // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる
-        rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + delta.elapsed_minutes) / 1440)}`),
-        varsSchema: pl.varsSchema,
-        varsEnabled: pl.varsEnabled,
-      },
-    );
-
-    status = aborted ? 'stopped' : 'complete';
-    const stateDeltaLog =
-      fence ??
-      (delta.fallback
-        ? `(fallback) elapsed_minutes: ${delta.elapsed_minutes}`
-        : `(separate_call) ${JSON.stringify(delta)}`);
-
-    if (target) {
-      // 作り直す候補の分は判定をやり直すので、このメッセージの発火履歴を消す（v1.5.3）
-      deleteFiresOfMessage(chatId, target.id);
-      // regenerate: 対象メッセージに候補を追加し、表示中コピーを差し替える（§4.8）
-      const v = insertVariant({
-        message_id: target.id,
-        content,
-        utterances,
-        state_delta: stateDeltaLog,
-        state_after: applied.state,
-      });
-      updateMessageActive(target.id, {
-        content,
-        utterances,
-        state_after: applied.state,
-        active_variant: v.index,
-        generation_status: status,
-      });
-      messageId = target.id;
-    } else {
-      // 通常送信 / retry: 新規assistant + index 0 のvariant（§4.8: 初回生成も必ず作る）
-      const msg = insertMessage({
+      // userメッセージの state_after は直前の値をコピー（§4.7）
+      const userState = last?.state_after ?? chat.state;
+      const persona =
+        (chat.persona_id ? getPersona(chat.persona_id) : undefined) ?? getDefaultPersona();
+      insertMessage({
         chat_id: chatId,
-        role: 'assistant',
+        role: 'user',
         content,
-        utterances,
-        state_after: applied.state,
-        generation_status: status,
+        utterances: [
+          { speaker: 'user', name: persona?.name || 'あなた', text: content },
+        ],
+        state_after: userState,
       });
-      insertVariant({
-        message_id: msg.id,
-        content,
-        utterances,
-        state_delta: stateDeltaLog,
-        state_after: applied.state,
-      });
-      messageId = msg.id;
+      if (!chat.title) {
+        updateChat(chatId, { title: content.slice(0, 24) });
+      }
+      baseState = userState;
+    } else if (mode === 'regenerate') {
+      // 末尾assistantに候補を追加。基準は対象の1つ前のメッセージ（§8.5・§8.1）
+      if (!last || last.role !== 'assistant') {
+        res.status(400).json({ error: 'regenerate はチャット末尾がassistantの場合のみ可能です' });
+        return;
+      }
+      // 場面転換マーカーは生成された応答ではないので、作り直しの対象にしない
+      // （やり直すと場面転換が消えて普通の応答に化ける）
+      if (last.kind === 'scene_break') {
+        res.status(400).json({ error: '場面転換は作り直せません。消してから進め直してください' });
+        return;
+      }
+      target = last;
+      const prev = previousMessage(chatId, last.seq);
+      // 直前が無い（＝先頭メッセージの再生成）場合はChatの初期ステートを基準にする。
+      // chats.state を使うと再生成のたびに経過時間が積み重なる（§8.1）。
+      baseState = prev?.state_after ?? chat.initial_state;
+    } else if (mode === 'retry') {
+      // retry: 末尾userへの応答再試行。userは追加保存しない（§5.6）
+      if (!last || last.role !== 'user') {
+        res.status(400).json({ error: 'retry はチャット末尾がuserの場合のみ可能です' });
+        return;
+      }
+      baseState = last.state_after;
+    } else {
+      // autoContinue: ユーザー入力なしでターンを進める（§8.7）。基準は現在の最後のメッセージ
+      if (!last || last.role !== 'assistant') {
+        res.status(400).json({ error: 'autoContinue はチャット末尾がassistantの場合のみ可能です' });
+        return;
+      }
+      baseState = last.state_after;
     }
 
-    // ---- 判定パイプライン（v1.5.3 §6）----
-    // assistant の state_after が確定した直後にのみ走る。注入は次ターンのプロンプトへ。
-    // 途中で停止した場合は走らせず、次のターンで改めて判定させる。
-    finalState = applied.state;
-    if (status === 'complete' && pl.eventsEnabled) {
-      const result = runEventPipeline({
-        chatId,
-        events: listEvents(chat.world_id),
+    // ---- コンテキスト組み立て ----
+    let gathered: GatherResult;
+    try {
+      gathered = await gatherContext(chatId, baseState, target?.id ?? null);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+      return;
+    }
+    if (mode === 'autoContinue') gathered.input.autoContinueNudge = true;
+    const assembled = assembleContext(gathered.input);
+    if (assembled.overBudget) {
+      // 必須項目だけで上限超過（§6.5）
+      res.status(413).json({
+        error: `必須コンテキストがモデルの入力予算を超えています（推定${assembled.estimatedTokens}tok / 予算${assembled.inputBudget}tok）`,
+      });
+      return;
+    }
+
+    // ---- SSEストリーミング（§5.3）----
+    const send = sseInit(res);
+
+    // @@@STATE 出現以降は画面に流さない。フェンス断片の誤表示を防ぐため
+    // 末尾 FENCE_OPEN.length 文字は常に保留してから送る
+    let full = '';
+    let visibleEmitted = 0;
+    const emitVisible = (flushAll: boolean) => {
+      const fenceIdx = full.indexOf(FENCE_OPEN);
+      const limit =
+        fenceIdx !== -1
+          ? fenceIdx
+          : flushAll
+            ? full.length
+            : Math.max(visibleEmitted, full.length - FENCE_OPEN.length);
+      if (limit > visibleEmitted) {
+        send('delta', { text: full.slice(visibleEmitted, limit) });
+        visibleEmitted = limit;
+      }
+    };
+
+    let aborted = false;
+    let failed: string | null = null;
+    try {
+      const result = await streamChat({
+        model: gathered.model,
+        messages: assembled.messages,
+        maxTokens: settings.max_tokens + 200, // §5.7: max_tokens到達でフェンスが切れる対策
+        stop: assembled.stop,
+        signal: abort.signal,
+        onDelta: (text) => {
+          full += text;
+          emitVisible(false);
+        },
+      });
+      full = result.text;
+      aborted = result.aborted;
+      emitVisible(true);
+    } catch (err) {
+      failed = (err as Error).message;
+    }
+
+
+    // 生成〜ステート確定までを1つの区間として扱う（§5.4）。
+    // ストリームが終わった時点でロックを外すと、assistant・候補・発火履歴・
+    // chats.state を書き終える前に次のターンが始まり、古い lastMessage を
+    // 基準にしてしまう（メッセージの並び自体も崩れる）。
+    // done 以降の要約・知識抽出はこの区間に含めない。
+    let messageId = '';
+    let content = '';
+    let utterances: Utterance[] = [];
+    let status: GenerationStatus = 'complete';
+    let finalState: ChatState = baseState;
+    let warnings: string[] = [];
+    let firedTitles: string[] = [];
+    let eventRows: EventEvalRow[] = [];
+    let autoJoinSuggested: string[] = [];
+    try {
+      if (failed) {
+        // 生成失敗: assistantは保存しない。末尾がuserのまま残るので retry で再試行できる（§5.6）
+        send('error', { message: failed });
+        res.end();
+        return;
+      }
+
+      // ---- 後処理: サニタイズ → フェンス分離 → 発話パース → ステート適用 ----
+      const sanitized = sanitizeResponse(full, gathered.personaName);
+      const { body: text, fence } = splitFence(sanitized);
+
+      if (!text.trim()) {
+        send('error', { message: aborted ? '生成が停止されました（本文なし）' : '生成結果が空でした' });
+        res.end();
+        return;
+      }
+
+      let delta: StateDelta;
+      if (settings.state_enabled !== 1) {
+        delta = fallbackDelta(0);
+      } else if (aborted) {
+        // §5.8: 停止時は elapsed 0 のフォールバック。停止操作でゲーム内時間を進めない
+        delta = fallbackDelta(0);
+      } else if (settings.state_extraction_mode === 'separate_call') {
+        // §5.7-3: 本文生成後に軽量モデルで差分だけ抽出する
+        const extracted = await extractStateSeparate({
+          model: settings.utility_model || settings.default_model,
+          body: text,
+          baseState,
+          locations: gathered.input.locations,
+          characters: [...gathered.input.participants, ...gathered.input.npcPool],
+        });
+        if (extracted) {
+          delta = extracted;
+          fenceMissStreak.set(chatId, 0);
+        } else {
+          delta = fallbackDelta(10);
+          fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
+        }
+      } else {
+        const parsed = parseStateDelta(fence);
+        if (parsed) {
+          delta = parsed;
+          fenceMissStreak.set(chatId, 0);
+        } else {
+          // §5.7: フェンス欠落時は elapsed 10、その他変更なし
+          delta = fallbackDelta(10);
+          fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
+        }
+      }
+
+      const parseResult = parseUtterances(text, gathered.parseCtx);
+      content = text;
+      utterances = parseResult.utterances;
+      autoJoinSuggested = parseResult.autoJoinCharacterIds;
+
+      const pl = gathered.pipeline;
+      const applied = applyDelta(
+        gathered.input.calendar,
         baseState,
-        newState: applied.state,
-        calendar: gathered.input.calendar,
-        locations: gathered.input.locations,
-        varsSchema: pl.varsSchema,
-        varsEnabled: pl.varsEnabled,
-        baseMessageId: lastMessage(chatId)?.id ?? chatId,
-        visitId: visitIdOf(chatId, applied.state),
-        firesByEvent: groupFires(chatId),
-        maxPerTurn: Math.max(1, pl.settings.event_max_per_turn),
-      });
-      eventRows = result.rows;
+        delta,
+        gathered.input.locations,
+        pl.characters,
+        {
+          // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる
+          rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + delta.elapsed_minutes) / 1440)}`),
+          varsSchema: pl.varsSchema,
+          varsEnabled: pl.varsEnabled,
+        },
+      );
 
-      // set_vars の適用と発火記録は1トランザクションで揃える（§6.4）
-      const commit = db.transaction(() => {
-        let state = applied.state;
-        for (const { event, scopeKey } of result.adopted) {
-          if (pl.varsEnabled && event.set_vars.length) {
-            const r = applyVarOps(pl.varsSchema, state.vars, event.set_vars);
-            state = { ...state, vars: r.vars };
-            applied.warnings.push(...r.warnings);
+      status = aborted ? 'stopped' : 'complete';
+      const stateDeltaLog =
+        fence ??
+        (delta.fallback
+          ? `(fallback) elapsed_minutes: ${delta.elapsed_minutes}`
+          : `(separate_call) ${JSON.stringify(delta)}`);
+
+      if (target) {
+        // 作り直す候補の分は判定をやり直すので、このメッセージの発火履歴を消す（v1.5.3）
+        deleteFiresOfMessage(chatId, target.id);
+        // regenerate: 対象メッセージに候補を追加し、表示中コピーを差し替える（§4.8）
+        const v = insertVariant({
+          message_id: target.id,
+          content,
+          utterances,
+          state_delta: stateDeltaLog,
+          state_after: applied.state,
+        });
+        updateMessageActive(target.id, {
+          content,
+          utterances,
+          state_after: applied.state,
+          active_variant: v.index,
+          generation_status: status,
+        });
+        messageId = target.id;
+      } else {
+        // 通常送信 / retry: 新規assistant + index 0 のvariant（§4.8: 初回生成も必ず作る）
+        const msg = insertMessage({
+          chat_id: chatId,
+          role: 'assistant',
+          content,
+          utterances,
+          state_after: applied.state,
+          generation_status: status,
+        });
+        insertVariant({
+          message_id: msg.id,
+          content,
+          utterances,
+          state_delta: stateDeltaLog,
+          state_after: applied.state,
+        });
+        messageId = msg.id;
+      }
+
+      // ---- 判定パイプライン（v1.5.3 §6）----
+      // assistant の state_after が確定した直後にのみ走る。注入は次ターンのプロンプトへ。
+      // 途中で停止した場合は走らせず、次のターンで改めて判定させる。
+      finalState = applied.state;
+      if (status === 'complete' && pl.eventsEnabled) {
+        const result = runEventPipeline({
+          chatId,
+          events: listEvents(chat.world_id),
+          baseState,
+          newState: applied.state,
+          calendar: gathered.input.calendar,
+          locations: gathered.input.locations,
+          varsSchema: pl.varsSchema,
+          varsEnabled: pl.varsEnabled,
+          baseMessageId: lastMessage(chatId)?.id ?? chatId,
+          visitId: visitIdOf(chatId, applied.state),
+          firesByEvent: groupFires(chatId),
+          maxPerTurn: Math.max(1, pl.settings.event_max_per_turn),
+        });
+        eventRows = result.rows;
+
+        // set_vars の適用と発火記録は1トランザクションで揃える（§6.4）
+        const commit = db.transaction(() => {
+          let state = applied.state;
+          for (const { event, scopeKey } of result.adopted) {
+            if (pl.varsEnabled && event.set_vars.length) {
+              const r = applyVarOps(pl.varsSchema, state.vars, event.set_vars);
+              state = { ...state, vars: r.vars };
+              applied.warnings.push(...r.warnings);
+            }
+            recordFire({
+              chat_id: chatId,
+              event_id: event.id,
+              message_id: messageId,
+              fired_at_time: applied.state.time,
+              scope_key: scopeKey,
+            });
+            firedTitles.push(event.title);
           }
-          recordFire({
-            chat_id: chatId,
-            event_id: event.id,
-            message_id: messageId,
-            fired_at_time: applied.state.time,
-            scope_key: scopeKey,
-          });
-          firedTitles.push(event.title);
-        }
-        if (state !== applied.state) {
-          // 確定済みの state_after を書き戻す。表示中の候補も必ず揃える（§6.4）
-          updateMessageActive(messageId, { state_after: state });
-          const active = listVariants(messageId).find(
-            (v) => v.index === (getMessage(messageId)?.active_variant ?? 0),
-          );
-          if (active) updateVariantState(active.id, state);
-        }
-        finalState = state;
-      });
-      commit();
+          if (state !== applied.state) {
+            // 確定済みの state_after を書き戻す。表示中の候補も必ず揃える（§6.4）
+            updateMessageActive(messageId, { state_after: state });
+            const active = listVariants(messageId).find(
+              (v) => v.index === (getMessage(messageId)?.active_variant ?? 0),
+            );
+            if (active) updateVariantState(active.id, state);
+          }
+          finalState = state;
+        });
+        commit();
+      }
+
+      warnings = [...parseResult.warnings, ...applied.warnings];
+      setChatState(chatId, finalState);
+    } finally {
+      releaseLock();
     }
 
-    warnings = [...parseResult.warnings, ...applied.warnings];
-    setChatState(chatId, finalState);
+    // 要約・知識抽出はバックグラウンド（§8.3・§8.4）。
+    // 互いに独立して判定する（auto_summarize を切っても自動抽出は動く）。
+    // 結果は done のあとに notice として流す（§5.9）
+    const summaryTask = maybeSummarize(chatId, settings);
+    const extractTask = maybeExtract(chatId, settings);
+    const needsSummary = summaryTask.needed;
+
+    // オートプレイの継続判定（§8.7）: 区切りが良ければ自動停止
+    let autoplayShouldStop = false;
+    if (mode === 'autoContinue' && settings.autoplay_judge === 1 && !aborted) {
+      autoplayShouldStop = await judgeAutoplayStop(content, settings);
+    }
+
+    send('done', {
+      messageId,
+      content,
+      utterances,
+      state: finalState,
+      gameTime: toGameTime(gathered.input.calendar, finalState.time),
+      needsSummary,
+      firedEvents: firedTitles,
+      eventRows,
+      warnings,
+      stateWarnings: warnings,
+      fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,
+      autoJoinSuggested,
+      generationStatus: status,
+      autoplayShouldStop,
+    });
+
+    // 裏で走った要約・抽出の結果を、ストリームを閉じる前に流す（§5.9）。
+    // done は先に送っているので画面はもう待たされていない。inflight も解放済みなので
+    // 次のターンを始めることもできる。
+    for (const n of await settleNotices([summaryTask.done, extractTask.done])) {
+      send('notice', n);
+    }
+    res.end();
   } finally {
-    inflight.delete(chatId);
+    // 400 / 413 / 500 など、どの経路で抜けても必ず外す
+    releaseLock();
   }
-
-  // 要約・知識抽出はバックグラウンド（§8.3・§8.4）。
-  // 互いに独立して判定する（auto_summarize を切っても自動抽出は動く）。
-  // 結果は done のあとに notice として流す（§5.9）
-  const summaryTask = maybeSummarize(chatId, settings);
-  const extractTask = maybeExtract(chatId, settings);
-  const needsSummary = summaryTask.needed;
-
-  // オートプレイの継続判定（§8.7）: 区切りが良ければ自動停止
-  let autoplayShouldStop = false;
-  if (mode === 'autoContinue' && settings.autoplay_judge === 1 && !aborted) {
-    autoplayShouldStop = await judgeAutoplayStop(content, settings);
-  }
-
-  send('done', {
-    messageId,
-    content,
-    utterances,
-    state: finalState,
-    gameTime: toGameTime(gathered.input.calendar, finalState.time),
-    needsSummary,
-    firedEvents: firedTitles,
-    eventRows,
-    warnings,
-    stateWarnings: warnings,
-    fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,
-    autoJoinSuggested,
-    generationStatus: status,
-    autoplayShouldStop,
-  });
-
-  // 裏で走った要約・抽出の結果を、ストリームを閉じる前に流す（§5.9）。
-  // done は先に送っているので画面はもう待たされていない。inflight も解放済みなので
-  // 次のターンを始めることもできる。
-  for (const n of await settleNotices([summaryTask.done, extractTask.done])) {
-    send('notice', n);
-  }
-  res.end();
 });
 
 /**

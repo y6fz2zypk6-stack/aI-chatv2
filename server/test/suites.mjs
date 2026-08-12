@@ -1,5 +1,18 @@
 // ステート・variant・再生成・分岐のテストスイート
-import { api, check, generate, getChat, hhmm, note, reply, setQueue, suite } from './harness.mjs';
+import {
+  api,
+  check,
+  clearMockRequests,
+  generate,
+  getChat,
+  hhmm,
+  mockRequests,
+  note,
+  reply,
+  setModelsDelay,
+  setQueue,
+  suite,
+} from './harness.mjs';
 
 // 3年8月10日 18:00 = 877日 * 1440分 + 18時間
 export const T1800 = 877 * 1440 + 18 * 60;
@@ -879,4 +892,51 @@ export async function importRollbackSuite() {
   check('キャラも二重に残っていない', chars.length === 1, `${chars.length}件`);
 
   await api('DELETE', `/worlds/${ok.json.world.id}`);
+}
+
+// ===========================================================================
+// 生成ロックの取得タイミング（受付直後〜組み立ての間にも入れさせない）
+// ===========================================================================
+// 前提: サーバを再起動した直後に呼ぶこと。
+// モデル一覧はプロセス内に1時間キャッシュされるので、温まっていると
+// 組み立て中に待ちが発生せず、この race を再現できない。
+export async function acceptLockSuite(w) {
+  suite('生成ロックの取得タイミング');
+
+  const { chat } = await newChat(w);
+  await clearMockRequests();
+  // 組み立て（モデル一覧の取得）で待たせ、2本目が割り込める幅を作る
+  await setModelsDelay(700);
+  setQueue([
+    { text: reply({ char: '「1本目」', elapsed: 10, location: w.shop }) },
+    { text: reply({ char: '「2本目」', elapsed: 10, location: w.shop }) },
+  ]);
+
+  // ほぼ同時に2本投げる
+  const [a, b] = await Promise.all([
+    generate(chat.id, { content: 'A' }),
+    (async () => {
+      await new Promise((r) => setTimeout(r, 60)); // 受付直後〜組み立て中に重ねる
+      return generate(chat.id, { content: 'B' });
+    })(),
+  ]);
+  await setModelsDelay(0);
+
+  const statuses = [a.httpStatus, b.httpStatus].sort().join(',');
+  check('片方だけが通る', statuses === '200,409', statuses);
+
+  const d = await getChat(chat.id);
+  const roles = d.messages.map((m) => m.role).join(',');
+  check('user が二重に保存されない', roles === 'assistant,user,assistant', roles);
+  check('userメッセージは1件だけ', d.messages.filter((m) => m.role === 'user').length === 1, roles);
+
+  // 生成そのものも1回しか走っていない（＝AbortControllerが二重に作られていない）
+  const streams = (await mockRequests()).filter((r) => r.stream).length;
+  check('LLMの生成は1回だけ', streams === 1, `${streams}回`);
+
+  // ロックは正しく外れている
+  setQueue([{ text: reply({ char: '「3本目」', elapsed: 10, location: w.shop }) }]);
+  const next = await generate(chat.id, { content: 'C' });
+  check('そのあとの生成は通る', next.httpStatus === 200 && !!next.done,
+    `status=${next.httpStatus} ${next.error ?? ''}`);
 }

@@ -20,6 +20,15 @@ export async function clearMockRequests() {
   await fetch(`${MOCK}/__requests`, { method: 'DELETE' });
 }
 
+/** モデル一覧の応答を遅らせる。受付直後のraceを観測するために使う */
+export async function setModelsDelay(ms) {
+  await fetch(`${MOCK}/__models_delay`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ms }),
+  });
+}
+
 export async function api(method, path, body) {
   const res = await fetch(BASE + path, {
     method,

@@ -150,6 +150,10 @@ try {
   await waitFor(`http://localhost:${PORT}/api/config`);
   await s.restored(snapshot);
 
+  // 受付直後のロック取得は、モデル一覧のキャッシュが空の状態でしか観測できない。
+  // 再起動直後のここで実行する
+  await s.acceptLockSuite(w);
+
   exitCode = report() > 0 ? 1 : 0;
 } catch (err) {
   console.error('\nテストの実行に失敗しました:', err);
