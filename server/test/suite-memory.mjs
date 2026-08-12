@@ -1116,3 +1116,68 @@ export async function seedSuite() {
     Object.keys(cal.seasons).every((s) => cal.weather_table[s]),
     Object.keys(cal.weather_table).join(','));
 }
+
+// ===========================================================================
+// メモリーの日付を手で設定する
+// ===========================================================================
+export async function memoryDateEditSuite(w) {
+  suite('メモリーの日付編集');
+
+  const cal = (await api('GET', `/worlds/${w.world.id}/calendar`)).json;
+  const perDay = 1440;
+  const dayOf = (y, mo, d) =>
+    (((y - 1) * cal.months_per_year + (mo - 1)) * cal.days_per_month + (d - 1)) * perDay;
+
+  const mk = async (content, body = {}) =>
+    (await api('POST', `/characters/${w.ashley.id}/memories`, { content, ...body })).json;
+
+  // 手で足したものは日付なし。あとから付けられる
+  {
+    const m = await mk('あとから日付を付ける');
+    check('手動追加は日付なしのまま', m.game_time === null && m.game_time_parts === null,
+      JSON.stringify([m.game_time, m.game_time_parts]));
+
+    const r = await api('PUT', `/memories/${m.id}`, {
+      ...m, game_time_parts: { year: 3, month: 8, day: 10 },
+    });
+    check('年月日で設定できる', r.json.game_time === dayOf(3, 8, 10),
+      `${r.json.game_time} / 期待 ${dayOf(3, 8, 10)}`);
+    check('ラベルが返る', r.json.game_time_label === '3年8月10日', r.json.game_time_label);
+    check('編集欄用の年月日も返る',
+      JSON.stringify(r.json.game_time_parts) === JSON.stringify({ year: 3, month: 8, day: 10 }),
+      JSON.stringify(r.json.game_time_parts));
+
+    // 日付なしに戻せる
+    const cleared = await api('PUT', `/memories/${m.id}`, { ...r.json, game_time_parts: null });
+    check('日付なしに戻せる', cleared.json.game_time === null && cleared.json.game_time_label === '',
+      JSON.stringify([cleared.json.game_time, cleared.json.game_time_label]));
+
+    // game_time_parts を送らなければ触らない
+    await api('PUT', `/memories/${m.id}`, { ...r.json, game_time_parts: { year: 3, month: 8, day: 10 } });
+    const untouched = await api('PUT', `/memories/${m.id}`, { content: '本文だけ直す' });
+    check('日付を送らない更新では現状維持', untouched.json.game_time === dayOf(3, 8, 10),
+      String(untouched.json.game_time));
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  // 作成時にも指定できる
+  {
+    const m = await mk('作成時に日付を付ける', { game_time_parts: { year: 2, month: 3, day: 4 } });
+    check('作成時に日付を付けられる', m.game_time === dayOf(2, 3, 4), String(m.game_time));
+    check('作成時のラベルも返る', m.game_time_label === '2年3月4日', m.game_time_label);
+    await api('DELETE', `/memories/${m.id}`);
+  }
+
+  // 手で付けた日付が注入にも効く
+  {
+    const chat = await newChat(w); // 3年8月10日 18:00 開始
+    const m = await mk('手で付けた日付が効く', { game_time_parts: { year: 3, month: 8, day: 7 } });
+    await clearMockRequests();
+    setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 'x' });
+    const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+    check('相対表記で注入される', prompt.includes('- (3日前) 手で付けた日付が効く'),
+      prompt.split('\n').find((l) => l.includes('手で付けた')) ?? '載っていない');
+    await api('DELETE', `/memories/${m.id}`);
+  }
+}

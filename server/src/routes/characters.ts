@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { LorebookEntry, Memory, MemoryListItem } from '../../../shared/types.js';
 import { getCalendar } from '../db/repo/calendars.js';
-import { memoryDateLabel } from '../domain/calendar.js';
+import { memoryDateLabel, toGameTime, toMinutes } from '../domain/calendar.js';
 import {
   createCharacter,
   deleteCharacter,
@@ -163,10 +163,36 @@ charactersRouter.post('/worlds/:id/characters/import', (req, res) => {
 function withDateLabel(characterId: string, items: Memory[]): MemoryListItem[] {
   const c = getCharacter(characterId);
   const cal = c ? getCalendar(c.world_id) : null;
-  return items.map((m) => ({
-    ...m,
-    game_time_label: cal ? memoryDateLabel(cal, m.game_time, null) : '',
-  }));
+  return items.map((m) => {
+    const gt = cal && m.game_time != null ? toGameTime(cal, m.game_time) : null;
+    return {
+      ...m,
+      game_time_label: cal ? memoryDateLabel(cal, m.game_time, null) : '',
+      game_time_parts: gt ? { year: gt.year, month: gt.month, day: gt.day } : null,
+    };
+  });
+}
+
+/**
+ * 本文中の年月日指定を通算分へ直す（§4.12: 時刻演算は calendar.ts に一本化）。
+ * 記憶に使うのは日付だけなので、時刻は 0:00 に寄せる。
+ *   - game_time_parts あり → その日付
+ *   - game_time_parts が null → 日付なしに戻す
+ *   - どちらも無い → 触らない（呼び出し側で patch から外す）
+ */
+function resolveGameTime(
+  characterId: string,
+  body: Record<string, unknown>,
+): { game_time: number | null } | null {
+  if (!('game_time_parts' in body)) return null;
+  const parts = body.game_time_parts as { year?: number; month?: number; day?: number } | null;
+  if (!parts) return { game_time: null };
+  const c = getCharacter(characterId);
+  if (!c) return null;
+  const { year, month, day } = parts;
+  if (![year, month, day].every((v) => Number.isFinite(v))) return { game_time: null };
+  const cal = getCalendar(c.world_id);
+  return { game_time: Math.max(0, toMinutes(cal, year!, month!, day!, 0, 0)) };
 }
 
 charactersRouter.get('/characters/:id/memories', (req, res) => {
@@ -178,12 +204,22 @@ charactersRouter.post('/characters/:id/memories', (req, res) => {
     res.status(404).json({ error: 'キャラクターが見つかりません' });
     return;
   }
-  const m = createMemory(req.params.id, req.body ?? {});
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const resolved = resolveGameTime(req.params.id, body);
+  const m = createMemory(req.params.id, { ...body, ...(resolved ?? {}) });
   res.status(201).json(withDateLabel(req.params.id, [m])[0]);
 });
 
 charactersRouter.put('/memories/:id', (req, res) => {
-  const m = updateMemory(req.params.id, req.body ?? {});
+  const cur = getMemory(req.params.id);
+  if (!cur) {
+    res.status(404).json({ error: 'メモリーが見つかりません' });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  // 年月日で来たものはここで通算分へ直す。game_time をそのまま受けるのは残す
+  const resolved = resolveGameTime(cur.character_id, body);
+  const m = updateMemory(req.params.id, { ...body, ...(resolved ?? {}) });
   if (!m) {
     res.status(404).json({ error: 'メモリーが見つかりません' });
     return;

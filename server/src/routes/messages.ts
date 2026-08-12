@@ -439,7 +439,10 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     let utterances: Utterance[] = [];
     let status: GenerationStatus = 'complete';
     let finalState: ChatState = baseState;
-    let warnings: string[] = [];
+    // warnings は発話パース + ステート適用の両方、stateWarnings はステート適用だけ。
+  // 用途が違うので分けて持つ（混ぜると「時間や場所の警告」の絞り込みができなくなる）
+  let warnings: string[] = [];
+  let stateWarnings: string[] = [];
     let firedTitles: string[] = [];
     let eventRows: EventEvalRow[] = [];
     let autoJoinSuggested: string[] = [];
@@ -613,7 +616,8 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
         commit();
       }
 
-      warnings = [...parseResult.warnings, ...applied.warnings];
+      stateWarnings = applied.warnings;
+    warnings = [...parseResult.warnings, ...applied.warnings];
       setChatState(chatId, finalState);
     } finally {
       releaseLock();
@@ -642,7 +646,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
       firedEvents: firedTitles,
       eventRows,
       warnings,
-      stateWarnings: warnings,
+      stateWarnings,
       fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,
       autoJoinSuggested,
       generationStatus: status,

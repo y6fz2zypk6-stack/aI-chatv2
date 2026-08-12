@@ -169,6 +169,9 @@ export default function MemoriesPage() {
   );
 }
 
+type DateParts = { year: number | null; month: number | null; day: number | null };
+const EMPTY_DATE: DateParts = { year: null, month: null, day: null };
+
 function MemoryEditor(props: {
   memory: MemoryListItem;
   characters: Character[];
@@ -177,14 +180,22 @@ function MemoryEditor(props: {
   toast: (msg: string, error?: boolean) => void;
 }) {
   const [m, setM] = useState(props.memory);
+  const [date, setDate] = useState<DateParts>(props.memory.game_time_parts ?? EMPTY_DATE);
+  const hasDate = date.year !== null || date.month !== null || date.day !== null;
+  const dateComplete = date.year !== null && date.month !== null && date.day !== null;
 
   const save = async () => {
     if (!m.content.trim()) {
       props.toast('内容が空です', true);
       return;
     }
+    if (hasDate && !dateComplete) {
+      props.toast('日付は年・月・日をすべて入れてください（消すなら3つとも空に）', true);
+      return;
+    }
     try {
-      await api.put(`/memories/${m.id}`, m);
+      // 年月日はサーバで通算分へ直してもらう。空なら日付なしに戻す
+      await api.put(`/memories/${m.id}`, { ...m, game_time_parts: dateComplete ? date : null });
       props.onDone();
     } catch (err) {
       props.toast((err as Error).message, true);
@@ -240,6 +251,43 @@ function MemoryEditor(props: {
           </select>
         </div>
       </Field>
+      {/* いつの出来事か。日付だけを持ち、時刻は使わない（§10.2）。
+          年月日 → 通算分の変換は暦に依存するのでサーバに任せる */}
+      <Field label="日付（この出来事がいつのことか。空にすると日付なし）">
+        <div className="row">
+          {(
+            [
+              ['年', 'year'],
+              ['月', 'month'],
+              ['日', 'day'],
+            ] as const
+          ).map(([label, key]) => (
+            <div key={key} className="field" style={{ flex: '1 1 0', minWidth: 0 }}>
+              <label>{label}</label>
+              <input
+                type="number"
+                min={1}
+                value={date[key] === null ? '' : date[key]}
+                placeholder="—"
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  setDate({ ...date, [key]: v === '' ? null : Math.max(1, parseInt(v, 10) || 1) });
+                }}
+              />
+            </div>
+          ))}
+        </div>
+        {hasDate ? (
+          <button className="pill sm" style={{ marginTop: 8 }} onClick={() => setDate(EMPTY_DATE)}>
+            日付なしにする
+          </button>
+        ) : (
+          <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+            日付を入れると、AIへ渡すときに「3日前」のように現在の日付から見た形で載ります
+          </div>
+        )}
+      </Field>
+
       <div className="setting">
         <div className="txt">
           <label>注入する</label>

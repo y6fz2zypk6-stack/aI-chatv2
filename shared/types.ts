@@ -438,10 +438,15 @@ export interface Memory {
   updated_at: number;
 }
 
-/** 一覧APIの返り値。game_time の表示用文字列をサーバ側で作って添える */
+/** 一覧APIの返り値。game_time の表示用の値をサーバ側で作って添える */
 export interface MemoryListItem extends Memory {
   /** 「1年7月12日」など。game_time が null なら空文字 */
   game_time_label: string;
+  /**
+   * 編集欄の初期値に使う年月日。game_time が null なら null。
+   * 通算分 ↔ 年月日の変換は暦に依存するので、クライアントでは行わない（§4.12）。
+   */
+  game_time_parts: { year: number; month: number; day: number } | null;
 }
 
 // ---- 設定（§12） ----
