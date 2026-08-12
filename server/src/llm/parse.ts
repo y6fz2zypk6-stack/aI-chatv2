@@ -85,21 +85,45 @@ export function fallbackDelta(elapsed: number): StateDelta {
  * 保存前に行頭の assistant / human / system を除去し、
  * ユーザー（ペルソナ）のターンが始まった行以降を切り捨てる
  */
-export function sanitizeResponse(raw: string, personaName: string): string {
+export interface SanitizeResult {
+  text: string;
+  /**
+   * ペルソナ（または `user:`）の行が現れて、そこ以降を捨てたか。
+   *
+   * **捨てたことを呼び出し側へ伝える。** 伝えないと、代弁が原因で本文が短くなった
+   * ことに誰も気づけない。とくにフェンス欠落と取り違えると、利用者は
+   * 「モデルが @@@STATE を書いてくれない」方向を調べ始めてしまう（§5.6）。
+   */
+  impersonated: boolean;
+}
+
+/**
+ * 本文から「モデルが書いてはいけない行」を落とす（§5.4）。
+ *
+ * **`@@@STATE` フェンスを渡さないこと。** フェンスは本文の後ろに付くので、
+ * 代弁行で打ち切るこの処理に通すとフェンスまで消える。呼び出し側は
+ * `splitFence` で本文とフェンスを分けたあと、本文だけをここへ渡す。
+ */
+export function sanitizeResponse(raw: string, personaName: string): SanitizeResult {
   const lines = raw.split('\n');
   const out: string[] = [];
+  let impersonated = false;
   for (const line of lines) {
     if (/^\s*(assistant|human|system)\s*[:：]/i.test(line)) continue;
     if (
       personaName &&
       (line.startsWith(`${personaName}:`) || line.startsWith(`${personaName}：`))
     ) {
+      impersonated = true;
       break;
     }
-    if (/^\s*user\s*[:：]/i.test(line)) break;
+    if (/^\s*user\s*[:：]/i.test(line)) {
+      impersonated = true;
+      break;
+    }
     out.push(line);
   }
-  return out.join('\n').trim();
+  return { text: out.join('\n').trim(), impersonated };
 }
 
 // ---- 発話パース（§5.4） ----

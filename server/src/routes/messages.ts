@@ -451,10 +451,13 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     let utterances: Utterance[] = [];
     let status: GenerationStatus = 'complete';
     let finalState: ChatState = baseState;
-    // warnings は発話パース + ステート適用の両方、stateWarnings はステート適用だけ。
-  // 用途が違うので分けて持つ（混ぜると「時間や場所の警告」の絞り込みができなくなる）
-  let warnings: string[] = [];
-  let stateWarnings: string[] = [];
+    // warnings は本文の後処理 + 発話パース + ステート適用、stateWarnings はステート適用だけ。
+    // 用途が違うので分けて持つ（混ぜると「時間や場所の警告」の絞り込みができなくなる）
+    let warnings: string[] = [];
+    let stateWarnings: string[] = [];
+    // 本文を整えた段階で出た警告（代弁の切り詰めなど）。
+    // warnings は下で組み直すので、ここへ溜めてから合流させる
+    const bodyWarnings: string[] = [];
     let firedTitles: string[] = [];
     let eventRows: EventEvalRow[] = [];
     let autoJoinSuggested: string[] = [];
@@ -466,9 +469,17 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
         return;
       }
 
-      // ---- 後処理: サニタイズ → フェンス分離 → 発話パース → ステート適用 ----
-      const sanitized = sanitizeResponse(full, gathered.personaName);
-      const { body: text, fence } = splitFence(sanitized);
+      // ---- 後処理: フェンス分離 → サニタイズ → 発話パース → ステート適用 ----
+      //
+      // **フェンス分離を先にする。** サニタイズは代弁行で以降を捨てるので、
+      // 逆順にすると「代弁 → フェンス」の応答でフェンスまで消え、
+      // フェンス欠落として扱われる（利用者は無関係な方向を調べることになる）
+      const { body: rawBody, fence } = splitFence(full);
+      const sanitized = sanitizeResponse(rawBody, gathered.personaName);
+      const text = sanitized.text;
+      if (sanitized.impersonated) {
+        bodyWarnings.push('あなたの発言を代弁した行があったため、その行以降を削除しました');
+      }
 
       if (!text.trim()) {
         send('error', { message: aborted ? '生成が停止されました（本文なし）' : '生成結果が空でした' });
@@ -629,7 +640,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
       }
 
       stateWarnings = applied.warnings;
-    warnings = [...parseResult.warnings, ...applied.warnings];
+      warnings = [...bodyWarnings, ...parseResult.warnings, ...applied.warnings];
       setChatState(chatId, finalState);
     } finally {
       releaseLock();

@@ -385,6 +385,44 @@ export async function abnormal(w) {
     }
   }
 
+  // ペルソナの代弁。本文は切り詰めるが、フェンスは巻き込まない
+  {
+    const persona = (await api('POST', '/personas', { name: 'ミナ', description: 'わたし' })).json;
+    const scenario = (
+      await api('POST', `/worlds/${w.world.id}/scenarios`, {
+        title: 'impersonate',
+        participant_ids: [w.ashley.id],
+        opening: 'ナレーター: 開始。',
+        initial_state: { time: T1800, location: w.shop, weather: '晴', present: [w.ashley.id] },
+      })
+    ).json;
+    const chat = (await api('POST', `/scenarios/${scenario.id}/chats`, { persona_id: persona.id })).json;
+
+    setQueue([
+      {
+        text:
+          'アシュリー: 「ここまでは正しい」\n' +
+          'ミナ: 「勝手に喋らされている」\n' +
+          '\n@@@STATE\nelapsed_minutes: 25\nlocation: ' + w.cafe + '\n@@@END',
+      },
+    ]);
+    const g = await generate(chat.id, { content: '代弁させる' });
+    const d = await getChat(chat.id);
+    const last = d.messages[d.messages.length - 1];
+
+    check('代弁: 代弁行以降の本文は保存しない', !last.content.includes('勝手に喋らされている'),
+      last.content.replace(/\n/g, ' / '));
+    check('代弁: 手前の本文は残る', last.content.includes('ここまでは正しい'), last.content);
+    // フェンスは本文の外。代弁の切り詰めで一緒に捨ててはいけない
+    check('代弁: フェンスは解釈される（elapsed 25 が効く）', hhmm(d.chat.state.time) === '18:25',
+      hhmm(d.chat.state.time));
+    check('代弁: フェンスの location も効く', d.chat.state.location === w.cafe, d.chat.state.location);
+    check('代弁: フェンス欠落として数えない', g.done?.fenceMissingStreak === 0,
+      String(g.done?.fenceMissingStreak));
+    check('代弁: 代弁を検出したことを警告で返す',
+      (g.done?.warnings ?? []).some((x) => x.includes('代弁')), JSON.stringify(g.done?.warnings));
+  }
+
   // STATEフェンスが欠落
   {
     const { chat } = await newChat(w);
