@@ -227,8 +227,15 @@ const onListen = (): void => {
 
 if (refuseUnsafeStart()) process.exit(1);
 
-// listen(port, host) は host を渡すとそのインターフェースだけに絞られる
-const server = bind ? app.listen(port, bind, onListen) : app.listen(port, onListen);
+// listen(port, host) は host を渡すとそのインターフェースだけに絞られる。
+//
+// **成功の通知は listening イベントで受ける。** Express 5 の app.listen は、
+// 最後の引数の関数を `server.once('error', done)` にも登録する
+// （node_modules/express/lib/application.js）。コールバックとして渡すと、
+// ポートが埋まっていても「待ち受けています」と表示され、続けて起動時の警告まで
+// 一式出てしまう。素の http.Server の listen はこうならない。
+const server = bind ? app.listen(port, bind) : app.listen(port);
+server.on('listening', onListen);
 
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRNOTAVAIL') {

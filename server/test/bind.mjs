@@ -182,6 +182,33 @@ try {
       s.log().includes('このホストに存在しません'),
       s.log().trim().split('\n').slice(-1)[0],
     );
+    check('失敗したのに「待ち受けています」と言わない',
+      !s.log().includes('で待ち受けています'), s.log().trim());
+  }
+
+  // ③' ポートが埋まっている → 成功したように見せない
+  //
+  // Express 5 の app.listen は、渡したコールバックを error にも登録する。
+  // うっかりコールバックで成功を通知すると、起動できていないのに
+  // 「待ち受けています」＋起動時の警告一式が出てしまう
+  {
+    const port = await freePort();
+    const first = start({ BIND: '127.0.0.1', APP_PASSWORD: 'secret' }, port);
+    running.push(first.child);
+    check('1本目は起動する', await waitUp('127.0.0.1', port));
+
+    // 同じポートへもう1本
+    const dup = start({ BIND: '127.0.0.1', APP_PASSWORD: 'secret' }, port);
+    running.push(dup.child);
+    const code = await dup.exited;
+    check('ポートが埋まっていたら起動に失敗する', code === 1, `exit=${code}`);
+    check('ポートが原因だと分かる', dup.log().includes('既に使われています'),
+      dup.log().trim().split('\n').slice(-1)[0]);
+    check('起動できていないのに「待ち受けています」と言わない',
+      !dup.log().includes('で待ち受けています'), dup.log().trim());
+    // onListen が走っていないことを、そこでしか出ない警告で確かめる
+    check('起動時の警告一式も出さない',
+      !dup.log().includes('認証Cookieに secure'), dup.log().trim());
   }
 
   // ④ BIND に外部から届くアドレスを書いても、素通りさせない（§16.2）
