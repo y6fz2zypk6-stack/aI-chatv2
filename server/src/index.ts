@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import './db/index.js';
 import { seedIfEmpty } from './db/seed.js';
 
+import { bindsAllInterfaces, isReachRestricted } from './bind.js';
 import { authRouter, cookieSecure, requireAuth } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
 import { chatsRouter } from './routes/chats.js';
@@ -98,31 +99,38 @@ const port = Number(process.env.PORT || 3000);
 // tailscale serve 等のフロント側からループバックへ繋ぐ。
 // identity ヘッダを信用する構成にするなら、偽装を防ぐためループバック固定が必須。
 const bind = (process.env.BIND || '').trim();
-const publiclyBound = !bind || bind === '0.0.0.0' || bind === '::';
+// 「全インターフェースか」と「到達範囲が絞れているか」は別物。
+// 公開IPを指定した構成は前者では偽・後者でも偽になる（§16.2）
+const allInterfaces = bindsAllInterfaces(bind);
+const reachRestricted = isReachRestricted(bind);
 
 /**
- * 全インターフェースに出しながらパスワードを設定していない構成は、待ち受ける前に止める（§16）。
+ * 到達範囲を絞らないままパスワードを設定していない構成は、待ち受ける前に止める（§16）。
  *
  * 警告ログだけでは、設定ミスに気づくのが「誰かに使われたあと」になる。
  * 漏れるのは会話だけでなく OpenRouter の利用権（＝請求）でもあるので、既定を安全側に倒す。
  *
+ * **判定は「全インターフェースか」ではなく「到達範囲が絞れているか」で行う。**
+ * VPSの公開IPを BIND に書くと前者では見逃してしまう（isReachRestricted の説明を参照）。
+ *
  * 止まらない構成は3つ:
  *   - APP_PASSWORD を設定する
- *   - BIND で到達範囲を絞る（127.0.0.1 / Tailscale のアドレス）
+ *   - BIND をループバックか Tailscale のアドレスにする
  *   - ALLOW_UNAUTHENTICATED=1 を明示する（承知のうえで無認証にする場合）
  */
 function refuseUnsafeStart(): boolean {
-  if (!publiclyBound) return false;
+  if (reachRestricted) return false;
   if (process.env.APP_PASSWORD) return false;
   if (process.env.ALLOW_UNAUTHENTICATED === '1') {
     console.warn(
-      '[server] 警告: ALLOW_UNAUTHENTICATED=1 のため、認証なしで全インターフェースに公開します',
+      '[server] 警告: ALLOW_UNAUTHENTICATED=1 のため、認証なしで外部から届く状態で公開します',
     );
     return false;
   }
   console.error(
     [
-      '[server] 起動を中止しました: 認証なしで全インターフェースに公開しようとしています。',
+      `[server] 起動を中止しました: 認証なしで外部から届く状態にしようとしています（BIND=${bind || '未設定（全インターフェース）'}）。`,
+      '  BIND に公開IPやLANのアドレスを書いても到達範囲は絞れません。',
       '  次のいずれかを設定してください。',
       '    APP_PASSWORD=<パスワード>      パスワードで保護する',
       '    BIND=127.0.0.1                到達範囲をこのホストだけに絞る（Tailscale等の背後に置く場合）',
@@ -137,14 +145,18 @@ const onListen = (): void => {
   if (!process.env.OPENROUTER_API_KEY) {
     console.warn('[server] 警告: OPENROUTER_API_KEY が未設定です。生成機能は動作しません');
   }
-  if (publiclyBound) {
+  if (allInterfaces) {
     console.warn(
       '[server] 注意: 全インターフェースで待ち受けています。' +
         'VPN内だけに公開する場合は BIND=127.0.0.1 を設定してください',
     );
+  } else if (!reachRestricted) {
+    console.warn(
+      `[server] 注意: BIND=${bind} は外部から届くアドレスです。到達範囲は絞られていません`,
+    );
   }
   if (!process.env.APP_PASSWORD) {
-    if (publiclyBound) {
+    if (!reachRestricted) {
       console.warn(
         '[server] 警告: APP_PASSWORD が未設定のまま外部に公開されています。' +
           'パスワードを設定するか BIND でアクセス元を絞ってください',

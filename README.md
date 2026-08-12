@@ -143,7 +143,7 @@ sudo ufw deny 3000
 | `COOKIE_SECURE` | 認証Cookieに `Secure` を付ける。未設定なら `APP_URL` が https:// のときだけ有効 |
 | `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
 | `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5` / `anthropic/claude-sonnet-5` |
-| `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1` |
+| `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1`。公開IPやLANのアドレスを書いても「絞った」ことにはなりません（パスワード無しなら起動を中止します） |
 | `ALLOW_UNAUTHENTICATED` | `1` のときだけ、無認証＋全インターフェースでの起動を許可する |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 任意 |
 

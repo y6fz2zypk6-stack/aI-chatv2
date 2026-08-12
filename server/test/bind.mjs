@@ -170,9 +170,10 @@ try {
   }
 
   // ③ 存在しないアドレス → 分かる形で落ちる
+  //    （ループバック以外なのでパスワードを付けないと起動ガードで先に止まる）
   {
     const port = await freePort();
-    const s = start({ BIND: '10.255.255.254' }, port);
+    const s = start({ BIND: '10.255.255.254', APP_PASSWORD: 'secret' }, port);
     running.push(s.child);
     const code = await s.exited;
     check('存在しないアドレスなら起動に失敗する', code === 1, `exit=${code}`);
@@ -181,6 +182,37 @@ try {
       s.log().includes('このホストに存在しません'),
       s.log().trim().split('\n').slice(-1)[0],
     );
+  }
+
+  // ④ BIND に外部から届くアドレスを書いても、素通りさせない（§16.2）
+  {
+    const target = ext ?? '192.168.1.10';
+    const port = await freePort();
+    const s = start({ BIND: target }, port);
+    running.push(s.child);
+    const code = await s.exited;
+    check(`BIND=${target}（外部から届く）＋パスワード無しなら起動しない`, code === 1, `exit=${code}`);
+    check('待ち受けは始まっていない', !s.log().includes('で待ち受けています'), s.log().trim());
+    check('BINDの値を message に含める', s.log().includes(`BIND=${target}`),
+      s.log().trim().split('\n')[0]);
+  }
+
+  // ⑤ 到達範囲の判定そのもの（実際に待ち受けなくても確かめられる部分）
+  {
+    const { isReachRestricted, bindsAllInterfaces } = await import('../dist/server/src/bind.js');
+    const restricted = ['127.0.0.1', '127.1.2.3', '::1', '[::1]', 'localhost', '100.64.0.1',
+      '100.101.102.103', '::ffff:127.0.0.1'];
+    const open = ['', '0.0.0.0', '::', '203.0.113.10', '192.168.1.10', '10.0.0.5',
+      '172.16.0.1', '100.63.255.255', '100.128.0.1', 'example.com'];
+    check('ループバックとTailscale帯だけを「絞れている」とする',
+      restricted.every((b) => isReachRestricted(b)),
+      restricted.filter((b) => !isReachRestricted(b)).join(',') || 'なし');
+    check('公開IP・LAN・解釈できない値は「絞れていない」',
+      open.every((b) => !isReachRestricted(b)),
+      open.filter((b) => isReachRestricted(b)).join(',') || 'なし');
+    check('全インターフェース判定は未設定と 0.0.0.0 / ::',
+      ['', '0.0.0.0', '::', '[::]'].every(bindsAllInterfaces) &&
+        !bindsAllInterfaces('127.0.0.1') && !bindsAllInterfaces('203.0.113.10'));
   }
 
   console.log(`\n${failed === 0 ? 'すべて通りました' : `${failed}件失敗`}`);
