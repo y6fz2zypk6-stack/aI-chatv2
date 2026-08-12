@@ -123,6 +123,7 @@ try {
   await s.lastTrainSuite(w);
   await s.generationLockSuite(w);
   await s.importRollbackSuite();
+  await s.speakerCollisionSuite(w);
   await s.bodyLimitSuite(w);
 
   // v1.5.3: 進行フラグと条件付きイベント

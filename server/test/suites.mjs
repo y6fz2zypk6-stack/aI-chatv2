@@ -1034,6 +1034,79 @@ export async function importRollbackSuite() {
 }
 
 // ===========================================================================
+// 話者名が衝突したときの解決順（§5.2）
+// ===========================================================================
+export async function speakerCollisionSuite(w) {
+  suite('話者名の衝突');
+
+  /** ペルソナ名を指定したチャットを作る */
+  const chatWithPersona = async (personaName, participantIds = [w.ashley.id]) => {
+    const persona = (await api('POST', '/personas', { name: personaName, description: 'わたし' })).json;
+    const scenario = (
+      await api('POST', `/worlds/${w.world.id}/scenarios`, {
+        title: `collision_${personaName}`,
+        participant_ids: participantIds,
+        opening: 'ナレーター: 開始。',
+        initial_state: { time: T1800, location: w.shop, weather: '晴', present: participantIds },
+      })
+    ).json;
+    return (await api('POST', `/scenarios/${scenario.id}/chats`, { persona_id: persona.id })).json;
+  };
+
+  // 参加キャラ名 = ペルソナ名。
+  // resolveSpeaker の「参加キャラ最優先」より手前で sanitizeResponse が切るので、
+  // そのラベルの行は人物としては解決されない。本文が空になり原因が伝わることを見る
+  {
+    const chat = await chatWithPersona('アシュリー');
+    setQueue([{ text: 'アシュリー: 「代弁とみなされる」\n\n@@@STATE\nelapsed_minutes: 10\n@@@END' }]);
+    const g = await generate(chat.id, { content: 't' });
+    const msgs = (await getChat(chat.id)).messages;
+    check('参加キャラ名と同名なら、その行はサニタイズで落ちる',
+      msgs.slice(-1)[0].role === 'user', msgs.slice(-2).map((m) => m.role).join(','));
+    check('全部落ちたら「空でした」で終わらせず理由を添える',
+      (g.error ?? '').includes('名前（または別名）と同じ'), g.error ?? '（エラーなし）');
+    check('ゲーム内時間も進めない', hhmm((await getChat(chat.id)).chat.state.time) === '18:00',
+      hhmm((await getChat(chat.id)).chat.state.time));
+  }
+
+  // ペルソナ名 = ナレーター → 地の文が消えるので、設定の問題として知らせる
+  {
+    const chat = await chatWithPersona('ナレーター');
+    setQueue([{ text: 'ナレーター: 雨が降っている。\nアシュリー: 「本文」\n\n@@@STATE\nelapsed_minutes: 10\n@@@END' }]);
+    const g = await generate(chat.id, { content: 't' });
+    check('ペルソナ名がナレーターなら理由が分かる',
+      (g.error ?? '').includes('「ナレーター」と同じ'), g.error ?? '（エラーなし）');
+    check('地の文が消えることも説明に入る', (g.error ?? '').includes('削除'), g.error);
+  }
+
+  // 衝突していなければ警告は出ない
+  {
+    const chat = await chatWithPersona('ミナト');
+    setQueue([{ text: reply({ char: '「ふつう」', elapsed: 10, location: w.shop }) }]);
+    const g = await generate(chat.id, { content: 't' });
+    check('衝突が無ければ余計な警告は出さない',
+      !(g.done?.warnings ?? []).some((x) => x.includes('ペルソナ名')),
+      JSON.stringify(g.done?.warnings));
+  }
+
+  // ペルソナ名は準レギュラーより先に見る（解決順の2位 vs 4位）
+  {
+    const npc = (await api('POST', `/worlds/${w.world.id}/characters`, {
+      name: 'カゲロウ', is_npc_pool: 1,
+    })).json;
+    const chat = await chatWithPersona('カゲロウ');
+    setQueue([{ text: 'アシュリー: 「先に喋る」\nカゲロウ: 「代弁される」\n\n@@@STATE\nelapsed_minutes: 10\n@@@END' }]);
+    const g = await generate(chat.id, { content: 't' });
+    const last = (await getChat(chat.id)).messages.slice(-1)[0];
+    check('準レギュラーと同名でもペルソナ名を先に見る（代弁として切り詰める）',
+      !last.content.includes('代弁される'), last.content.replace(/\n/g, ' / '));
+    check('代弁として警告する',
+      (g.done?.warnings ?? []).some((x) => x.includes('代弁')), JSON.stringify(g.done?.warnings));
+    await api('DELETE', `/characters/${npc.id}`);
+  }
+}
+
+// ===========================================================================
 // JSONボディの上限（未認証のリクエストに大きなボディをパースさせない）
 // ===========================================================================
 export async function bodyLimitSuite(w) {

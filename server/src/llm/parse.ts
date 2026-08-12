@@ -151,7 +151,13 @@ interface Resolved {
   autoJoin?: boolean;
 }
 
-/** ラベル文字列を話者に解決する。優先順位は§5.4 */
+/**
+ * ラベル文字列を話者に解決する。優先順位は§5.2。
+ *
+ * **参加キャラが最優先。** 実際に場にいる人物の名前は、ペルソナ名や「ナレーター」と
+ * 同名でも人物の発話として扱う。その次にペルソナ名を見るのは、代弁を早い段階で
+ * 検出するため（`personaCollisions` も参照）。
+ */
 function resolveSpeaker(label: string, ctx: ParseContext): Resolved | null {
   const candidates: Resolved[] = [];
 
@@ -195,6 +201,34 @@ function resolveSpeaker(label: string, ctx: ParseContext): Resolved | null {
 
 function pickLongest(list: Resolved[]): Resolved {
   return list.sort((a, b) => b.matchLen - a.matchLen)[0];
+}
+
+/**
+ * ペルソナ名が他の話者ラベルと衝突していないか（§5.2）。
+ *
+ * **解決順の問題ではなく、設定の問題として知らせる。** 同名だと `sanitizeResponse` が
+ * その行で本文を打ち切るので、たとえばペルソナ名が「ナレーター」だと
+ * 地の文が丸ごと消える。これは解決順より手前で起きるため、順序を入れ替えても直らない。
+ * 気づけないまま「応答が途中で切れる」と悩むことになるので、生成のたびに警告を返す。
+ */
+export function personaCollisions(personaName: string, ctx: ParseContext): string[] {
+  const name = personaName.trim();
+  if (!name) return [];
+  const out: string[] = [];
+  if (name === 'ナレーター') {
+    out.push(
+      'ペルソナ名が「ナレーター」と同じです。地の文がユーザーの代弁とみなされて削除されるので、ペルソナ名を変えてください',
+    );
+  }
+  const clash = [...ctx.participants, ...ctx.npcPool].find(
+    (c) => c.name === name || c.aliases.includes(name),
+  );
+  if (clash) {
+    out.push(
+      `ペルソナ名が「${clash.name}」の名前（または別名）と同じです。そのキャラの発話が代弁とみなされるので、どちらかの名前を変えてください`,
+    );
+  }
+  return out;
 }
 
 /**

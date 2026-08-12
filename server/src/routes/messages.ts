@@ -63,6 +63,7 @@ import {
   fallbackDelta,
   parseStateDelta,
   parseUtterances,
+  personaCollisions,
   sanitizeResponse,
   splitFence,
   type ParseContext,
@@ -480,9 +481,16 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
       if (sanitized.impersonated) {
         bodyWarnings.push('あなたの発言を代弁した行があったため、その行以降を削除しました');
       }
+      // 名前の衝突は解決順より手前で効くので、設定の問題として毎回知らせる（§5.2）
+      bodyWarnings.push(...personaCollisions(gathered.personaName, gathered.parseCtx));
 
       if (!text.trim()) {
-        send('error', { message: aborted ? '生成が停止されました（本文なし）' : '生成結果が空でした' });
+        // 名前の衝突や代弁で全部切り落とされた場合、「空でした」だけでは原因が分からない。
+        // 本文を整える段階で気づいたことをそのまま添える
+        const why = bodyWarnings.length > 0 ? `。${bodyWarnings.join(' / ')}` : '';
+        send('error', {
+          message: aborted ? '生成が停止されました（本文なし）' : `生成結果が空でした${why}`,
+        });
         res.end();
         return;
       }
