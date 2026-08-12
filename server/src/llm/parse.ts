@@ -22,6 +22,37 @@ function splitIds(s: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 経過時間（分）として読む。読めなければ null。
+ *
+ * **数字だけを拾って連結しないこと。** `value.replace(/[^\d-]/g, '')` のような書き方だと
+ * 「1時間30分」が 130 分になる。ゲーム内時刻はここから直接進むので、
+ * パーサの誤読がそのまま履歴に残ってしまう。
+ *
+ * 時刻を読む `parseHhmm`（`shared/types.ts`）とは別物。あちらは「18:30」という
+ * 時点を読む関数で、こちらは長さを読む。流用すると意味がずれる。
+ *
+ * 受けるのは次だけ。それ以外は null にして、呼び出し側で既定値＋警告に落とす。
+ *   - 整数そのまま: `10` / `90` / `-5`
+ *   - 分: `90分` / `30m` / `30min`
+ *   - 時間: `2時間` / `2h`
+ *   - 時間＋分: `1時間30分` / `1h30m`
+ */
+export function parseDurationMinutes(raw: string): number | null {
+  const s = raw
+    .trim()
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[−ー―]/g, '-')
+    .toLowerCase();
+  if (!s) return null;
+  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+
+  const m = /^(?:(\d+)\s*(?:時間|h|hr|hrs|hour|hours))?\s*(?:(\d+)\s*(?:分|m|min|mins|minute|minutes))?$/
+    .exec(s);
+  if (!m || (m[1] === undefined && m[2] === undefined)) return null;
+  return Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0);
+}
+
 /** フェンス内容 → StateDelta。壊れていれば null */
 export function parseStateDelta(fence: string | null): StateDelta | null {
   if (fence == null) return null;
@@ -34,8 +65,9 @@ export function parseStateDelta(fence: string | null): StateDelta | null {
     const value = m[2].trim();
     switch (key) {
       case 'elapsed_minutes': {
-        const n = parseInt(value.replace(/[^\d-]/g, ''), 10);
-        if (Number.isFinite(n)) delta.elapsed_minutes = n;
+        const n = parseDurationMinutes(value);
+        if (n === null) delta.elapsed_unparsed = value.slice(0, 40);
+        else delta.elapsed_minutes = n;
         sawAny = true;
         break;
       }

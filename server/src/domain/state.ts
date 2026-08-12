@@ -43,6 +43,12 @@ export function applyDelta(
   let elapsed = Math.floor(delta.elapsed_minutes);
   if (!Number.isFinite(elapsed) || elapsed < 0) elapsed = 0;
   if (elapsed > 1440) warnings.push(`elapsed_minutes が ${elapsed} 分（24時間超）`);
+  // 読めなかった指定は既定値で進める。黙って進めると、なぜその時刻になったのか追えない
+  if (delta.elapsed_unparsed) {
+    warnings.push(
+      `elapsed_minutes の「${delta.elapsed_unparsed}」を読み取れませんでした。${elapsed}分として進めます`,
+    );
+  }
 
   // 場所: ID一致 → 表示名一致 → location_note へ退避
   if (delta.location) {

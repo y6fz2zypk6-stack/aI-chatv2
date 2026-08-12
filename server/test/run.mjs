@@ -123,6 +123,7 @@ try {
   await s.lastTrainSuite(w);
   await s.generationLockSuite(w);
   await s.importRollbackSuite();
+  await s.durationSuite(w);
   await s.speakerCollisionSuite(w);
   await s.bodyLimitSuite(w);
 

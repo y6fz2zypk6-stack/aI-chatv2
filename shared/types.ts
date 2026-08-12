@@ -51,6 +51,11 @@ export interface StateDelta {
   set_var?: Record<string, VarValue>;
   /** フェンス欠落などでフォールバック値を適用した場合 true */
   fallback?: boolean;
+  /**
+   * `elapsed_minutes` に読み取れない値が書かれていた場合の生の値。
+   * 既定値で進めたことを利用者へ伝えるために持つ（黙って別の分数に化けさせない）
+   */
+  elapsed_unparsed?: string;
 }
 
 // ---- 発話（§5.4） ----

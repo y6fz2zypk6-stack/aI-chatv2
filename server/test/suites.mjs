@@ -1034,6 +1034,57 @@ export async function importRollbackSuite() {
 }
 
 // ===========================================================================
+// 経過時間の読み取り（数字だけ拾って別の分数に化けさせない）
+// ===========================================================================
+export async function durationSuite(w) {
+  suite('経過時間の読み取り');
+
+  // パーサそのもの
+  {
+    const { parseDurationMinutes, parseStateDelta } = await import('../dist/server/src/llm/parse.js');
+    const cases = [
+      ['10', 10], ['90', 90], ['0', 0], ['-5', -5],
+      ['１０', 10], // 全角
+      ['90分', 90], ['30m', 30], ['45 min', 45],
+      ['2時間', 120], ['2h', 120],
+      ['1時間30分', 90], ['1h30m', 90],
+      ['よくわからない', null], ['約10分ほど', null], ['', null], ['1.5時間', null],
+    ];
+    const wrong = cases.filter(([input, want]) => parseDurationMinutes(input) !== want);
+    check('経過時間を正しく読む', wrong.length === 0,
+      wrong.map(([i, want]) => `"${i}" → ${parseDurationMinutes(i)}（期待 ${want}）`).join(' / '));
+    check('「1時間30分」を130分にしない', parseDurationMinutes('1時間30分') === 90,
+      String(parseDurationMinutes('1時間30分')));
+
+    const bad = parseStateDelta('elapsed_minutes: よくわからない');
+    check('読めない値は既定値のまま', bad.elapsed_minutes === 10, String(bad.elapsed_minutes));
+    check('読めなかった生の値を持ち帰る', bad.elapsed_unparsed === 'よくわからない', bad.elapsed_unparsed);
+  }
+
+  // 実際の生成に効く
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: 'アシュリー: 「休憩する」\n\n@@@STATE\nelapsed_minutes: 1時間30分\n@@@END' }]);
+    await generate(chat.id, { content: 't' });
+    check('「1時間30分」で90分進む', hhmm((await getChat(chat.id)).chat.state.time) === '19:30',
+      hhmm((await getChat(chat.id)).chat.state.time));
+  }
+
+  // 読めない値は既定値で進めたことを警告する（黙って進めない）
+  {
+    const { chat } = await newChat(w);
+    setQueue([{ text: 'アシュリー: 「しばらく」\n\n@@@STATE\nelapsed_minutes: しばらく\n@@@END' }]);
+    const g = await generate(chat.id, { content: 't' });
+    check('読めない値でも時間は既定の10分だけ進む',
+      hhmm((await getChat(chat.id)).chat.state.time) === '18:10',
+      hhmm((await getChat(chat.id)).chat.state.time));
+    check('読めなかったことを警告で返す',
+      (g.done?.warnings ?? []).some((x) => x.includes('読み取れませんでした')),
+      JSON.stringify(g.done?.warnings));
+  }
+}
+
+// ===========================================================================
 // 話者名が衝突したときの解決順（§5.2）
 // ===========================================================================
 export async function speakerCollisionSuite(w) {
