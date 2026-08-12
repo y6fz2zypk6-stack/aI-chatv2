@@ -97,6 +97,38 @@ const port = Number(process.env.PORT || 3000);
 const bind = (process.env.BIND || '').trim();
 const publiclyBound = !bind || bind === '0.0.0.0' || bind === '::';
 
+/**
+ * 全インターフェースに出しながらパスワードを設定していない構成は、待ち受ける前に止める（§16）。
+ *
+ * 警告ログだけでは、設定ミスに気づくのが「誰かに使われたあと」になる。
+ * 漏れるのは会話だけでなく OpenRouter の利用権（＝請求）でもあるので、既定を安全側に倒す。
+ *
+ * 止まらない構成は3つ:
+ *   - APP_PASSWORD を設定する
+ *   - BIND で到達範囲を絞る（127.0.0.1 / Tailscale のアドレス）
+ *   - ALLOW_UNAUTHENTICATED=1 を明示する（承知のうえで無認証にする場合）
+ */
+function refuseUnsafeStart(): boolean {
+  if (!publiclyBound) return false;
+  if (process.env.APP_PASSWORD) return false;
+  if (process.env.ALLOW_UNAUTHENTICATED === '1') {
+    console.warn(
+      '[server] 警告: ALLOW_UNAUTHENTICATED=1 のため、認証なしで全インターフェースに公開します',
+    );
+    return false;
+  }
+  console.error(
+    [
+      '[server] 起動を中止しました: 認証なしで全インターフェースに公開しようとしています。',
+      '  次のいずれかを設定してください。',
+      '    APP_PASSWORD=<パスワード>      パスワードで保護する',
+      '    BIND=127.0.0.1                到達範囲をこのホストだけに絞る（Tailscale等の背後に置く場合）',
+      '    ALLOW_UNAUTHENTICATED=1       承知のうえで無認証のまま公開する',
+    ].join('\n'),
+  );
+  return true;
+}
+
 const onListen = (): void => {
   console.log(`[server] ${bind || '0.0.0.0'}:${port} で待ち受けています`);
   if (!process.env.OPENROUTER_API_KEY) {
@@ -130,6 +162,8 @@ const onListen = (): void => {
     );
   }
 };
+
+if (refuseUnsafeStart()) process.exit(1);
 
 // listen(port, host) は host を渡すとそのインターフェースだけに絞られる
 const server = bind ? app.listen(port, bind, onListen) : app.listen(port, onListen);

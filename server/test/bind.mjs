@@ -123,7 +123,8 @@ try {
   // ② BIND 未設定 → 全インターフェース（既定の挙動を変えていないこと）
   {
     const port = await freePort();
-    const s = start({}, port);
+    // 無認証のまま公開するのは既定で止まるので、承知していることを明示する（§16）
+    const s = start({ ALLOW_UNAUTHENTICATED: '1' }, port);
     running.push(s.child);
     check('BIND 未設定でループバックから到達できる', await waitUp('127.0.0.1', port));
     if (ext) {
@@ -137,6 +138,35 @@ try {
       'パスワード未設定かつ公開なら強い警告を出す',
       s.log().includes('外部に公開されています'),
     );
+  }
+
+  // ②' 認証なしで全インターフェースに公開する構成は、待ち受ける前に止める（§16）
+  {
+    const port = await freePort();
+    const s = start({}, port);
+    running.push(s.child);
+    const code = await s.exited;
+    check('無認証＋全インターフェースなら起動しない', code === 1, `exit=${code}`);
+    check('逃げ道を3つとも案内する',
+      ['APP_PASSWORD=', 'BIND=127.0.0.1', 'ALLOW_UNAUTHENTICATED=1'].every((k) => s.log().includes(k)),
+      s.log().trim());
+    check('待ち受けは始まっていない', !s.log().includes('で待ち受けています'), s.log().trim());
+  }
+
+  // ②'' 到達範囲を絞っていれば、パスワード無しでも起動する（Tailscale・ローカル運用）
+  {
+    const port = await freePort();
+    const s = start({ BIND: '127.0.0.1' }, port);
+    running.push(s.child);
+    check('BINDで絞ってあればパスワード無しでも起動する', await waitUp('127.0.0.1', port));
+  }
+
+  // ②''' パスワードがあれば全インターフェースでも起動する
+  {
+    const port = await freePort();
+    const s = start({ APP_PASSWORD: 'secret' }, port);
+    running.push(s.child);
+    check('パスワードがあれば全インターフェースでも起動する', await waitUp('127.0.0.1', port));
   }
 
   // ③ 存在しないアドレス → 分かる形で落ちる

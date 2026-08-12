@@ -70,7 +70,10 @@ npm run build
 npm start              # Expressが client/dist を静的配信
 ```
 
-`.env` の `APP_PASSWORD` を必ず設定してください（未設定だと認証が無効になります）。
+`.env` の `APP_PASSWORD` を必ず設定してください。**全インターフェースに出しながら
+パスワードを設定していない場合、サーバは待ち受ける前に終了します**（設定ミスが
+そのまま公開事故になるため）。パスワードを設定するか、`BIND` で到達範囲を絞るか、
+承知のうえなら `ALLOW_UNAUTHENTICATED=1` を明示してください。
 HTTPSで公開する場合は `COOKIE_SECURE=1`、リバースプロキシ配下なら併せて `TRUST_PROXY=1` を
 設定してください（未設定だと起動時に警告が出ます）。ログインは同一IPから5回失敗すると
 15分ロックされます。
@@ -138,6 +141,7 @@ sudo ufw deny 3000
 | `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
 | `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5` / `anthropic/claude-sonnet-5` |
 | `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1` |
+| `ALLOW_UNAUTHENTICATED` | `1` のときだけ、無認証＋全インターフェースでの起動を許可する |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 任意 |
 
 ## 構成

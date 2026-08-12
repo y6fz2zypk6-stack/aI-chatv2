@@ -796,3 +796,87 @@ export async function lastTrainSuite(w) {
   await setCal(cal);
   check('元の設定へ戻せる', (await at2230()).includes('終電まで残り30分'));
 }
+
+// ===========================================================================
+// 生成ロックの範囲（LLM終了時ではなく、ステート確定まで保持する）
+// ===========================================================================
+export async function generationLockSuite(w) {
+  suite('生成ロックの範囲');
+
+  const base = (await api('GET', '/settings')).json;
+  // 本文生成のあとに別コールを挟むモードにして、
+  // 「ストリーム終了 → DB後処理」の隙間を観測できる幅にする
+  await api('PUT', '/settings', { state_extraction_mode: 'separate_call', auto_summarize: 0, auto_extract: 0 });
+
+  const { chat } = await newChat(w);
+  setQueue([
+    { text: 'アシュリー: 「1ターン目」' },
+    // ステート抽出の別コール。ここで待たせているあいだに次の生成を投げる
+    { text: '@@@STATE\nelapsed_minutes: 10\n@@@END', gapMs: 900 },
+    { text: 'アシュリー: 「2ターン目」' },
+    { text: '@@@STATE\nelapsed_minutes: 10\n@@@END' },
+  ]);
+
+  const first = generate(chat.id, { content: '1通目' });
+  await new Promise((r) => setTimeout(r, 450)); // ストリームは終わり、後処理の途中
+  const second = await generate(chat.id, { content: '2通目' });
+  check('後処理中に来た生成は弾く', second.httpStatus === 409,
+    `status=${second.httpStatus} ${second.error ?? ''}`);
+  await first;
+
+  const d = await getChat(chat.id);
+  const roles = d.messages.map((m) => m.role).join(',');
+  check('メッセージの並びが崩れない', roles === 'assistant,user,assistant', roles);
+
+  // ロックは後処理の完了後に外れる（次のターンは普通に通る）
+  setQueue([
+    { text: 'アシュリー: 「3ターン目」' },
+    { text: '@@@STATE\nelapsed_minutes: 10\n@@@END' },
+  ]);
+  const third = await generate(chat.id, { content: '3通目' });
+  check('後処理が終われば次の生成は通る', third.httpStatus === 200 && !!third.done,
+    `status=${third.httpStatus} ${third.error ?? ''}`);
+
+  await api('PUT', '/settings', base);
+}
+
+// ===========================================================================
+// 世界の取り込みは1トランザクション（途中で失敗しても半端に残さない）
+// ===========================================================================
+export async function importRollbackSuite() {
+  suite('取り込みのロールバック');
+
+  const before = (await api('GET', '/worlds')).json.length;
+  const locId = 'rollback_test_loc';
+
+  // 世界・キャラ・場所までは作れるが、シナリオで壊れるデータ
+  const broken = {
+    format: 'character_chat_world',
+    version: 1,
+    world: { name: '壊れた取り込み', description: '' },
+    characters: [{ id: 'c1', name: '取り込みキャラ' }],
+    locations: [{ id: locId, name: '取り込み場所', indoor: 1, area: 'center' }],
+    lorebook: [{ title: '取り込みロア', keys: ['x'], content: 'y' }],
+    // participant_ids が配列でない → シナリオ作成の手前で落ちる
+    scenarios: [{ title: '壊れたシナリオ', participant_ids: 'not-an-array' }],
+  };
+  const r = await api('POST', '/worlds/import', broken);
+  check('壊れたデータの取り込みは失敗する', r.status === 400, `status=${r.status}`);
+  check('取り消したことを伝える', (r.json?.error ?? '').includes('取り消されました'), r.json?.error);
+
+  const worlds = (await api('GET', '/worlds')).json;
+  check('世界が残らない', worlds.length === before && !worlds.some((w) => w.name === '壊れた取り込み'),
+    `${before} → ${worlds.length}`);
+
+  // 場所IDはグローバル一意なので、巻き戻っていれば同じIDをそのまま取り込める
+  const fixed = { ...broken, world: { name: '直した取り込み' }, scenarios: [] };
+  const ok = await api('POST', '/worlds/import', fixed);
+  check('直せば取り込める', ok.status === 201, `status=${ok.status} ${ok.json?.error ?? ''}`);
+  const locs = (await api('GET', `/worlds/${ok.json.world.id}/locations`)).json;
+  check('場所IDが取られたままにならない', locs.some((l) => l.id === locId),
+    locs.map((l) => l.id).join(','));
+  const chars = (await api('GET', `/worlds/${ok.json.world.id}/characters`)).json;
+  check('キャラも二重に残っていない', chars.length === 1, `${chars.length}件`);
+
+  await api('DELETE', `/worlds/${ok.json.world.id}`);
+}

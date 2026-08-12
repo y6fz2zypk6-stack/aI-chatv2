@@ -5,9 +5,11 @@ import type {
   LorebookEntry,
   Scenario,
   VarSchemaEntry,
+  World,
   WorldArea,
   WorldEvent,
 } from '../../../shared/types.js';
+import { db } from '../db/index.js';
 import { getCalendar, upsertCalendar } from '../db/repo/calendars.js';
 import { getChat } from '../db/repo/chats.js';
 import { createCharacter, getCharacter, listCharacters } from '../db/repo/characters.js';
@@ -167,83 +169,98 @@ exportsRouter.post('/worlds/import', (req, res) => {
     return;
   }
 
-  const world = createWorld(data.world);
-  upsertCalendar(world.id, data.calendar ?? {});
+  // 取り込みは1トランザクションで行う（§17）。
+  // 途中で失敗したときに、世界だけ・場所だけが残った半端な状態を作らない。
+  // better-sqlite3 のトランザクションは同期実行なので、この中で await しないこと。
+  let world: World;
+  try {
+    world = db.transaction((): World => {
+      const newWorld = createWorld(data.world!);
+      upsertCalendar(newWorld.id, data.calendar ?? {});
 
-  // キャラは新IDを発行し、旧ID→新IDの対応表で参照を張り替える
-  const idMap = new Map<string, string>();
-  for (const c of data.characters ?? []) {
-    const created = createCharacter(world.id, c);
-    if (c.id) idMap.set(c.id, created.id);
-    for (const m of c.memories ?? []) {
-      if (!m.content) continue;
-      createMemory(created.id, {
-        subject: m.subject ? (idMap.get(m.subject) ?? m.subject) : '',
-        content: m.content,
-        pinned: m.pinned ?? 0,
-        // 暦は世界ごと持ち出すので、ゲーム内時刻はそのまま持ち込める
-        game_time: m.game_time ?? null,
-        enabled: m.enabled ?? 1,
-      });
-    }
-  }
-  const remap = (id: string | null | undefined): string | null =>
-    id ? (idMap.get(id) ?? null) : null;
-
-  // 場所IDはグローバル一意（PUT /locations/:id のAPI形状のため）。
-  // 衝突時は接尾辞を付けて取り込み、参照（ロアの場所トリガー・シナリオ初期ステート）を張り替える
-  const locMap = new Map<string, string>();
-  for (const l of data.locations ?? []) {
-    if (!l.id || !/^[a-z0-9_]+$/.test(l.id)) continue;
-    let newId = l.id;
-    for (let n = 2; getLocation(newId); n++) newId = `${l.id}_${n}`;
-    locMap.set(l.id, newId);
-    createLocation(world.id, { ...l, id: newId, note: l.note ?? '' });
-  }
-  const remapLoc = (id: string | null | undefined): string =>
-    id ? (locMap.get(id) ?? id) : '';
-
-  // 古い書き出し（areas を持たない）から取り込むと、場所が参照するエリアが
-  // 世界の一覧に無い状態になり得る。使われているエリアは必ず選べるようにしておく
-  {
-    const areas = [...world.areas];
-    const known = new Set(areas.map((a) => a.id));
-    for (const l of listLocations(world.id)) {
-      if (l.area && !known.has(l.area)) {
-        known.add(l.area);
-        areas.push({ id: l.area, name: l.area });
+      // キャラは新IDを発行し、旧ID→新IDの対応表で参照を張り替える
+      const idMap = new Map<string, string>();
+      for (const c of data.characters ?? []) {
+        const created = createCharacter(newWorld.id, c);
+        if (c.id) idMap.set(c.id, created.id);
+        for (const m of c.memories ?? []) {
+          if (!m.content) continue;
+          createMemory(created.id, {
+            subject: m.subject ? (idMap.get(m.subject) ?? m.subject) : '',
+            content: m.content,
+            pinned: m.pinned ?? 0,
+            // 暦は世界ごと持ち出すので、ゲーム内時刻はそのまま持ち込める
+            game_time: m.game_time ?? null,
+            enabled: m.enabled ?? 1,
+          });
+        }
       }
-    }
-    if (areas.length !== world.areas.length) updateWorld(world.id, { areas });
-  }
+      const remap = (id: string | null | undefined): string | null =>
+        id ? (idMap.get(id) ?? null) : null;
 
-  for (const e of data.lorebook ?? []) {
-    createLorebookEntry(world.id, {
-      ...e,
-      character_id: remap(e.character_id),
-      trigger_locations: (e.trigger_locations ?? []).map((id) => remapLoc(id)),
-    });
-  }
-  for (const e of data.events ?? []) {
-    createEvent(world.id, e as Partial<WorldEvent>);
-  }
-  for (const s of data.scenarios ?? []) {
-    createScenario(world.id, {
-      ...s,
-      participant_ids: (s.participant_ids ?? [])
-        .map((id) => idMap.get(id))
-        .filter((id): id is string => !!id),
-      default_persona_id: null,
-      initial_state: s.initial_state
-        ? ({
-            ...s.initial_state,
-            location: remapLoc(s.initial_state.location),
-            present: (s.initial_state.present ?? [])
-              .map((id) => idMap.get(id))
-              .filter((id): id is string => !!id),
-          } as ChatState)
-        : undefined,
-    });
+      // 場所IDはグローバル一意（PUT /locations/:id のAPI形状のため）。
+      // 衝突時は接尾辞を付けて取り込み、参照（ロアの場所トリガー・シナリオ初期ステート）を張り替える
+      const locMap = new Map<string, string>();
+      for (const l of data.locations ?? []) {
+        if (!l.id || !/^[a-z0-9_]+$/.test(l.id)) continue;
+        let newId = l.id;
+        for (let n = 2; getLocation(newId); n++) newId = `${l.id}_${n}`;
+        locMap.set(l.id, newId);
+        createLocation(newWorld.id, { ...l, id: newId, note: l.note ?? '' });
+      }
+      const remapLoc = (id: string | null | undefined): string =>
+        id ? (locMap.get(id) ?? id) : '';
+
+      // 古い書き出し（areas を持たない）から取り込むと、場所が参照するエリアが
+      // 世界の一覧に無い状態になり得る。使われているエリアは必ず選べるようにしておく
+      {
+        const areas = [...newWorld.areas];
+        const known = new Set(areas.map((a) => a.id));
+        for (const l of listLocations(newWorld.id)) {
+          if (l.area && !known.has(l.area)) {
+            known.add(l.area);
+            areas.push({ id: l.area, name: l.area });
+          }
+        }
+        if (areas.length !== newWorld.areas.length) updateWorld(newWorld.id, { areas });
+      }
+
+      for (const e of data.lorebook ?? []) {
+        createLorebookEntry(newWorld.id, {
+          ...e,
+          character_id: remap(e.character_id),
+          trigger_locations: (e.trigger_locations ?? []).map((id) => remapLoc(id)),
+        });
+      }
+      for (const e of data.events ?? []) {
+        createEvent(newWorld.id, e as Partial<WorldEvent>);
+      }
+      for (const s of data.scenarios ?? []) {
+        createScenario(newWorld.id, {
+          ...s,
+          participant_ids: (s.participant_ids ?? [])
+            .map((id) => idMap.get(id))
+            .filter((id): id is string => !!id),
+          default_persona_id: null,
+          initial_state: s.initial_state
+            ? ({
+                ...s.initial_state,
+                location: remapLoc(s.initial_state.location),
+                present: (s.initial_state.present ?? [])
+                  .map((id) => idMap.get(id))
+                  .filter((id): id is string => !!id),
+              } as ChatState)
+            : undefined,
+        });
+      }
+      return newWorld;
+    })();
+  } catch (err) {
+    // トランザクションが巻き戻っているので、世界そのものも残っていない
+    res
+      .status(400)
+      .json({ error: `取り込みに失敗しました（変更は取り消されました）: ${(err as Error).message}` });
+    return;
   }
 
   res.status(201).json({

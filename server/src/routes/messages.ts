@@ -5,6 +5,7 @@ import type {
   Chat,
   ChatState,
   EventEvalRow,
+  GenerationStatus,
   Location,
   Message,
   Notice,
@@ -412,182 +413,198 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     emitVisible(true);
   } catch (err) {
     failed = (err as Error).message;
+  }
+
+
+  // 生成〜ステート確定までを1つの区間として扱う（§5.4）。
+  // ストリームが終わった時点でロックを外すと、assistant・候補・発火履歴・
+  // chats.state を書き終える前に次のターンが始まり、古い lastMessage を
+  // 基準にしてしまう（メッセージの並び自体も崩れる）。
+  // done 以降の要約・知識抽出はこの区間に含めない。
+  let messageId = '';
+  let content = '';
+  let utterances: Utterance[] = [];
+  let status: GenerationStatus = 'complete';
+  let finalState: ChatState = baseState;
+  let warnings: string[] = [];
+  let firedTitles: string[] = [];
+  let eventRows: EventEvalRow[] = [];
+  let autoJoinSuggested: string[] = [];
+  try {
+    if (failed) {
+      // 生成失敗: assistantは保存しない。末尾がuserのまま残るので retry で再試行できる（§5.6）
+      send('error', { message: failed });
+      res.end();
+      return;
+    }
+
+    // ---- 後処理: サニタイズ → フェンス分離 → 発話パース → ステート適用 ----
+    const sanitized = sanitizeResponse(full, gathered.personaName);
+    const { body: text, fence } = splitFence(sanitized);
+
+    if (!text.trim()) {
+      send('error', { message: aborted ? '生成が停止されました（本文なし）' : '生成結果が空でした' });
+      res.end();
+      return;
+    }
+
+    let delta: StateDelta;
+    if (settings.state_enabled !== 1) {
+      delta = fallbackDelta(0);
+    } else if (aborted) {
+      // §5.8: 停止時は elapsed 0 のフォールバック。停止操作でゲーム内時間を進めない
+      delta = fallbackDelta(0);
+    } else if (settings.state_extraction_mode === 'separate_call') {
+      // §5.7-3: 本文生成後に軽量モデルで差分だけ抽出する
+      const extracted = await extractStateSeparate({
+        model: settings.utility_model || settings.default_model,
+        body: text,
+        baseState,
+        locations: gathered.input.locations,
+        characters: [...gathered.input.participants, ...gathered.input.npcPool],
+      });
+      if (extracted) {
+        delta = extracted;
+        fenceMissStreak.set(chatId, 0);
+      } else {
+        delta = fallbackDelta(10);
+        fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
+      }
+    } else {
+      const parsed = parseStateDelta(fence);
+      if (parsed) {
+        delta = parsed;
+        fenceMissStreak.set(chatId, 0);
+      } else {
+        // §5.7: フェンス欠落時は elapsed 10、その他変更なし
+        delta = fallbackDelta(10);
+        fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
+      }
+    }
+
+    const parseResult = parseUtterances(text, gathered.parseCtx);
+    content = text;
+    utterances = parseResult.utterances;
+    autoJoinSuggested = parseResult.autoJoinCharacterIds;
+
+    const pl = gathered.pipeline;
+    const applied = applyDelta(
+      gathered.input.calendar,
+      baseState,
+      delta,
+      gathered.input.locations,
+      pl.characters,
+      {
+        // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる
+        rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + delta.elapsed_minutes) / 1440)}`),
+        varsSchema: pl.varsSchema,
+        varsEnabled: pl.varsEnabled,
+      },
+    );
+
+    status = aborted ? 'stopped' : 'complete';
+    const stateDeltaLog =
+      fence ??
+      (delta.fallback
+        ? `(fallback) elapsed_minutes: ${delta.elapsed_minutes}`
+        : `(separate_call) ${JSON.stringify(delta)}`);
+
+    if (target) {
+      // 作り直す候補の分は判定をやり直すので、このメッセージの発火履歴を消す（v1.5.3）
+      deleteFiresOfMessage(chatId, target.id);
+      // regenerate: 対象メッセージに候補を追加し、表示中コピーを差し替える（§4.8）
+      const v = insertVariant({
+        message_id: target.id,
+        content,
+        utterances,
+        state_delta: stateDeltaLog,
+        state_after: applied.state,
+      });
+      updateMessageActive(target.id, {
+        content,
+        utterances,
+        state_after: applied.state,
+        active_variant: v.index,
+        generation_status: status,
+      });
+      messageId = target.id;
+    } else {
+      // 通常送信 / retry: 新規assistant + index 0 のvariant（§4.8: 初回生成も必ず作る）
+      const msg = insertMessage({
+        chat_id: chatId,
+        role: 'assistant',
+        content,
+        utterances,
+        state_after: applied.state,
+        generation_status: status,
+      });
+      insertVariant({
+        message_id: msg.id,
+        content,
+        utterances,
+        state_delta: stateDeltaLog,
+        state_after: applied.state,
+      });
+      messageId = msg.id;
+    }
+
+    // ---- 判定パイプライン（v1.5.3 §6）----
+    // assistant の state_after が確定した直後にのみ走る。注入は次ターンのプロンプトへ。
+    // 途中で停止した場合は走らせず、次のターンで改めて判定させる。
+    finalState = applied.state;
+    if (status === 'complete' && pl.eventsEnabled) {
+      const result = runEventPipeline({
+        chatId,
+        events: listEvents(chat.world_id),
+        baseState,
+        newState: applied.state,
+        calendar: gathered.input.calendar,
+        locations: gathered.input.locations,
+        varsSchema: pl.varsSchema,
+        varsEnabled: pl.varsEnabled,
+        baseMessageId: lastMessage(chatId)?.id ?? chatId,
+        visitId: visitIdOf(chatId, applied.state),
+        firesByEvent: groupFires(chatId),
+        maxPerTurn: Math.max(1, pl.settings.event_max_per_turn),
+      });
+      eventRows = result.rows;
+
+      // set_vars の適用と発火記録は1トランザクションで揃える（§6.4）
+      const commit = db.transaction(() => {
+        let state = applied.state;
+        for (const { event, scopeKey } of result.adopted) {
+          if (pl.varsEnabled && event.set_vars.length) {
+            const r = applyVarOps(pl.varsSchema, state.vars, event.set_vars);
+            state = { ...state, vars: r.vars };
+            applied.warnings.push(...r.warnings);
+          }
+          recordFire({
+            chat_id: chatId,
+            event_id: event.id,
+            message_id: messageId,
+            fired_at_time: applied.state.time,
+            scope_key: scopeKey,
+          });
+          firedTitles.push(event.title);
+        }
+        if (state !== applied.state) {
+          // 確定済みの state_after を書き戻す。表示中の候補も必ず揃える（§6.4）
+          updateMessageActive(messageId, { state_after: state });
+          const active = listVariants(messageId).find(
+            (v) => v.index === (getMessage(messageId)?.active_variant ?? 0),
+          );
+          if (active) updateVariantState(active.id, state);
+        }
+        finalState = state;
+      });
+      commit();
+    }
+
+    warnings = [...parseResult.warnings, ...applied.warnings];
+    setChatState(chatId, finalState);
   } finally {
     inflight.delete(chatId);
   }
-
-  if (failed) {
-    // 生成失敗: assistantは保存しない。末尾がuserのまま残るので retry で再試行できる（§5.6）
-    send('error', { message: failed });
-    res.end();
-    return;
-  }
-
-  // ---- 後処理: サニタイズ → フェンス分離 → 発話パース → ステート適用 ----
-  const sanitized = sanitizeResponse(full, gathered.personaName);
-  const { body: text, fence } = splitFence(sanitized);
-
-  if (!text.trim()) {
-    send('error', { message: aborted ? '生成が停止されました（本文なし）' : '生成結果が空でした' });
-    res.end();
-    return;
-  }
-
-  let delta: StateDelta;
-  if (settings.state_enabled !== 1) {
-    delta = fallbackDelta(0);
-  } else if (aborted) {
-    // §5.8: 停止時は elapsed 0 のフォールバック。停止操作でゲーム内時間を進めない
-    delta = fallbackDelta(0);
-  } else if (settings.state_extraction_mode === 'separate_call') {
-    // §5.7-3: 本文生成後に軽量モデルで差分だけ抽出する
-    const extracted = await extractStateSeparate({
-      model: settings.utility_model || settings.default_model,
-      body: text,
-      baseState,
-      locations: gathered.input.locations,
-      characters: [...gathered.input.participants, ...gathered.input.npcPool],
-    });
-    if (extracted) {
-      delta = extracted;
-      fenceMissStreak.set(chatId, 0);
-    } else {
-      delta = fallbackDelta(10);
-      fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
-    }
-  } else {
-    const parsed = parseStateDelta(fence);
-    if (parsed) {
-      delta = parsed;
-      fenceMissStreak.set(chatId, 0);
-    } else {
-      // §5.7: フェンス欠落時は elapsed 10、その他変更なし
-      delta = fallbackDelta(10);
-      fenceMissStreak.set(chatId, (fenceMissStreak.get(chatId) ?? 0) + 1);
-    }
-  }
-
-  const parseResult = parseUtterances(text, gathered.parseCtx);
-  const content = text;
-  const utterances: Utterance[] = parseResult.utterances;
-
-  const pl = gathered.pipeline;
-  const applied = applyDelta(
-    gathered.input.calendar,
-    baseState,
-    delta,
-    gathered.input.locations,
-    pl.characters,
-    {
-      // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる
-      rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + delta.elapsed_minutes) / 1440)}`),
-      varsSchema: pl.varsSchema,
-      varsEnabled: pl.varsEnabled,
-    },
-  );
-
-  const status = aborted ? 'stopped' : 'complete';
-  const stateDeltaLog =
-    fence ??
-    (delta.fallback
-      ? `(fallback) elapsed_minutes: ${delta.elapsed_minutes}`
-      : `(separate_call) ${JSON.stringify(delta)}`);
-
-  let messageId: string;
-  if (target) {
-    // 作り直す候補の分は判定をやり直すので、このメッセージの発火履歴を消す（v1.5.3）
-    deleteFiresOfMessage(chatId, target.id);
-    // regenerate: 対象メッセージに候補を追加し、表示中コピーを差し替える（§4.8）
-    const v = insertVariant({
-      message_id: target.id,
-      content,
-      utterances,
-      state_delta: stateDeltaLog,
-      state_after: applied.state,
-    });
-    updateMessageActive(target.id, {
-      content,
-      utterances,
-      state_after: applied.state,
-      active_variant: v.index,
-      generation_status: status,
-    });
-    messageId = target.id;
-  } else {
-    // 通常送信 / retry: 新規assistant + index 0 のvariant（§4.8: 初回生成も必ず作る）
-    const msg = insertMessage({
-      chat_id: chatId,
-      role: 'assistant',
-      content,
-      utterances,
-      state_after: applied.state,
-      generation_status: status,
-    });
-    insertVariant({
-      message_id: msg.id,
-      content,
-      utterances,
-      state_delta: stateDeltaLog,
-      state_after: applied.state,
-    });
-    messageId = msg.id;
-  }
-
-  // ---- 判定パイプライン（v1.5.3 §6）----
-  // assistant の state_after が確定した直後にのみ走る。注入は次ターンのプロンプトへ。
-  // 途中で停止した場合は走らせず、次のターンで改めて判定させる。
-  let finalState = applied.state;
-  const firedTitles: string[] = [];
-  let eventRows: EventEvalRow[] = [];
-  if (status === 'complete' && pl.eventsEnabled) {
-    const result = runEventPipeline({
-      chatId,
-      events: listEvents(chat.world_id),
-      baseState,
-      newState: applied.state,
-      calendar: gathered.input.calendar,
-      locations: gathered.input.locations,
-      varsSchema: pl.varsSchema,
-      varsEnabled: pl.varsEnabled,
-      baseMessageId: lastMessage(chatId)?.id ?? chatId,
-      visitId: visitIdOf(chatId, applied.state),
-      firesByEvent: groupFires(chatId),
-      maxPerTurn: Math.max(1, pl.settings.event_max_per_turn),
-    });
-    eventRows = result.rows;
-
-    // set_vars の適用と発火記録は1トランザクションで揃える（§6.4）
-    const commit = db.transaction(() => {
-      let state = applied.state;
-      for (const { event, scopeKey } of result.adopted) {
-        if (pl.varsEnabled && event.set_vars.length) {
-          const r = applyVarOps(pl.varsSchema, state.vars, event.set_vars);
-          state = { ...state, vars: r.vars };
-          applied.warnings.push(...r.warnings);
-        }
-        recordFire({
-          chat_id: chatId,
-          event_id: event.id,
-          message_id: messageId,
-          fired_at_time: applied.state.time,
-          scope_key: scopeKey,
-        });
-        firedTitles.push(event.title);
-      }
-      if (state !== applied.state) {
-        // 確定済みの state_after を書き戻す。表示中の候補も必ず揃える（§6.4）
-        updateMessageActive(messageId, { state_after: state });
-        const active = listVariants(messageId).find(
-          (v) => v.index === (getMessage(messageId)?.active_variant ?? 0),
-        );
-        if (active) updateVariantState(active.id, state);
-      }
-      finalState = state;
-    });
-    commit();
-  }
-
-  setChatState(chatId, finalState);
 
   // 要約・知識抽出はバックグラウンド（§8.3・§8.4）。
   // 互いに独立して判定する（auto_summarize を切っても自動抽出は動く）。
@@ -611,10 +628,10 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     needsSummary,
     firedEvents: firedTitles,
     eventRows,
-    warnings: [...parseResult.warnings, ...applied.warnings],
-    stateWarnings: applied.warnings,
+    warnings,
+    stateWarnings: warnings,
     fenceMissingStreak: fenceMissStreak.get(chatId) ?? 0,
-    autoJoinSuggested: parseResult.autoJoinCharacterIds,
+    autoJoinSuggested,
     generationStatus: status,
     autoplayShouldStop,
   });

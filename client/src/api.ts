@@ -100,6 +100,13 @@ export async function streamGenerate(
   const decoder = new TextDecoder();
   let buf = '';
 
+  /**
+   * done / error を受け取ったか。
+   * SSEは「終端イベントが来ないまま接続だけ閉じる」ことがある（回線断・プロキシ）。
+   * その場合に何も呼ばないと、呼び出し側のPromiseが解決されず生成中のまま固まる。
+   */
+  let settled = false;
+
   const handleBlock = (block: string) => {
     let event = 'message';
     let data = '';
@@ -111,9 +118,13 @@ export async function streamGenerate(
     try {
       const payload = JSON.parse(data);
       if (event === 'delta') handlers.onDelta(payload.text as string);
-      else if (event === 'done') handlers.onDone(payload as DonePayload);
-      else if (event === 'error') handlers.onError(payload.message as string);
-      else if (event === 'notice') handlers.onNotice?.(payload as Notice);
+      else if (event === 'done') {
+        settled = true;
+        handlers.onDone(payload as DonePayload);
+      } else if (event === 'error') {
+        settled = true;
+        handlers.onError(payload.message as string);
+      } else if (event === 'notice') handlers.onNotice?.(payload as Notice);
     } catch {
       /* 不完全なブロックは無視 */
     }
@@ -130,7 +141,18 @@ export async function streamGenerate(
         buf = buf.slice(idx + 2);
       }
     }
+    // 末尾の区切り（空行）が来ないまま閉じることがあるので、残りも読む
+    if (buf.trim()) handleBlock(buf);
   } catch (err) {
-    handlers.onError((err as Error).message);
+    // done のあとに切れた場合は、そのターンは成功しているのでエラーにしない
+    if (!settled) {
+      settled = true;
+      handlers.onError((err as Error).message);
+    }
+  } finally {
+    if (!settled) {
+      settled = true;
+      handlers.onError('接続が途中で終了しました。応答が保存されている場合があるので確認してください');
+    }
   }
 }

@@ -73,6 +73,8 @@ function startServer() {
       DEFAULT_MODEL: 'anthropic/claude-opus-5',
       UTILITY_MODEL: 'anthropic/claude-sonnet-5',
       APP_PASSWORD: '',
+      // BINDを絞らず無認証で起動するので、明示しないと安全側で止まる（§16）
+      ALLOW_UNAUTHENTICATED: '1',
     },
     'server',
   );
@@ -116,6 +118,8 @@ try {
   await s.chatListPreview(w);
   await s.areasSuite();
   await s.lastTrainSuite(w);
+  await s.generationLockSuite(w);
+  await s.importRollbackSuite();
 
   // v1.5.3: 進行フラグと条件付きイベント
   const ew = await s2.setupEventWorld('ev');
