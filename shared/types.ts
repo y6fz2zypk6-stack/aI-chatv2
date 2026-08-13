@@ -298,6 +298,13 @@ export interface CalendarConfig {
   after_last_train_text: string;
   /** 季節 → { 天候: 重み } */
   weather_table: Record<string, Record<string, number>>;
+  /**
+   * 天候を引き直す時刻（0時からの分）。既定 240 = 朝4時。
+   * 日付の変わり目（0:00）とは別に持つ。深夜に会話していると
+   * 日付が変わった瞬間に天気が切り替わって不自然なため（§12.3）。
+   * 0 にすると 0:00 起点（日付の変わり目と同じ）になる。
+   */
+  weather_rollover_min: number;
 }
 
 // ---- 条件付きイベント（v1.5.3 §4・§5） ----

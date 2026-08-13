@@ -6,7 +6,7 @@ import type {
   StateDelta,
   VarSchemaEntry,
 } from '../../../shared/types.js';
-import { drawWeather, toGameTime, toTotalDay } from './calendar.js';
+import { drawWeather, toGameTime, toTotalDay, weatherDayOf } from './calendar.js';
 import { applySetVar } from './vars.js';
 
 export interface ApplyResult {
@@ -96,10 +96,15 @@ export function applyDelta(
     }
   }
 
-  // 時間適用と日替わり判定 → 天候は日付が変わったときのみ抽選（§8.2）
+  // 時間適用と日替わり判定。
+  //
+  // **日付の変わり目と天候の切り替わりは別の境界を使う（§12.3）。**
+  // dayChanged は 0:00 起点のまま（状況ブロックの最終行と on_enter/on_day_change が使う）。
+  // 天候だけ weather_rollover_min（既定 4:00）起点にする。0:00 で引き直すと、
+  // 深夜に会話している最中に日付が変わった瞬間だけ天気が変わって不自然なため。
   const newTime = base.time + elapsed;
   const dayChanged = toTotalDay(newTime) !== toTotalDay(base.time);
-  if (dayChanged) {
+  if (weatherDayOf(cfg, newTime) !== weatherDayOf(cfg, base.time)) {
     const season = toGameTime(cfg, newTime).season;
     state.weather = drawWeather(cfg, season, rand);
   }

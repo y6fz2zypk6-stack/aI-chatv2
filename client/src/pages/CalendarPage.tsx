@@ -162,13 +162,30 @@ export default function CalendarPage() {
 
         <div className="section">
           <span className="kicker">Weather</span>
-          <Field label="季節 → 天候と重み（日付が変わったときに抽選）">
+          <Field label="季節 → 天候と重み（1日1回だけ抽選）">
             <textarea
               className="mono tall"
               value={weatherJson}
               onChange={(e) => setWeatherJson(e.target.value)}
             />
           </Field>
+          {/* 日付の変わり目（0:00）とは別の境界。深夜の会話中に天気が変わるのを避ける */}
+          <div className="setting">
+            <div className="txt">
+              <label>天候を引き直す時刻</label>
+              <span>
+                0時からの分。240 = 朝4時。日付の変わり目ではなくこの時刻に切り替わるので、
+                深夜の会話中に急に天気が変わりません。0 にすると0:00起点に戻ります
+              </span>
+            </div>
+            <Stepper
+              value={cfg.weather_rollover_min ?? 240}
+              step={60}
+              min={0}
+              max={1380}
+              onChange={(v) => setCfg({ ...cfg, weather_rollover_min: v })}
+            />
+          </div>
         </div>
       </div>
 

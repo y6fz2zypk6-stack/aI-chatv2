@@ -735,6 +735,60 @@ export async function advanceSuite(w) {
     await api('PUT', `/worlds/${w.world.id}/calendar`, { weather_table: cal.weather_table });
   }
 
+  // 天候の切り替わりは日付の変わり目ではなく weather_rollover_min（既定 4:00）
+  {
+    await resetEvents(w);
+    const cal = (await api('GET', `/worlds/${w.world.id}/calendar`)).json;
+    // 抽選が走ったかを見分けるため、その季節の天候表を1つだけにする
+    await api('PUT', `/worlds/${w.world.id}/calendar`, {
+      weather_table: { ...cal.weather_table, 秋: { 雹: 100 } },
+    });
+
+    // 23:00 → 01:00。日付はまたぐが 4:00 はまたがない
+    {
+      const { chat } = await newChat(w, { time: 877 * 1440 + 23 * 60, weather: '晴' });
+      const r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 120 });
+      check('日付はまたいだと判定される', r.json.dayChanged === true, String(r.json.dayChanged));
+      check('0時をまたいだだけでは天候を引き直さない', r.json.weather === '晴', r.json.weather);
+    }
+
+    // 03:00 → 05:00。日付はまたがないが 4:00 はまたぐ
+    {
+      const { chat } = await newChat(w, { time: 878 * 1440 + 3 * 60, weather: '晴' });
+      const r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 120 });
+      check('日付はまたいでいない', r.json.dayChanged === false, String(r.json.dayChanged));
+      check('4時をまたぐと天候を引き直す', r.json.weather === '雹', r.json.weather);
+    }
+
+    // 0 にすると従来どおり 0:00 起点に戻る
+    {
+      await api('PUT', `/worlds/${w.world.id}/calendar`, { weather_rollover_min: 0 });
+      const { chat } = await newChat(w, { time: 877 * 1440 + 23 * 60, weather: '晴' });
+      const r = await api('POST', `/chats/${chat.id}/advance`, { minutes: 120 });
+      check('0 にすると0時で引き直す（旧挙動へ戻せる）', r.json.weather === '雹', r.json.weather);
+      await api('PUT', `/worlds/${w.world.id}/calendar`, { weather_rollover_min: 240 });
+    }
+
+    await api('PUT', `/worlds/${w.world.id}/calendar`, { weather_table: cal.weather_table });
+  }
+
+  // 境界の計算そのもの（0付近が負になるので floor でなければならない）
+  {
+    const { weatherDayOf } = await import('../dist/server/src/domain/calendar.js');
+    const cfg = (await api('GET', `/worlds/${w.world.id}/calendar`)).json;
+    const at = (day, hh) => weatherDayOf(cfg, day * 1440 + hh * 60);
+    check('起点より前は前日扱い（1日目 0:00 は -1）', at(0, 0) === -1, String(at(0, 0)));
+    check('起点より前は前日扱い（1日目 3:00 も -1）', at(0, 3) === -1, String(at(0, 3)));
+    check('起点で切り替わる（1日目 4:00 は 0）', at(0, 4) === 0, String(at(0, 4)));
+    check('翌 3:00 はまだ同じ日', at(1, 3) === 0, String(at(1, 3)));
+    check('翌 4:00 で次の日', at(1, 4) === 1, String(at(1, 4)));
+    check('0 を指定すると通算日と一致する',
+      weatherDayOf({ ...cfg, weather_rollover_min: 0 }, 5 * 1440) === 5,
+      String(weatherDayOf({ ...cfg, weather_rollover_min: 0 }, 5 * 1440)));
+    check('未設定でも壊れない（0時起点として扱う）',
+      weatherDayOf({ ...cfg, weather_rollover_min: undefined }, 5 * 1440) === 5);
+  }
+
   // 手動のステート編集では抽選も判定も起きない（違いを固定しておく）
   {
     await resetEvents(w);

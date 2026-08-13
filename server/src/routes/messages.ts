@@ -48,7 +48,7 @@ import {
   listEvents,
   recordFire,
 } from '../db/repo/events.js';
-import { MIN_PER_DAY, formatGameTime, toGameTime, toMinutes, toTotalDay } from '../domain/calendar.js';
+import { MIN_PER_DAY, formatGameTime, toGameTime, toMinutes, toTotalDay, weatherDayOf } from '../domain/calendar.js';
 import { buildEventBlocks, runEventPipeline } from '../domain/events.js';
 import { applyVarOps, buildVarsBlock, varsInstruction } from '../domain/vars.js';
 import { seededRand } from '../util/random.js';
@@ -542,8 +542,11 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
         gathered.input.locations,
         pl.characters,
         {
-          // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる
-          rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + delta.elapsed_minutes) / 1440)}`),
+          // 天候はシード固定（§7）。再生成しても同じ日なら同じ天気になる。
+          // 種の境界は判定と同じ weatherDayOf を通すこと（片方だけずらすと崩れる）
+          rand: seededRand(
+            `${chatId}:weather:${weatherDayOf(gathered.input.calendar, baseState.time + delta.elapsed_minutes)}`,
+          ),
           varsSchema: pl.varsSchema,
           varsEnabled: pl.varsEnabled,
         },
@@ -836,7 +839,7 @@ messagesRouter.post('/chats/:id/advance', (req, res) => {
   };
   const applied = applyDelta(calendar, baseState, delta, locations, characters, {
     // 生成ターンと同じ種を使う。同じ日に着けば天気も同じになる（§7）
-    rand: seededRand(`${chatId}:weather:${Math.floor((baseState.time + elapsed) / MIN_PER_DAY)}`),
+    rand: seededRand(`${chatId}:weather:${weatherDayOf(calendar, baseState.time + elapsed)}`),
     varsSchema,
     varsEnabled,
   });

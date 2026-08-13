@@ -27,6 +27,7 @@ export const DEFAULT_CALENDAR: CalendarConfig = {
     秋: { 晴: 50, 曇: 30, 雨: 20 },
     冬: { 雨: 30, みぞれ: 25, 曇: 25, 雪: 10, 晴: 10 },
   },
+  weather_rollover_min: 240,
 };
 
 export function normalizeCalendar(partial: Partial<CalendarConfig> | null | undefined): CalendarConfig {
@@ -40,6 +41,25 @@ function minutesPerYear(cfg: CalendarConfig): number {
 /** 通算分 → 通算日 */
 export function toTotalDay(time: number): number {
   return Math.floor(time / MIN_PER_DAY);
+}
+
+/**
+ * 天候の「日」。既定では朝4時起点（§12.3）。
+ *
+ * **日付の変わり目とは別に持つ。** 0:00 を境にすると、深夜に会話している最中に
+ * 日付が変わった瞬間だけ天気が切り替わる。RPでは日付をまたぐ時間帯の会話が
+ * 珍しくないので、天候だけ朝へずらす。
+ *
+ * **`Math.floor` であること。** 起点より前（1日目の 0:00〜3:59）は商が負になるので、
+ * `Math.trunc` や `| 0` だと 0 に丸まって、初日の4時に引き直されない。
+ *
+ * 判定と抽選の種の**両方**がこの関数を通ること。片方だけ変えると
+ * 「同じ日なら同じ天気」（§20-8）が崩れる。
+ */
+export function weatherDayOf(cfg: CalendarConfig, time: number): number {
+  const raw = Math.floor(cfg.weather_rollover_min ?? 0);
+  const rollover = Number.isFinite(raw) ? ((raw % MIN_PER_DAY) + MIN_PER_DAY) % MIN_PER_DAY : 0;
+  return Math.floor((time - rollover) / MIN_PER_DAY);
 }
 
 /** 月番号から季節名を返す */
