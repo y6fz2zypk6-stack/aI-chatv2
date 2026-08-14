@@ -10,6 +10,7 @@ import {
   type Location,
   type Message,
   type Persona,
+  type SnapshotMeta,
   type Utterance,
 } from '@shared/types';
 import { api, streamGenerate, type DonePayload } from '../api';
@@ -27,6 +28,8 @@ interface Detail {
   messages: Message[];
   gameTime: GameTime;
   flags: { events: ResolvedFlag; vars: ResolvedFlag; scenarioMissing: boolean };
+  /** 画像本体は含まない。実体は /api/snapshots/:id/image（§21） */
+  snapshots: SnapshotMeta[];
 }
 
 interface MemoryPreview {
@@ -111,6 +114,10 @@ export default function ChatPage() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [persona, setPersona] = useState<Persona | null>(null);
   const [defaultModel, setDefaultModel] = useState('');
+  /** 画像モデルが設定されているときだけスナップショットの入口を出す（§21） */
+  const [imageEnabled, setImageEnabled] = useState(false);
+  /** スナップショットを作る対象のメッセージ */
+  const [snapshotFor, setSnapshotFor] = useState<Message | null>(null);
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -138,11 +145,12 @@ export default function ChatPage() {
       const [chars, locs, config] = await Promise.all([
         api.get<Character[]>(`/worlds/${d.chat.world_id}/characters`),
         api.get<Location[]>(`/worlds/${d.chat.world_id}/locations`),
-        api.get<{ defaultModel: string }>('/config'),
+        api.get<{ defaultModel: string; imageEnabled: boolean }>('/config'),
       ]);
       setCharacters(chars);
       setLocations(locs);
       setDefaultModel(config.defaultModel);
+      setImageEnabled(!!config.imageEnabled);
       if (d.chat.persona_id) {
         const personas = await api.get<Persona[]>('/personas');
         setPersona(personas.find((p) => p.id === d.chat.persona_id) ?? null);
@@ -464,6 +472,21 @@ export default function ChatPage() {
               onFork={() => void fork(m)}
               onRegenerate={() => void generate({ regenerate: true })}
               onSwitchVariant={(dir) => void switchVariant(m, dir)}
+              snapshots={(detail.snapshots ?? []).filter((s) => s.message_id === m.id)}
+              canSnapshot={imageEnabled}
+              onSnapshot={() => {
+                setSnapshotFor(m);
+                setMenuFor(null);
+              }}
+              onDeleteSnapshot={async (sid) => {
+                if (!confirm('このスナップショットを削除しますか？')) return;
+                try {
+                  await api.del(`/snapshots/${sid}`);
+                  await load();
+                } catch (err) {
+                  toast((err as Error).message, true);
+                }
+              }}
             />
           ))}
 
@@ -775,6 +798,18 @@ export default function ChatPage() {
 
       {showPreview && <PromptPreviewModal chatId={id!} onClose={() => setShowPreview(false)} />}
 
+      {snapshotFor && (
+        <SnapshotModal
+          message={snapshotFor}
+          onClose={() => setSnapshotFor(null)}
+          onDone={() => {
+            setSnapshotFor(null);
+            void load();
+          }}
+          toast={toast}
+        />
+      )}
+
       {advanceOpen && (
         <AdvanceModal
           chatId={id!}
@@ -948,6 +983,10 @@ function MessageView(props: {
   onFork: () => void;
   onRegenerate: () => void;
   onSwitchVariant: (dir: 1 | -1) => void;
+  snapshots: SnapshotMeta[];
+  canSnapshot: boolean;
+  onSnapshot: () => void;
+  onDeleteSnapshot: (id: string) => void;
 }) {
   const { message: m } = props;
   const utterances: Utterance[] = m.utterances.length
@@ -1043,6 +1082,24 @@ function MessageView(props: {
         );
       })}
 
+      {props.snapshots.length > 0 && (
+        <div className="snapshots">
+          {props.snapshots.map((s) => (
+            <figure key={s.id}>
+              {/* 画像はJSONに載せていないので、実体はこのエンドポイントから取る（§21） */}
+              <img src={`/api/snapshots/${s.id}/image`} alt="この場面のスナップショット" loading="lazy" />
+              <button
+                className="icon-btn"
+                onClick={() => props.onDeleteSnapshot(s.id)}
+                title="このスナップショットを削除"
+              >
+                <Icon.trash size={14} />
+              </button>
+            </figure>
+          ))}
+        </div>
+      )}
+
       {props.menuOpen && (
         <>
           <div className="menu-backdrop" onClick={props.onToggleMenu} />
@@ -1067,6 +1124,15 @@ function MessageView(props: {
               </span>
               <span>コピーする</span>
             </button>
+            {/* スナップショットは「その瞬間」の絵なので、AIの応答にだけ出す（§21） */}
+            {props.canSnapshot && m.role === 'assistant' && (
+              <button className="prow" onClick={props.onSnapshot}>
+                <span className="ic">
+                  <Icon.camera size={17} />
+                </span>
+                <span>この場面を描く</span>
+              </button>
+            )}
             <button className="prow" onClick={props.onFork}>
               <span className="ic">
                 <Icon.fork size={17} />
@@ -1083,6 +1149,183 @@ function MessageView(props: {
         </>
       )}
     </div>
+  );
+}
+
+// ---- スナップショット（§21） ----
+
+interface SnapshotPreview {
+  prompt: string;
+  warnings: string[];
+  references: string[];
+  model: string;
+  aspect_ratio: string;
+  quality: string;
+}
+
+const ASPECTS = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+const QUALITIES: { value: string; label: string }[] = [
+  { value: 'low', label: '低（安い・速い）' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高（高い・遅い）' },
+];
+
+/**
+ * 生成する前にプロンプトを見せて直せるようにする（§21）。
+ * プレビューは組み立てるだけなので課金しない。生成ボタンを押して初めて課金される。
+ */
+function SnapshotModal(props: {
+  message: Message;
+  onClose: () => void;
+  onDone: () => void;
+  toast: (msg: string, error?: boolean) => void;
+}) {
+  const [preview, setPreview] = useState<SnapshotPreview | null>(null);
+  const [prompt, setPrompt] = useState('');
+  const [aspect, setAspect] = useState('16:9');
+  const [quality, setQuality] = useState('medium');
+  const [useRefs, setUseRefs] = useState(true);
+  const [includePersona, setIncludePersona] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+
+  // ペルソナの有無で組み立てが変わるので、切り替えたら引き直す
+  useEffect(() => {
+    let alive = true;
+    setPreview(null);
+    setFailed('');
+    api
+      .post<SnapshotPreview>(
+        `/messages/${props.message.id}/snapshot/preview?include_persona=${includePersona ? 1 : 0}`,
+      )
+      .then((p) => {
+        if (!alive) return;
+        setPreview(p);
+        setPrompt(p.prompt);
+        setAspect(p.aspect_ratio);
+        setQuality(p.quality);
+      })
+      .catch((err: Error) => {
+        if (alive) setFailed(err.message);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [props.message.id, includePersona]);
+
+  const run = async () => {
+    if (!prompt.trim()) {
+      props.toast('プロンプトが空です', true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post(`/messages/${props.message.id}/snapshot`, {
+        prompt,
+        aspect_ratio: aspect,
+        quality,
+        references: useRefs,
+        include_persona: includePersona,
+      });
+      props.toast('スナップショットを作りました');
+      props.onDone();
+    } catch (err) {
+      props.toast((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="この場面を描く"
+      onClose={props.onClose}
+      actions={
+        <button className="pill sm primary" onClick={() => void run()} disabled={busy || !preview}>
+          {busy ? '生成中…' : '生成する'}
+        </button>
+      }
+    >
+      {failed && <div className="empty-note">{failed}</div>}
+      {!preview && !failed && <div className="empty-note">組み立て中…</div>}
+      {preview && (
+        <>
+          {preview.warnings.map((wmsg, i) => (
+            <div key={i} className="empty-note" style={{ padding: '0 0 8px', textAlign: 'left' }}>
+              {wmsg}
+            </div>
+          ))}
+
+          <Field label="プロンプト（送る前に直せます）">
+            <textarea className="tall" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+          </Field>
+
+          <div className="grid-2">
+            <Field label="比率">
+              <div className="select-wrap">
+                <select value={aspect} onChange={(e) => setAspect(e.target.value)}>
+                  {ASPECTS.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </Field>
+            <Field label="品質">
+              <div className="select-wrap">
+                <select value={quality} onChange={(e) => setQuality(e.target.value)}>
+                  {QUALITIES.map((q) => (
+                    <option key={q.value} value={q.value}>
+                      {q.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </Field>
+          </div>
+
+          <div className="setting">
+            <div className="txt">
+              <label>アバターを参照に使う</label>
+              <span>
+                {preview.references.length
+                  ? `${preview.references.join('、')} のアバターを渡して見た目を揃えます`
+                  : '参照できるアバターがありません'}
+              </span>
+            </div>
+            <button
+              className={`toggle${useRefs && preview.references.length ? ' on' : ''}`}
+              onClick={() => setUseRefs(!useRefs)}
+              disabled={preview.references.length === 0}
+              role="switch"
+              aria-checked={useRefs && preview.references.length > 0}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
+          <div className="setting">
+            <div className="txt">
+              <label>自分（ペルソナ）も描く</label>
+              <span>一人称視点なら不要なことが多いので既定はOFFです</span>
+            </div>
+            <button
+              className={`toggle${includePersona ? ' on' : ''}`}
+              onClick={() => setIncludePersona(!includePersona)}
+              role="switch"
+              aria-checked={includePersona}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+
+          <div className="empty-note" style={{ padding: '4px 0 0', textAlign: 'left' }}>
+            モデル: {preview.model} ／ 生成すると課金されます
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 

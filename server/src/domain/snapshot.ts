@@ -11,7 +11,7 @@ import { daylightOf, toGameTime } from './calendar.js';
 import { MAX_REFERENCES } from '../llm/image.js';
 
 /**
- * スナップショットのプロンプト組み立て（§13）。
+ * スナップショットのプロンプト組み立て（§21）。
  *
  * **ここではLLMを呼ばない。** テンプレートで組んで利用者に見せ、直してもらうのが
  * この機能の入り方（送る前に確認・修正できる）。プレビューが課金しないのも同じ理由。

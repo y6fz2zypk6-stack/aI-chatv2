@@ -13,11 +13,17 @@ import { useApp } from '../store';
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
+  /** 画像モデルの候補。取れなくても手打ちできるので、失敗は黙って無視する */
+  const [imageModels, setImageModels] = useState<string[]>([]);
   const toast = useApp((s) => s.toast);
 
   useEffect(() => {
     api.get<Settings>('/settings').then(setSettings).catch(() => {});
     api.get<Persona[]>('/personas').then(setPersonas).catch(() => {});
+    api
+      .get<{ data?: { id?: string }[] }>('/images/models')
+      .then((r) => setImageModels((r.data ?? []).map((m) => m.id ?? '').filter(Boolean)))
+      .catch(() => {});
   }, []);
 
   if (!settings) return <div className="empty-note">読み込み中…</div>;
@@ -174,6 +180,61 @@ export default function SettingsPage() {
               onChange={(v) => void set({ utility_max_tokens: v })}
             />
           </SettingRow>
+        </div>
+
+        {/* スナップショット（§21）。モデルが空だと会話画面に入口を出さない */}
+        <div className="section">
+          <span className="kicker">Snapshot</span>
+          <Field label="画像モデル（空にすると機能を使いません）">
+            <input
+              value={settings.image_model}
+              onChange={(e) => void set({ image_model: e.target.value })}
+              placeholder="openai/gpt-image-2"
+              list="image-models"
+            />
+            <datalist id="image-models">
+              {imageModels.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+            <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+              設定すると、AIの応答の「⋯」に「この場面を描く」が出ます。
+              生成のたびに課金されるので、自動では作りません
+            </div>
+          </Field>
+          <Field label="画風（すべてのスナップショットの先頭に付きます）">
+            <textarea
+              value={settings.image_style_prompt}
+              onChange={(e) => void set({ image_style_prompt: e.target.value })}
+              placeholder="anime illustration, soft lighting, watercolor"
+            />
+          </Field>
+          <Field label="既定の比率">
+            <div className="select-wrap">
+              <select
+                value={settings.image_aspect_ratio}
+                onChange={(e) => void set({ image_aspect_ratio: e.target.value })}
+              >
+                {['16:9', '4:3', '1:1', '3:4', '9:16'].map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </Field>
+          <Field label="既定の品質（対応しないモデルでは無視されます）">
+            <div className="select-wrap">
+              <select
+                value={settings.image_quality}
+                onChange={(e) => void set({ image_quality: e.target.value })}
+              >
+                <option value="low">低（安い・速い）</option>
+                <option value="medium">中</option>
+                <option value="high">高（高い・遅い）</option>
+              </select>
+            </div>
+          </Field>
         </div>
 
         <div className="section">

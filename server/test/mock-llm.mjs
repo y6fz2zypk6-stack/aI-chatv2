@@ -62,7 +62,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 画像生成（§13）。キューの item で応答を変えられる:
+  // 画像生成（§21）。キューの item で応答を変えられる:
   //   status      … 上流エラーを再現
   //   headDelayMs … 応答を遅らせる（タイムアウトの検証）
   //   noMediaType … media_type を返さない（PNGのとき省略されることがある）

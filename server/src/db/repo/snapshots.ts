@@ -3,7 +3,7 @@ import { ulid } from '../../util/ulid.js';
 import type { SnapshotMeta } from '../../../../shared/types.js';
 
 /**
- * 場面のスナップショット（§13）。
+ * 場面のスナップショット（§21）。
  *
  * **他のリポジトリと違って `SELECT *` を使わない。** `image` は1枚あたり数百KB〜数MBの
  * BLOB で、`memories.ts` などと同じ書き方にすると一覧を引くたびに全画像がメモリへ載る。

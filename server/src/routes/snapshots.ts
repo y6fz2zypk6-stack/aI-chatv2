@@ -19,7 +19,7 @@ import { generateImage } from '../llm/image.js';
 export const snapshotsRouter = Router();
 
 /**
- * 場面のスナップショット（§13）。
+ * 場面のスナップショット（§21）。
  *
  * **生成ロック（messages.ts の `inflight`）は使わない。** 画像生成の最中も
  * 会話を続けられるべきなので、別枠の軽いロックで「同じメッセージへの二重生成」だけを弾く。
@@ -62,7 +62,7 @@ function resolveTarget(messageId: string, includePersona: boolean): Resolved {
     getDefaultPersona() ??
     null;
 
-  // **基準は state_after。** チャットの現在ステートではない（§13）。
+  // **基準は state_after。** チャットの現在ステートではない（§21）。
   // 在席者も当時の present から引く。参加キャラ一覧だと、その時いなかった人まで描かれる
   const state = message.state_after;
   const characters = getCharacters(state.present ?? []);
@@ -166,7 +166,7 @@ snapshotsRouter.post('/messages/:id/snapshot', async (req, res) => {
 /**
  * 画像のバイナリ配信。
  *
- * **JSONに載せない**ため、実体はここでしか出さない（§13）。
+ * **JSONに載せない**ため、実体はここでしか出さない（§21）。
  * `private` であること: 認証の内側の個人的な内容なので、共有プロキシに載せてはいけない。
  * 作成後に中身が変わらないので `immutable` が使える。
  */

@@ -148,6 +148,7 @@ sudo ufw deny 3000
 | `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1`。公開IPやLANのアドレスを書いても「絞った」ことにはなりません（パスワード無しなら起動を中止します） |
 | `ALLOW_UNAUTHENTICATED` | `1` のときだけ、無認証＋全インターフェースでの起動を許可する |
 | `STREAM_CONNECT_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` | ストリームの待ち時間の上限（既定60000ミリ秒ずつ）。上流が黙り込んだときに生成を打ち切る |
+| `IMAGE_TIMEOUT_MS` | スナップショット（画像生成）の待ち時間の上限（既定120000ミリ秒） |
 | `PORT` / `DB_PATH` / `APP_URL` / `APP_TITLE` | 任意 |
 
 ## 構成

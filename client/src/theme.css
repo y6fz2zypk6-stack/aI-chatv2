@@ -953,6 +953,43 @@ textarea.tall {
   color: var(--muted);
 }
 
+/* スナップショット（§21）。吹き出しの下に、その場面の絵として並べる */
+.snapshots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 14px 6px 52px; /* アバター幅ぶん右へ寄せて、発話の続きに見せる */
+}
+
+.snapshots figure {
+  position: relative;
+  margin: 0;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  line-height: 0;
+}
+
+.snapshots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* 極端な縦横比でも1枚が画面を占有しないようにする（縦長を選んだときの保険） */
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+/* 消す操作は絵の上に重ねる。並びを崩さないため */
+.snapshots figure .icon-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: #fff;
+  background: rgb(0 0 0 / 38%);
+  border-radius: 999px;
+}
+
 /* IDのコピー行。入力欄と同じ面に揃えて、値であることを見せる */
 .id-copy {
   display: flex;

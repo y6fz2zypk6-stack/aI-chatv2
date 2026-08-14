@@ -148,7 +148,7 @@ export interface Character {
   avatar: string;
   persona: string;
   /**
-   * 画像生成用の外見（§13）。**本文生成のプロンプトには載せない。**
+   * 画像生成用の外見（§21）。**本文生成のプロンプトには載せない。**
    * persona（性格・背景の文章）とは用途が違うので分けて持つ
    */
   appearance: string;
@@ -164,7 +164,7 @@ export interface Persona {
   name: string;
   avatar: string;
   description: string;
-  /** 画像生成用の外見（§13）。本文生成のプロンプトには載せない */
+  /** 画像生成用の外見（§21）。本文生成のプロンプトには載せない */
   appearance: string;
   is_default: number;
   created_at: number;
@@ -471,7 +471,7 @@ export interface MemoryListItem extends Memory {
 // ---- 設定（§12） ----
 
 /**
- * スナップショットの一覧用（§13）。
+ * スナップショットの一覧用（§21）。
  * **画像本体（BLOB）を含まない。** JSONに載せると会話の読み込みが一気に重くなる。
  * 実体は GET /api/snapshots/:id/image でバイナリ配信する
  */
@@ -500,7 +500,7 @@ export interface Settings {
    */
   utility_max_tokens: number;
   /**
-   * スナップショット（画像生成、§13）で使うモデル。
+   * スナップショット（画像生成、§21）で使うモデル。
    * **空なら機能そのものを無効。** 知らないうちに課金させないため既定は空
    */
   image_model: string;

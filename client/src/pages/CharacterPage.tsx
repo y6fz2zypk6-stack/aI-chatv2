@@ -110,6 +110,18 @@ export default function CharacterPage() {
           />
         </Field>
 
+        {/* 画像生成専用（§21）。persona と混ぜると本文の予算を食い、タグ列が地の文へ漏れる */}
+        <Field label="外見（画像生成用）">
+          <textarea
+            value={c.appearance}
+            onChange={(e) => setC({ ...c, appearance: e.target.value })}
+            placeholder="silver hair, green coat, calm expression"
+          />
+          <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+            画像生成にだけ使われ、会話のプロンプトには載りません。英語のタグ列が扱いやすいです
+          </div>
+        </Field>
+
         <Field label="話し方・口調">
           <textarea
             value={c.speech_style}

@@ -1,7 +1,7 @@
 import { BASE, headers } from './openrouter.js';
 
 /**
- * 画像生成（§13）。`openrouter.ts` と並ぶ薄い層。
+ * 画像生成（§21）。`openrouter.ts` と並ぶ薄い層。
  *
  * **呼び出し側はこの形だけを知る。** PixAI など別のサービスへ差し替えるときに、
  * ルートやドメイン層を触らずに済ませるため。

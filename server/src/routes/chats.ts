@@ -66,7 +66,7 @@ chatsRouter.get('/chats/:id', (req, res) => {
     gameTime: toGameTime(calendar, chat.state.time),
     // 3段の解決結果と、どこで決まったか。UIが「いまはON（シナリオの設定）」と出せるようにする
     flags: resolvedFlags(chat),
-    // スナップショットは**メタだけ**同梱する（§13）。
+    // スナップショットは**メタだけ**同梱する（§21）。
     // メッセージごとに引くAPIにするとメッセージ数だけ通信が増える（N+1）。
     // 画像の実体は GET /api/snapshots/:id/image で個別に取る
     snapshots: listSnapshotMeta(chat.id),

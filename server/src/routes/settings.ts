@@ -26,7 +26,7 @@ settingsRouter.get('/config', (_req, res) => {
     authRequired: !!process.env.APP_PASSWORD,
     defaultModel: s.default_model,
     utilityModel: s.utility_model,
-    // スナップショットの入口を出すかの判断だけに使う（§13）。
+    // スナップショットの入口を出すかの判断だけに使う（§21）。
     // モデル名そのものは画面に要らないので配らない
     imageEnabled: Boolean(s.image_model.trim()),
   });

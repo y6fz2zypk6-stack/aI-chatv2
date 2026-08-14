@@ -98,6 +98,17 @@ export default function PersonasPage() {
             />
           </Field>
 
+          <Field label="外見（画像生成用）">
+            <textarea
+              value={editing.appearance}
+              onChange={(e) => setEditing({ ...editing, appearance: e.target.value })}
+              placeholder="black bob, red scarf"
+            />
+            <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+              画像生成にだけ使われ、会話のプロンプトには載りません。英語のタグ列が扱いやすいです
+            </div>
+          </Field>
+
           <div className="setting">
             <div className="txt">
               <label>既定のペルソナ</label>
