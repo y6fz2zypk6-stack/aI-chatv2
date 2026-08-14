@@ -76,6 +76,8 @@ function startServer() {
       // 上流無応答の検証を現実的な時間で回すため短くする（既定は60秒）
       STREAM_CONNECT_TIMEOUT_MS: '1200',
       STREAM_IDLE_TIMEOUT_MS: '1200',
+      // 画像生成の無応答も現実的な時間で検証する（既定は120秒）
+      IMAGE_TIMEOUT_MS: '2500',
       // BINDを絞らず無認証で起動するので、明示しないと安全側で止まる（§16）
       ALLOW_UNAUTHENTICATED: '1',
     },
@@ -149,6 +151,12 @@ try {
   await s3.memoryBudgetSuite(mw);
   await s3.participantsSuite(mw);
   await s3.seedSuite();
+
+  // スナップショット（画像生成）。タイムアウトは短くしたサーバで見る
+  const s4 = await import('./suite-snapshot.mjs');
+  const sw = await s4.setupSnapshotWorld('snap');
+  await s4.snapshotSuite(sw);
+  await s4.snapshotTimeoutSuite(sw);
 
   // 再起動して同じ状態が復元されるかを見る
   server.kill('SIGKILL');

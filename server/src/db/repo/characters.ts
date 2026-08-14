@@ -35,6 +35,7 @@ export function createCharacter(worldId: string, input: Partial<Character>): Cha
     aliases: input.aliases ?? [],
     avatar: input.avatar || '',
     persona: input.persona || '',
+    appearance: input.appearance || '',
     speech_style: input.speech_style || '',
     example_dialogue: input.example_dialogue || '',
     is_npc_pool: input.is_npc_pool ? 1 : 0,
@@ -42,10 +43,10 @@ export function createCharacter(worldId: string, input: Partial<Character>): Cha
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO characters (id, world_id, name, aliases, avatar, persona, speech_style, example_dialogue, is_npc_pool, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO characters (id, world_id, name, aliases, avatar, persona, appearance, speech_style, example_dialogue, is_npc_pool, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    c.id, c.world_id, c.name, toJson(c.aliases), c.avatar, c.persona,
+    c.id, c.world_id, c.name, toJson(c.aliases), c.avatar, c.persona, c.appearance,
     c.speech_style, c.example_dialogue, c.is_npc_pool, c.created_at, c.updated_at,
   );
   return c;
@@ -56,10 +57,10 @@ export function updateCharacter(id: string, patch: Partial<Character>): Characte
   if (!cur) return undefined;
   const next: Character = { ...cur, ...patch, id, world_id: cur.world_id, updated_at: now() };
   db.prepare(
-    `UPDATE characters SET name=?, aliases=?, avatar=?, persona=?, speech_style=?, example_dialogue=?, is_npc_pool=?, updated_at=? WHERE id=?`,
+    `UPDATE characters SET name=?, aliases=?, avatar=?, persona=?, appearance=?, speech_style=?, example_dialogue=?, is_npc_pool=?, updated_at=? WHERE id=?`,
   ).run(
-    next.name, toJson(next.aliases), next.avatar, next.persona, next.speech_style,
-    next.example_dialogue, next.is_npc_pool ? 1 : 0, next.updated_at, id,
+    next.name, toJson(next.aliases), next.avatar, next.persona, next.appearance,
+    next.speech_style, next.example_dialogue, next.is_npc_pool ? 1 : 0, next.updated_at, id,
   );
   return next;
 }

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { CURATED_MODELS } from '../../../shared/types.js';
 import { DEFAULT_SETTINGS, getSettings, updateSettings } from '../db/repo/settings.js';
 import { listModels } from '../llm/openrouter.js';
+import { listImageModels } from '../llm/image.js';
 
 export const settingsRouter = Router();
 
@@ -25,7 +26,19 @@ settingsRouter.get('/config', (_req, res) => {
     authRequired: !!process.env.APP_PASSWORD,
     defaultModel: s.default_model,
     utilityModel: s.utility_model,
+    // スナップショットの入口を出すかの判断だけに使う（§13）。
+    // モデル名そのものは画面に要らないので配らない
+    imageEnabled: Boolean(s.image_model.trim()),
   });
+});
+
+// 画像モデルの一覧（設定画面の補完用）。これが無いと image_model が完全な手打ちになる
+settingsRouter.get('/images/models', async (_req, res) => {
+  try {
+    res.json(await listImageModels());
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
 });
 
 // 選択候補（モデルピル・設定のプルダウン用）。OpenRouterに繋がらなくても返せる

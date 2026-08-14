@@ -217,3 +217,20 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at INTEGER NOT NULL
 );
+
+-- 場面のスナップショット（§13）。
+-- image は BLOB。base64のTEXTだと33%膨らむうえ、**JSONレスポンスには載せない**方針なので
+-- 文字列で持つ意味がない。取得は GET /api/snapshots/:id/image のバイナリ配信。
+CREATE TABLE IF NOT EXISTS snapshots (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  prompt TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  mime TEXT NOT NULL DEFAULT 'image/png',
+  image BLOB NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_message ON snapshots(message_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_chat ON snapshots(chat_id);

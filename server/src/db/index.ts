@@ -248,6 +248,20 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       d.exec('ALTER TABLE memories ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
     },
   },
+  {
+    // 画像生成用の外見プロンプト（§13）。
+    // persona（性格・背景の文章）とは用途が違うので列を分ける。
+    // **本文生成のプロンプトには載せない。** 予算を食ううえ、英語タグ列が地の文へ漏れる
+    version: 8,
+    up: (d) => {
+      if (!hasColumn(d, 'characters', 'appearance')) {
+        d.exec("ALTER TABLE characters ADD COLUMN appearance TEXT NOT NULL DEFAULT ''");
+      }
+      if (!hasColumn(d, 'personas', 'appearance')) {
+        d.exec("ALTER TABLE personas ADD COLUMN appearance TEXT NOT NULL DEFAULT ''");
+      }
+    },
+  },
 ];
 
 const applied = new Set(

@@ -17,6 +17,10 @@ function popQueue() {
 /** 直近のリクエスト本文。プロンプトの中身と呼び出し回数を検証するために保持する */
 const seen = [];
 
+/** 1x1の透明PNG。画像の中身は検証しないので最小のもので足りる */
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
 let modelsDelayMs = 0;
 
 const server = http.createServer(async (req, res) => {
@@ -37,6 +41,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // **/models より先に見ること。** endsWith('/models') は /images/models も拾う
+  if (req.url.endsWith('/images/models')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ id: 'openai/gpt-image-2', name: 'GPT Image 2' }] }));
+    return;
+  }
+
   if (req.url.endsWith('/models')) {
     if (modelsDelayMs) await new Promise((r) => setTimeout(r, modelsDelayMs));
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -48,6 +59,40 @@ const server = http.createServer(async (req, res) => {
         ],
       }),
     );
+    return;
+  }
+
+  // 画像生成（§13）。キューの item で応答を変えられる:
+  //   status      … 上流エラーを再現
+  //   headDelayMs … 応答を遅らせる（タイムアウトの検証）
+  //   noMediaType … media_type を返さない（PNGのとき省略されることがある）
+  //   b64         … 返す画像。省略時は 1x1 のPNG
+  if (req.url.endsWith('/images')) {
+    let body = '';
+    for await (const c of req) body += c;
+    const reqJson = JSON.parse(body || '{}');
+    seen.push({ image: true, at: Date.now(), body: reqJson });
+    const item = popQueue() ?? {};
+
+    if (item.headDelayMs) {
+      const closed = await new Promise((resolve) => {
+        const t = setTimeout(() => resolve(false), item.headDelayMs);
+        req.on('close', () => {
+          clearTimeout(t);
+          resolve(true);
+        });
+      });
+      if (closed) return;
+    }
+    if (item.status && item.status >= 400) {
+      res.writeHead(item.status, { 'Content-Type': 'text/plain' });
+      res.end(item.text ?? 'image error');
+      return;
+    }
+    const entry = { b64_json: item.b64 ?? PNG_1X1 };
+    if (!item.noMediaType) entry.media_type = item.mime ?? 'image/png';
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [entry] }));
     return;
   }
 

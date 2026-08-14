@@ -24,6 +24,7 @@ import { lorebookRouter } from './routes/lorebook.js';
 import { messagesRouter } from './routes/messages.js';
 import { personasRouter } from './routes/personas.js';
 import { scenariosRouter } from './routes/scenarios.js';
+import { snapshotsRouter } from './routes/snapshots.js';
 import { settingsRouter } from './routes/settings.js';
 import { worldsRouter } from './routes/worlds.js';
 
@@ -92,6 +93,7 @@ app.use('/api', messagesRouter);
 app.use('/api', lorebookRouter);
 app.use('/api', locationsRouter);
 app.use('/api', personasRouter);
+app.use('/api', snapshotsRouter);
 
 // クライアント静的配信（§3.1: Expressが dist/ を配信）
 const clientDist = [

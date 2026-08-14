@@ -1,9 +1,10 @@
 import type { ModelInfo } from '../../../shared/types.js';
 
 // 既定はOpenRouter。OPENROUTER_BASE_URL で差し替えられる（テスト用のモックを挟むため）
-const BASE = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+export const BASE = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 
-function headers(): Record<string, string> {
+/** 画像生成（image.ts）とも共有する。BASE と合わせて1箇所に置く */
+export function headers(): Record<string, string> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error('OPENROUTER_API_KEY が設定されていません');
   return {

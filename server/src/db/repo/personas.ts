@@ -23,6 +23,7 @@ export function createPersona(input: Partial<Persona>): Persona {
     name: input.name || '新しいペルソナ',
     avatar: input.avatar || '',
     description: input.description || '',
+    appearance: input.appearance || '',
     is_default: input.is_default ? 1 : 0,
     created_at: t,
     updated_at: t,
@@ -30,8 +31,8 @@ export function createPersona(input: Partial<Persona>): Persona {
   const tx = db.transaction(() => {
     if (p.is_default) db.prepare('UPDATE personas SET is_default = 0').run();
     db.prepare(
-      `INSERT INTO personas (id, name, avatar, description, is_default, created_at, updated_at)
-       VALUES (@id, @name, @avatar, @description, @is_default, @created_at, @updated_at)`,
+      `INSERT INTO personas (id, name, avatar, description, appearance, is_default, created_at, updated_at)
+       VALUES (@id, @name, @avatar, @description, @appearance, @is_default, @created_at, @updated_at)`,
     ).run(p);
   });
   tx();
@@ -45,7 +46,7 @@ export function updatePersona(id: string, patch: Partial<Persona>): Persona | un
   const tx = db.transaction(() => {
     if (next.is_default) db.prepare('UPDATE personas SET is_default = 0').run();
     db.prepare(
-      `UPDATE personas SET name=@name, avatar=@avatar, description=@description, is_default=@is_default, updated_at=@updated_at WHERE id=@id`,
+      `UPDATE personas SET name=@name, avatar=@avatar, description=@description, appearance=@appearance, is_default=@is_default, updated_at=@updated_at WHERE id=@id`,
     ).run(next);
   });
   tx();

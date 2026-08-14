@@ -147,6 +147,11 @@ export interface Character {
   aliases: string[];
   avatar: string;
   persona: string;
+  /**
+   * 画像生成用の外見（§13）。**本文生成のプロンプトには載せない。**
+   * persona（性格・背景の文章）とは用途が違うので分けて持つ
+   */
+  appearance: string;
   speech_style: string;
   example_dialogue: string;
   is_npc_pool: number;
@@ -159,6 +164,8 @@ export interface Persona {
   name: string;
   avatar: string;
   description: string;
+  /** 画像生成用の外見（§13）。本文生成のプロンプトには載せない */
+  appearance: string;
   is_default: number;
   created_at: number;
   updated_at: number;
@@ -463,6 +470,22 @@ export interface MemoryListItem extends Memory {
 
 // ---- 設定（§12） ----
 
+/**
+ * スナップショットの一覧用（§13）。
+ * **画像本体（BLOB）を含まない。** JSONに載せると会話の読み込みが一気に重くなる。
+ * 実体は GET /api/snapshots/:id/image でバイナリ配信する
+ */
+export interface SnapshotMeta {
+  id: string;
+  chat_id: string;
+  message_id: string;
+  prompt: string;
+  model: string;
+  mime: string;
+  bytes: number;
+  created_at: number;
+}
+
 export interface Settings {
   system_prompt: string;
   max_tokens: number;
@@ -476,6 +499,16 @@ export interface Settings {
    * 考えている分もここから引かれるため、切れるようなら増やす。
    */
   utility_max_tokens: number;
+  /**
+   * スナップショット（画像生成、§13）で使うモデル。
+   * **空なら機能そのものを無効。** 知らないうちに課金させないため既定は空
+   */
+  image_model: string;
+  /** 画風の共通プレフィックス。全スナップショットの先頭に付く */
+  image_style_prompt: string;
+  image_aspect_ratio: string;
+  /** low / medium / high。対応しないモデルでは無視される */
+  image_quality: string;
   auto_summarize: number;
   summary_interval: number;
   summary_max_chars: number;

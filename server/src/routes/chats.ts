@@ -22,6 +22,7 @@ import {
   updateMessageActive,
 } from '../db/repo/messages.js';
 import { getScenario } from '../db/repo/scenarios.js';
+import { listSnapshotMeta } from '../db/repo/snapshots.js';
 import { getSettings, resolveFlag } from '../db/repo/settings.js';
 import {
   deleteSummaries,
@@ -65,6 +66,10 @@ chatsRouter.get('/chats/:id', (req, res) => {
     gameTime: toGameTime(calendar, chat.state.time),
     // 3段の解決結果と、どこで決まったか。UIが「いまはON（シナリオの設定）」と出せるようにする
     flags: resolvedFlags(chat),
+    // スナップショットは**メタだけ**同梱する（§13）。
+    // メッセージごとに引くAPIにするとメッセージ数だけ通信が増える（N+1）。
+    // 画像の実体は GET /api/snapshots/:id/image で個別に取る
+    snapshots: listSnapshotMeta(chat.id),
   });
 });
 

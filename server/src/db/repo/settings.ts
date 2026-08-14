@@ -45,6 +45,12 @@ export const DEFAULT_SETTINGS: Settings = {
   // 要約・抽出の出力上限。本文生成の max_tokens とは別枠。
   // 推論を行うモデルは考えている分もここから引かれるので、2048だと切れることがある
   utility_max_tokens: 8192,
+  // スナップショット（§13）。**既定は空＝機能そのものが無効。**
+  // 画像生成は本文より高くつくので、知らないうちに課金させない
+  image_model: '',
+  image_style_prompt: '',
+  image_aspect_ratio: '16:9',
+  image_quality: 'medium',
   auto_summarize: 1,
   summary_interval: 32,
   summary_max_chars: 700,
