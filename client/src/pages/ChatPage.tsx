@@ -1180,6 +1180,19 @@ function SnapshotModal(props: {
   const [includePersona, setIncludePersona] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState('');
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * 中身に合わせて高さを変える。見出しを入れたぶん既定でも10行前後になり、
+   * 固定の高さだと**組み立てた結果の全体が見えないまま直すことになる**。
+   * 画面の半分弱で頭打ちにして、モーダルごと画面外へ伸びないようにする。
+   */
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.45))}px`;
+  }, [prompt]);
 
   // ペルソナの有無で組み立てが変わるので、切り替えたら引き直す
   useEffect(() => {
@@ -1249,7 +1262,12 @@ function SnapshotModal(props: {
           ))}
 
           <Field label="プロンプト（送る前に直せます）">
-            <textarea className="tall" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+            <textarea
+              ref={promptRef}
+              className="tall"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
           </Field>
 
           <div className="grid-2">

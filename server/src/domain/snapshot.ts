@@ -94,26 +94,34 @@ function sceneText(message: Message): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_SCENE_CHARS);
 }
 
+/**
+ * プロンプトを組み立てる。
+ *
+ * **見出しを付けて節に分ける。** 人物の外見・場面・指示を同じ見た目で並べると、
+ * モデルにとっても、プレビューで手直しする側にとっても境目が分からない。
+ * 節は空行で区切り、**中身が無い節は見出しごと出さない**（空の `Characters:` を渡さない）。
+ *
+ * **画風にだけ見出しを付けない。** ここは `Style:` の前に置く指示も試せる
+ * 自由記述欄として使うので、アプリ側が見出しを決め打ちしない。
+ */
 export function buildSnapshotPrompt(input: SnapshotInput): SnapshotPrompt {
   const warnings: string[] = [];
-  const blocks: string[] = [];
+  const sections: string[] = [];
 
   if (input.settings.image_style_prompt.trim()) {
-    blocks.push(input.settings.image_style_prompt.trim());
+    sections.push(input.settings.image_style_prompt.trim());
   }
 
   const withAppearance = input.characters.filter((c) => c.appearance.trim());
-  for (const c of withAppearance) {
-    blocks.push(`${c.name}: ${c.appearance.trim()}`);
-  }
+  const people = withAppearance.map((c) => `${c.name}: ${c.appearance.trim()}`);
   if (input.includePersona && input.persona?.appearance.trim()) {
-    blocks.push(`${input.persona.name}: ${input.persona.appearance.trim()}`);
+    people.push(`${input.persona.name}: ${input.persona.appearance.trim()}`);
   }
+  if (people.length) sections.push(['Characters:', ...people].join('\n'));
 
-  blocks.push(sceneLine(input));
-
+  // sceneLine は季節と時刻を必ず含むので、この節は常に出る
   const scene = sceneText(input.message);
-  if (scene) blocks.push(scene);
+  sections.push(['Scene:', sceneLine(input), ...(scene ? [scene] : [])].join('\n'));
 
   // 気づけるようにしておく。黙って人物なしの絵を作らない
   if (input.characters.length === 0) {
@@ -130,10 +138,10 @@ export function buildSnapshotPrompt(input: SnapshotInput): SnapshotPrompt {
   // 地の文をそのまま渡すので、指示が無いと看板や書類の形で文字を描き込むことがある。
   // プレビューで消せるようにしたいので、ここは末尾に置く
   if (input.settings.image_no_text === 1) {
-    blocks.push(NO_TEXT_LINE);
+    sections.push(['Composition:', NO_TEXT_LINE].join('\n'));
   }
 
-  return { prompt: blocks.join('\n'), warnings };
+  return { prompt: sections.join('\n\n'), warnings };
 }
 
 export interface Reference {
