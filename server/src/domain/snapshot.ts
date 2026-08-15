@@ -7,6 +7,7 @@ import type {
   Persona,
   Settings,
 } from '../../../shared/types.js';
+import { splitDialogue } from '../../../shared/types.js';
 import { daylightOf, toGameTime } from './calendar.js';
 import { MAX_REFERENCES } from '../llm/image.js';
 
@@ -22,6 +23,10 @@ import { MAX_REFERENCES } from '../llm/image.js';
 
 /** 地の文から拾う長さ。長すぎると画像モデルが要点を落とす */
 const MAX_SCENE_CHARS = 400;
+
+/** `image_no_text` がONのとき末尾に付く1行 */
+export const NO_TEXT_LINE =
+  'Do not render any text, letters, captions, speech bubbles, subtitles, or UI.';
 
 export interface SnapshotInput {
   settings: Settings;
@@ -58,15 +63,33 @@ function sceneLine(input: SnapshotInput): string {
   return parts.join(' / ');
 }
 
-/** 対象メッセージの地の文だけを拾う。セリフは絵にならない */
+/** 「」の中身（セリフ）を落として地の文だけ残す。表示側と同じ規則（`splitDialogue`） */
+function stripDialogue(text: string): string {
+  return splitDialogue(text)
+    .filter((p) => !p.dlg)
+    .map((p) => p.text)
+    .join(' ');
+}
+
+/**
+ * 対象メッセージの地の文だけを拾う。セリフは絵にならない。
+ *
+ * **話者では分けない。** このアプリのキャラ発話はセリフと地の文が同じ塊に入り、
+ * 姿勢・視線・仕草といった描画に直結する記述はむしろそちらに集中している。
+ * ナレーター行だけを拾うと、そういうターンの場面描写が丸ごと落ちる。
+ * 自分の発言は絵の指示に入れないので、user の発話だけ除く。
+ */
 function sceneText(message: Message): string {
-  const narration = (message.utterances ?? [])
-    .filter((u) => u.speaker === 'narrator')
-    .map((u) => u.text.trim())
+  const utterances = message.utterances ?? [];
+  const narration = utterances
+    .filter((u) => u.speaker !== 'user')
+    .map((u) => stripDialogue(u.text).trim())
     .filter(Boolean)
     .join(' ');
-  // 発話パースが効いていない古いメッセージは本文をそのまま使う
-  const raw = narration || message.content;
+  // 発話パースが効いていない古いメッセージだけ本文から拾う。
+  // **`narration || content` にしないこと。** セリフしか無いターンで本文へ落ちると、
+  // 話者ラベル（「アシュリー:」）が場面の描写として入り、警告も出なくなる
+  const raw = utterances.length > 0 ? narration : stripDialogue(message.content);
   return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_SCENE_CHARS);
 }
 
@@ -101,6 +124,12 @@ export function buildSnapshotPrompt(input: SnapshotInput): SnapshotPrompt {
   }
   if (!scene) {
     warnings.push('このメッセージに地の文がありません。場面の描写はプロンプトに入っていません');
+  }
+
+  // 地の文をそのまま渡すので、指示が無いと看板や書類の形で文字を描き込むことがある。
+  // プレビューで消せるようにしたいので、ここは末尾に置く
+  if (input.settings.image_no_text === 1) {
+    blocks.push(NO_TEXT_LINE);
   }
 
   return { prompt: blocks.join('\n'), warnings };

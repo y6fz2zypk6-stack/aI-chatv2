@@ -10,9 +10,13 @@ import { getSettings } from '../db/repo/settings.js';
 import {
   createSnapshot,
   deleteSnapshot,
+  deleteSnapshots,
   getSnapshotImage,
   getSnapshotMeta,
+  listAlbumWorlds,
+  listSnapshotsByWorld,
 } from '../db/repo/snapshots.js';
+import { getWorld } from '../db/repo/worlds.js';
 import { buildSnapshotPrompt, collectReferences, type SnapshotInput } from '../domain/snapshot.js';
 import { generateImage } from '../llm/image.js';
 
@@ -179,6 +183,36 @@ snapshotsRouter.get('/snapshots/:id/image', (req, res) => {
   res.setHeader('Content-Type', row.mime || 'image/png');
   res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
   res.send(row.image);
+});
+
+// ---- アルバム（§21.8） ----
+
+/** 世界ごとの枚数と合計サイズ。どこに何枚あるかの入口 */
+snapshotsRouter.get('/albums', (_req, res) => {
+  res.json(listAlbumWorlds());
+});
+
+/** その世界の一覧。会話名とseqを添える（画像は含めない） */
+snapshotsRouter.get('/worlds/:id/snapshots', (req, res) => {
+  if (!getWorld(req.params.id)) {
+    res.status(404).json({ error: '世界が見つかりません' });
+    return;
+  }
+  res.json(listSnapshotsByWorld(req.params.id));
+});
+
+/**
+ * まとめて削除。**DELETE ではなく POST。**
+ * 消す対象をボディで渡すため（URLに何十件も並べない）。
+ */
+snapshotsRouter.post('/snapshots/delete', (req, res) => {
+  const raw = (req.body ?? {}) as Record<string, unknown>;
+  const ids = Array.isArray(raw.ids) ? raw.ids.filter((v): v is string => typeof v === 'string') : [];
+  if (ids.length === 0) {
+    res.status(400).json({ error: '削除するスナップショットが指定されていません' });
+    return;
+  }
+  res.json({ deleted: deleteSnapshots(ids) });
 });
 
 snapshotsRouter.delete('/snapshots/:id', (req, res) => {

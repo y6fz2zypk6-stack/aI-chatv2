@@ -1,6 +1,6 @@
 import { db, now } from '../index.js';
 import { ulid } from '../../util/ulid.js';
-import type { SnapshotMeta } from '../../../../shared/types.js';
+import type { AlbumItem, AlbumWorld, SnapshotMeta } from '../../../../shared/types.js';
 
 /**
  * 場面のスナップショット（§21）。
@@ -65,4 +65,57 @@ export function createSnapshot(input: {
 
 export function deleteSnapshot(id: string): void {
   db.prepare('DELETE FROM snapshots WHERE id = ?').run(id);
+}
+
+// ---- アルバム（§21.8） ----
+
+/**
+ * 世界ごとの枚数と合計サイズ。アルバムの入口用。
+ * `snapshots` は `chat_id` しか持たないので、世界は `chats` 経由で引く。
+ * 1枚も無い世界は出さない（整理する対象が無いため）。
+ */
+export function listAlbumWorlds(): AlbumWorld[] {
+  return db
+    .prepare(
+      `SELECT w.id AS world_id, w.name AS world_name,
+              COUNT(s.id) AS count, COALESCE(SUM(s.bytes), 0) AS bytes
+         FROM snapshots s
+         JOIN chats c ON c.id = s.chat_id
+         JOIN worlds w ON w.id = c.world_id
+        GROUP BY w.id
+        ORDER BY bytes DESC`,
+    )
+    .all() as AlbumWorld[];
+}
+
+/** その世界のスナップショット一覧。**画像は含めない**（一覧に載せると数十MBになる） */
+export function listSnapshotsByWorld(worldId: string): AlbumItem[] {
+  const cols = META_COLUMNS.split(', ')
+    .map((c) => `s.${c}`)
+    .join(', ');
+  return db
+    .prepare(
+      `SELECT ${cols}, c.title AS chat_title, COALESCE(m.seq, 0) AS seq
+         FROM snapshots s
+         JOIN chats c ON c.id = s.chat_id
+         LEFT JOIN messages m ON m.id = s.message_id
+        WHERE c.world_id = ?
+        ORDER BY c.created_at ASC, seq ASC, s.created_at ASC`,
+    )
+    .all(worldId) as AlbumItem[];
+}
+
+/**
+ * まとめて削除する。**1トランザクション。**
+ * 途中で失敗して半端に消えた状態を残さない。
+ * 戻り値は実際に消えた件数（存在しないIDが混ざっても他は消える）。
+ */
+export function deleteSnapshots(ids: string[]): number {
+  const stmt = db.prepare('DELETE FROM snapshots WHERE id = ?');
+  const tx = db.transaction((list: string[]) => {
+    let n = 0;
+    for (const id of list) n += stmt.run(id).changes;
+    return n;
+  });
+  return tx(ids) as number;
 }

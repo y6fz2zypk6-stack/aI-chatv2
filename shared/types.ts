@@ -486,6 +486,20 @@ export interface SnapshotMeta {
   created_at: number;
 }
 
+/** アルバムの入口（§21.4）。1枚も無い世界は含まれない */
+export interface AlbumWorld {
+  world_id: string;
+  world_name: string;
+  count: number;
+  bytes: number;
+}
+
+/** アルバムの1枚。会話ごとに見出しを付けるため、会話名とseqを添える */
+export interface AlbumItem extends SnapshotMeta {
+  chat_title: string;
+  seq: number;
+}
+
 export interface Settings {
   system_prompt: string;
   max_tokens: number;
@@ -509,6 +523,12 @@ export interface Settings {
   image_aspect_ratio: string;
   /** low / medium / high。対応しないモデルでは無視される */
   image_quality: string;
+  /**
+   * 画面に文字を描かせない指示を末尾に付けるか（既定ON）。
+   * 地の文をそのまま渡すため、指示が無いと看板・書類・字幕といった形で
+   * 文字を描き込むことがある。意図して描かせたい世界ではOFFにする
+   */
+  image_no_text: number;
   auto_summarize: number;
   summary_interval: number;
   summary_max_chars: number;
@@ -627,6 +647,53 @@ export function parseHhmm(input: string): number | null {
   m = /^(\d{1,2})(\d{2})$/.exec(s); // 「900」「1830」
   if (m) return at(+m[1], +m[2]);
   return null;
+}
+
+/** 地の文の強調記号（* や _ で囲む書き方）を外す */
+export function stripMarks(s: string): string {
+  return s
+    .replace(/\*+/g, '')
+    .replace(/(^|[\s「（(])_(?=\S)|(?<=\S)_(?=[\s」）)、。,.!?！？]|$)/g, '$1');
+}
+
+/**
+ * 本文を「」の中身（セリフ `dlg`）とそれ以外（地の文 `act`）に分ける。
+ *
+ * **表示（ChatPage の `BubbleText`）とスナップショットのプロンプト
+ * （server/src/domain/snapshot.ts）が同じ規則を使うためにここへ置いている。**
+ * このアプリのキャラ発話はセリフと地の文が同じ塊に入るので、
+ * 話者では分けられない:
+ *
+ * ```
+ * ノア: 「……補修図です。」ノアは腰を屈め、囲みの中を目で数えた。
+ * ```
+ *
+ * 片方だけ直すと「画面には見えているのに絵の指示には入っていない」という
+ * 追いにくい食い違いになる。規則を変えるときは必ずここを直すこと。
+ *
+ * 閉じていない `「` で終わる場合も、そこから末尾までをセリフとして扱う（`」?`）。
+ * `「」` そのものは結果に含めない。
+ */
+export function splitDialogue(text: string): { dlg: boolean; text: string }[] {
+  const t = stripMarks(text);
+  const parts: { dlg: boolean; text: string }[] = [];
+  const re = /「[^」]*」?/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) {
+    if (m.index > last) {
+      const a = t.slice(last, m.index).trim();
+      if (a) parts.push({ dlg: false, text: a });
+    }
+    const d = m[0].replace(/^「/, '').replace(/」$/, '').trim();
+    if (d) parts.push({ dlg: true, text: d });
+    last = re.lastIndex;
+  }
+  if (last < t.length) {
+    const a = t.slice(last).trim();
+    if (a) parts.push({ dlg: false, text: a });
+  }
+  return parts;
 }
 
 /** 分を「HH:MM」に戻す。null は空文字 */

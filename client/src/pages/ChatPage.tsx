@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   CURATED_MODELS,
   modelLabel,
+  splitDialogue,
+  stripMarks,
   type Character,
   type Chat,
   type EventEvalRow,
@@ -62,37 +64,18 @@ function FlagResult({ flag }: { flag: ResolvedFlag | undefined }) {
   );
 }
 
-/** 地の文の強調記号（* や _ で囲む書き方）を表示上は外す */
-const stripMarks = (s: string) =>
-  s
-    .replace(/\*+/g, '')
-    .replace(/(^|[\s「（(])_(?=\S)|(?<=\S)_(?=[\s」）)、。,.!?！？]|$)/g, '$1');
-
 /**
  * 吹き出し内: 「」で囲まれた部分がセリフ(dlg)、それ以外は地の文(act)。
  * 各セグメントを別ブロックにするので、UI側で自然に改行される。
  * 表示の際は「」そのものは消す。
+ *
+ * **分割の規則は `splitDialogue`（shared）にある。** スナップショットの
+ * プロンプトが拾う地の文と同じ規則を使うため（§21.2）。
  */
 function BubbleText({ text }: { text: string }) {
-  const t = stripMarks(text);
-  const parts: { dlg: boolean; text: string }[] = [];
-  const re = /「[^」]*」?/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(t))) {
-    if (m.index > last) {
-      const a = t.slice(last, m.index).trim();
-      if (a) parts.push({ dlg: false, text: a });
-    }
-    const d = m[0].replace(/^「/, '').replace(/」$/, '').trim();
-    if (d) parts.push({ dlg: true, text: d });
-    last = re.lastIndex;
-  }
-  if (last < t.length) {
-    const a = t.slice(last).trim();
-    if (a) parts.push({ dlg: false, text: a });
-  }
-  if (!parts.length) parts.push({ dlg: true, text: t.trim() });
+  const parts = splitDialogue(text);
+  // 「」だけの発話など、分割して何も残らなかったときは元の文をそのまま出す
+  if (!parts.length) parts.push({ dlg: true, text: stripMarks(text).trim() });
   return (
     <>
       {parts.map((p, i) => (

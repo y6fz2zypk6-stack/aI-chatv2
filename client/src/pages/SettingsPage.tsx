@@ -235,6 +235,15 @@ export default function SettingsPage() {
               </select>
             </div>
           </Field>
+          <SettingRow
+            label="画面に文字を描かせない"
+            hint="地の文をそのまま渡すので、指示が無いと看板や書類の形で文字を描き込むことがあります"
+          >
+            <Toggle
+              on={settings.image_no_text === 1}
+              onChange={(v) => void set({ image_no_text: v ? 1 : 0 })}
+            />
+          </SettingRow>
         </div>
 
         <div className="section">

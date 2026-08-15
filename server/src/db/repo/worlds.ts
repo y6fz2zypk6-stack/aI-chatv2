@@ -76,5 +76,11 @@ export function worldUsage(id: string) {
     lorebook: count('SELECT COUNT(*) c FROM lorebook_entries WHERE world_id = ?'),
     locations: count('SELECT COUNT(*) c FROM locations WHERE world_id = ?'),
     events: count('SELECT COUNT(*) c FROM world_events WHERE world_id = ?'),
+    // 画像は容量が大きいので、何枚消えるかを削除の確認に出す（§21.8）
+    snapshots: count(
+      `SELECT COUNT(*) c FROM snapshots s
+         JOIN chats ch ON ch.id = s.chat_id
+        WHERE ch.world_id = ?`,
+    ),
   };
 }

@@ -59,6 +59,9 @@ export default function ChatsPage() {
             <button className="icon-btn" onClick={() => navigate('/personas')} title="ペルソナ">
               <Icon.charFile />
             </button>
+            <button className="icon-btn" onClick={() => navigate('/album')} title="アルバム">
+              <Icon.camera size={18} />
+            </button>
             <button className="icon-btn" onClick={() => navigate('/settings')} title="設定">
               <Icon.gear />
             </button>

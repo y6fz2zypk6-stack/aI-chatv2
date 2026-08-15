@@ -587,17 +587,41 @@ textarea.tall {
   margin: 0;
   font: 700 23px/1.2 var(--font-ui);
   color: var(--text);
+  /* アイコンが5つ並ぶと、狭い端末（320px）でタイトルが1文字ずつ折り返される。
+     折り返さずに詰め、入らなければ末尾を省く */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .home-head .acts {
   display: flex;
   gap: 4px;
+  /* タイトルより先に縮めない。アイコンは潰れると押せなくなる */
+  flex: 0 0 auto;
 }
 
 .home-head .icon-btn {
   width: 44px;
   height: 44px;
   color: var(--narr-icon-fg);
+}
+
+/* 320px級の端末ではアイコン5つとタイトルが同時に入らない。
+   タップ域を大きく削らない範囲で詰めて、タイトルの省略を避ける */
+@media (max-width: 360px) {
+  .home-head {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .home-head .acts {
+    gap: 0;
+  }
+
+  .home-head .icon-btn {
+    width: 38px;
+  }
 }
 
 .content {
@@ -958,7 +982,9 @@ textarea.tall {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 2px 14px 6px 52px; /* アバター幅ぶん右へ寄せて、発話の続きに見せる */
+  /* 絵として横幅を使う。390px幅で 292px → 354px（+21%）になる。
+     発話の続きとして字下げしたければ padding-left を 52px（アバター幅）に戻す */
+  padding: 2px 0 6px;
 }
 
 .snapshots figure {
@@ -988,6 +1014,111 @@ textarea.tall {
   color: #fff;
   background: rgb(0 0 0 / 38%);
   border-radius: 999px;
+}
+
+/* アルバム（§21.8）。容量の整理が目的なので、枚数とサイズを必ず添える */
+.album-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 2px 6px;
+}
+
+.album-head .t {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.album-head .n {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.album-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.album-cell {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0;
+  cursor: pointer;
+}
+
+.album-cell img {
+  width: 100%;
+  height: 100%;
+  /* 一覧では隙間なく並べたいので cover。拡大したときに全体を見せる */
+  object-fit: cover;
+  display: block;
+}
+
+/* 選択中。枠だけだと縮小表示で見落とすので、絵の上に枠を重ねて差を大きくする。
+   inset の box-shadow は img の下に描かれて見えないため、::after を使う */
+.album-cell.sel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: rgb(233 131 75 / 18%);
+}
+
+.album-cell .mark {
+  position: absolute;
+  /* 選択中の ::after より上に置く（後から生成される疑似要素の方が上に来るため） */
+  z-index: 1;
+  top: 5px;
+  right: 5px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgb(0 0 0 / 38%);
+}
+
+.album-cell.sel .mark {
+  background: var(--accent);
+}
+
+/* 選択モードの操作列。下端に固定して、スクロール中も消さない */
+.album-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 2px calc(10px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
+
+.album-full img {
+  width: 100%;
+  height: auto;
+  max-height: 62vh;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+  display: block;
+}
+
+.album-full .meta {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 /* IDのコピー行。入力欄と同じ面に揃えて、値であることを見せる */

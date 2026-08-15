@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { api } from './api';
 import { useApp } from './store';
+import AlbumPage from './pages/AlbumPage';
 import CalendarPage from './pages/CalendarPage';
 import CharacterPage from './pages/CharacterPage';
 import ChatPage from './pages/ChatPage';
@@ -81,6 +82,7 @@ export default function App() {
         <Route path="/characters/:id" element={<CharacterPage />} />
         <Route path="/characters/:id/memories" element={<MemoriesPage />} />
         <Route path="/personas" element={<PersonasPage />} />
+        <Route path="/album" element={<AlbumPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<div className="empty-note">ページが見つかりません</div>} />
       </Routes>

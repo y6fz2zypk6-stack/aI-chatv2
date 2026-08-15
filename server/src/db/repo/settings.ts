@@ -51,6 +51,7 @@ export const DEFAULT_SETTINGS: Settings = {
   image_style_prompt: '',
   image_aspect_ratio: '16:9',
   image_quality: 'medium',
+  image_no_text: 1,
   auto_summarize: 1,
   summary_interval: 32,
   summary_max_chars: 700,

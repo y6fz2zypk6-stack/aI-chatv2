@@ -76,6 +76,21 @@ const imageCalls = async () => (await mockRequests()).filter((r) => r.image);
 export async function snapshotSuite(w) {
   suite('スナップショット');
 
+  // 分割そのもの。**表示（BubbleText）とプロンプトが同じ規則を使う**ための共有関数（§21.2）
+  {
+    const { splitDialogue } = await import('../dist/shared/types.js');
+    const act = (s) => splitDialogue(s).filter((p) => !p.dlg).map((p) => p.text).join(' ');
+    const dlg = (s) => splitDialogue(s).filter((p) => p.dlg).map((p) => p.text).join(' ');
+    const mixed = '「……補修図です。」ノアは腰を屈めた。「刻印石三基——」眼鏡に指を添える。';
+    check('地の文だけを取り出せる', act(mixed) === 'ノアは腰を屈めた。 眼鏡に指を添える。', act(mixed));
+    check('セリフだけを取り出せる', dlg(mixed) === '……補修図です。 刻印石三基——', dlg(mixed));
+    check('閉じていない「以降はセリフ扱い', act('見上げた。「まだ降って') === '見上げた。',
+      act('見上げた。「まだ降って'));
+    check('セリフしか無ければ地の文は空', act('「はい」') === '', act('「はい」'));
+    check('強調記号は外す', act('*ゆっくりと*頷いた。') === 'ゆっくりと頷いた。', act('*ゆっくりと*頷いた。'));
+    check('「」の無い文はまるごと地の文', act('風が吹いた。') === '風が吹いた。', act('風が吹いた。'));
+  }
+
   const base = (await api('GET', '/settings')).json;
   await api('PUT', '/settings', {
     auto_summarize: 0, auto_extract: 0,
@@ -333,6 +348,71 @@ export async function snapshotSuite(w) {
     check('1本目は完了する', first.status === 201, `${first.status} / ${first.json?.error}`);
   }
 
+  // キャラ発話の中の地の文（§21.2）。**ここが第2弾で直した本体。**
+  // セリフと動作が同じ塊に入るので、話者ではなく「」で分ける
+  {
+    const chat = await newChat(w);
+    setQueue([{
+      text: reply({
+        char: '「……補修図です。」ノアは腰を屈め、囲みの中を目で数えた。「刻印石三基——」',
+        elapsed: 10, location: w.shop,
+      }),
+    }]);
+    await generate(chat.id, { content: 't' });
+    const mid = await lastAssistant(chat.id);
+    const p = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
+    check('ナレーター行が無くてもキャラ発話の地の文を拾う',
+      p.prompt.includes('腰を屈め'), p.prompt.replace(/\n/g, ' / '));
+    check('「」の中のセリフは入らない',
+      !p.prompt.includes('補修図') && !p.prompt.includes('刻印石'), p.prompt.replace(/\n/g, ' / '));
+    check('地の文が無いという警告は出ない',
+      !p.warnings.some((x) => x.includes('地の文がありません')), JSON.stringify(p.warnings));
+  }
+
+  // 閉じていない「で終わる本文でも落とせる
+  {
+    const chat = await newChat(w);
+    setQueue([{
+      text: reply({ char: '窓の外を見た。「まだ降っている', elapsed: 10, location: w.shop }),
+    }]);
+    await generate(chat.id, { content: 't' });
+    const mid = await lastAssistant(chat.id);
+    const p = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
+    check('閉じていない「以降も落とす',
+      p.prompt.includes('窓の外を見た') && !p.prompt.includes('まだ降っている'),
+      p.prompt.replace(/\n/g, ' / '));
+  }
+
+  // セリフしかないターンは、場面の描写が無いことを警告する
+  {
+    const chat = await newChat(w);
+    setQueue([{ text: reply({ char: '「はい」', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't' });
+    const mid = await lastAssistant(chat.id);
+    const p = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
+    check('セリフだけなら地の文が無いと警告する',
+      p.warnings.some((x) => x.includes('地の文がありません')), JSON.stringify(p.warnings));
+  }
+
+  // 文字を描かせない指示（既定ON）
+  {
+    const chat = await newChat(w);
+    setQueue([{ text: reply({ narr: '掲示板に紙が貼ってある。', elapsed: 10, location: w.shop }) }]);
+    await generate(chat.id, { content: 't' });
+    const mid = await lastAssistant(chat.id);
+
+    const on = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
+    check('既定では文字を描かせない指示が付く',
+      on.prompt.includes('Do not render any text'), on.prompt.replace(/\n/g, ' / '));
+    check('指示は末尾に置く（プレビューで消せる）',
+      on.prompt.trim().endsWith('or UI.'), on.prompt.split('\n').pop());
+
+    await api('PUT', '/settings', { image_no_text: 0 });
+    const off = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
+    check('OFFなら付かない', !off.prompt.includes('Do not render'), off.prompt.replace(/\n/g, ' / '));
+    await api('PUT', '/settings', { image_no_text: 1 });
+  }
+
   // メッセージを消せばスナップショットも消える
   {
     const chat = await newChat(w);
@@ -348,6 +428,119 @@ export async function snapshotSuite(w) {
       (await fetchImage(snap.id)).status === 404);
   }
 
+  await api('PUT', '/settings', base);
+}
+
+// ===========================================================================
+// アルバム（§21.4）。容量の整理が目的なので、枚数とサイズが正しいことを見る。
+// **世界ごと消す検証をするので、専用の世界を作って使い捨てる**
+// ===========================================================================
+export async function albumSuite() {
+  suite('アルバム');
+
+  const base = (await api('GET', '/settings')).json;
+  await api('PUT', '/settings', {
+    auto_summarize: 0, auto_extract: 0, image_model: 'openai/gpt-image-2',
+  });
+
+  const a = await setupSnapshotWorld('album_a');
+  const b = await setupSnapshotWorld('album_b');
+
+  /** 1ターン進めてスナップショットを1枚作る */
+  const shoot = async (world, chat, note) => {
+    setQueue([{ text: reply({ narr: note, elapsed: 10, location: world.shop }) }]);
+    await generate(chat.id, { content: note });
+    const mid = await lastAssistant(chat.id);
+    setQueue([{}]);
+    return (await api('POST', `/messages/${mid}/snapshot`, { prompt: note })).json;
+  };
+
+  const chatA1 = await newChat(a);
+  const chatA2 = await newChat(a);
+  const chatB1 = await newChat(b);
+  const s1 = await shoot(a, chatA1, 'あ1');
+  const s2 = await shoot(a, chatA1, 'あ2');
+  const s3 = await shoot(a, chatA2, 'あ3');
+  const s4 = await shoot(b, chatB1, 'い1');
+
+  // 入口: 世界ごとの枚数と合計サイズ
+  {
+    const albums = (await api('GET', '/albums')).json;
+    const rowA = albums.find((x) => x.world_id === a.world.id);
+    const rowB = albums.find((x) => x.world_id === b.world.id);
+    check('世界ごとの枚数が出る', rowA?.count === 3 && rowB?.count === 1,
+      `${rowA?.count} / ${rowB?.count}`);
+    check('合計サイズが出る', rowA?.bytes === s1.bytes + s2.bytes + s3.bytes,
+      `${rowA?.bytes} vs ${s1.bytes + s2.bytes + s3.bytes}`);
+    check('世界名が付く', rowA?.world_name === 'album_a', rowA?.world_name);
+    check('1枚も無い世界は出さない', !albums.some((x) => x.count === 0),
+      JSON.stringify(albums.map((x) => x.count)));
+  }
+
+  // 世界の一覧: 会話名付き・画像なし・混ざらない
+  {
+    const r = await api('GET', `/worlds/${a.world.id}/snapshots`);
+    check('世界の一覧は200', r.status === 200, String(r.status));
+    check('その世界の分だけ返る', r.json.length === 3, String(r.json.length));
+    check('別の世界の分は混ざらない', !r.json.some((x) => x.id === s4.id),
+      JSON.stringify(r.json.map((x) => x.id)));
+    check('会話名が付く', r.json.every((x) => typeof x.chat_title === 'string'),
+      JSON.stringify(r.json.map((x) => x.chat_title)));
+    check('メッセージのseqが付く', r.json.every((x) => x.seq > 0),
+      JSON.stringify(r.json.map((x) => x.seq)));
+    // ここが崩れると、アルバムを開くだけで全画像がJSONに載る
+    check('画像データを含まない',
+      !r.text.includes('iVBORw0KGgo') && r.json.every((x) => x.image === undefined),
+      `${Math.round(r.text.length / 1024)}KB`);
+    check('会話ごとにまとまって並ぶ',
+      r.json[0].chat_id === r.json[1].chat_id && r.json[2].chat_id !== r.json[0].chat_id,
+      JSON.stringify(r.json.map((x) => x.chat_id)));
+
+    const missing = await api('GET', '/worlds/nope/snapshots');
+    check('知らない世界は404', missing.status === 404, String(missing.status));
+  }
+
+  // 一括削除
+  {
+    const empty = await api('POST', '/snapshots/delete', { ids: [] });
+    check('空の指定は400', empty.status === 400, `${empty.status} / ${empty.json?.error}`);
+
+    const r = await api('POST', '/snapshots/delete', { ids: [s1.id, 'no-such-id', s2.id] });
+    check('まとめて消せる', r.json?.deleted === 2, JSON.stringify(r.json));
+    check('消えたものは画像も取れない', (await fetchImage(s1.id)).status === 404);
+    check('存在しないIDが混ざっても他は消える', (await fetchImage(s2.id)).status === 404);
+    check('指定していないものは残る', (await fetchImage(s3.id)).status === 200);
+
+    const albums = (await api('GET', '/albums')).json;
+    check('削除後は枚数が減る',
+      albums.find((x) => x.world_id === a.world.id)?.count === 1,
+      String(albums.find((x) => x.world_id === a.world.id)?.count));
+  }
+
+  // 会話を消すとその会話の画像が消える（外部キーの連鎖）
+  {
+    const s5 = await shoot(a, chatA1, 'あ4');
+    check('作り直せた', (await fetchImage(s5.id)).status === 200);
+    await api('DELETE', `/chats/${chatA1.id}`);
+    check('会話を消すとその画像も消える', (await fetchImage(s5.id)).status === 404);
+    check('別の会話の画像は残る', (await fetchImage(s3.id)).status === 200);
+  }
+
+  // 世界を消すとその世界の画像が全部消える
+  {
+    const usage = (await api('GET', `/worlds/${a.world.id}`)).json.usage;
+    check('削除の確認に枚数が入る', usage.snapshots === 1, String(usage.snapshots));
+
+    await api('DELETE', `/worlds/${a.world.id}`);
+    check('世界を消すとその画像も消える', (await fetchImage(s3.id)).status === 404);
+    check('別の世界の画像は残る', (await fetchImage(s4.id)).status === 200);
+
+    const albums = (await api('GET', '/albums')).json;
+    check('アルバムからも消える', !albums.some((x) => x.world_id === a.world.id),
+      JSON.stringify(albums.map((x) => x.world_id)));
+  }
+
+  await api('DELETE', `/worlds/${b.world.id}`);
   await api('PUT', '/settings', base);
 }
 

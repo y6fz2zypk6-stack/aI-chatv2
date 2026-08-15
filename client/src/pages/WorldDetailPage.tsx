@@ -14,6 +14,7 @@ type WorldWithUsage = World & {
     lorebook: number;
     locations: number;
     events: number;
+    snapshots: number;
   };
 };
 
@@ -62,7 +63,9 @@ export default function WorldDetailPage() {
     const msg =
       `「${world.name}」を削除しますか？以下も全て削除されます:\n` +
       `キャラ${u.characters}件 / シナリオ${u.scenarios}件 / チャット${u.chats}件 / ` +
-      `ロア${u.lorebook}件 / 場所${u.locations}件 / イベント${u.events}件`;
+      `ロア${u.lorebook}件 / 場所${u.locations}件 / イベント${u.events}件 / ` +
+      // 画像は容量が大きいので、何枚消えるかを必ず出す（§21.8）
+      `スナップショット${u.snapshots}枚`;
     if (!confirm(msg)) return;
     await api.del(`/worlds/${world.id}`);
     navigate('/worlds');
