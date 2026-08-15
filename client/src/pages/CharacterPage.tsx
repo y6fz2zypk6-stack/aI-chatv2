@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { Character } from '@shared/types';
 import { api } from '../api';
-import { AvatarPicker, Field, TopBar } from '../components';
+import { AvatarPicker, Field, ReferencePicker, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -119,6 +119,15 @@ export default function CharacterPage() {
           />
           <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
             画像生成にだけ使われ、会話のプロンプトには載りません。英語のタグ列が扱いやすいです
+          </div>
+        </Field>
+
+        {/* 参照画像（§21.4）。上の丸アイコンは正方形320pxに切られるので、参照には向かない */}
+        <Field label="参照画像（スナップショット用。切り抜かずに渡します）">
+          <ReferencePicker base={`/characters/${c.id}`} onError={(m) => toast(m, true)} />
+          <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+            この画像がある人物は、丸アイコンの代わりにこちらが画像生成へ渡されます。
+            全身や服装が分かるものが向いています（長辺1024pxに縮めて保存します）
           </div>
         </Field>
 

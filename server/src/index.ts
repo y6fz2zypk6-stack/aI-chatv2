@@ -23,6 +23,7 @@ import { locationsRouter } from './routes/locations.js';
 import { lorebookRouter } from './routes/lorebook.js';
 import { messagesRouter } from './routes/messages.js';
 import { personasRouter } from './routes/personas.js';
+import { referencesRouter } from './routes/references.js';
 import { scenariosRouter } from './routes/scenarios.js';
 import { snapshotsRouter } from './routes/snapshots.js';
 import { settingsRouter } from './routes/settings.js';
@@ -57,6 +58,9 @@ app.use(cookieParser());
 // （先に小さい方が413にしてしまい、後段のパーサへ到達しない）ので、
 // **1リクエストにパーサを1つだけ通す**形にしてある。
 const smallJson = express.json({ limit: '256kb' });
+// 参照画像用。base64は元の約1.37倍になるので、ルート側の上限（6MB）より
+// 十分に大きく取る。**ここで先に413にすると、理由の分かるエラーを返せない**
+const mediumJson = express.json({ limit: '10mb' });
 const bigJson = express.json({ limit: '20mb' });
 
 /**
@@ -69,6 +73,13 @@ const BIG_BODY_PATHS: RegExp[] = [
   /^\/worlds\/[^/]+\/lorebook\/import$/,
 ];
 
+/**
+ * 参照画像のアップロードだけ、中くらいの上限を許す（§21.4）。
+ * 1024pxのWebPで300KB前後になるので 256kb では通らない。
+ * 取り込みと同じ20mbまでは開けない（画像1枚に必要な余裕だけ）。
+ */
+const MEDIUM_BODY_PATHS: RegExp[] = [/^\/(?:characters|personas)\/[^/]+\/reference$/];
+
 // 認証より前に body を読むのは /api/login だけ。ここは小さい上限で通す
 app.use('/api/login', smallJson);
 
@@ -78,7 +89,11 @@ app.use('/api', requireAuth);
 
 // ここから先は認証済み。パスに応じて上限を選ぶ
 app.use('/api', (req, res, next) => {
-  const parser = BIG_BODY_PATHS.some((re) => re.test(req.path)) ? bigJson : smallJson;
+  const parser = BIG_BODY_PATHS.some((re) => re.test(req.path))
+    ? bigJson
+    : MEDIUM_BODY_PATHS.some((re) => re.test(req.path))
+      ? mediumJson
+      : smallJson;
   parser(req, res, next);
 });
 
@@ -93,6 +108,7 @@ app.use('/api', messagesRouter);
 app.use('/api', lorebookRouter);
 app.use('/api', locationsRouter);
 app.use('/api', personasRouter);
+app.use('/api', referencesRouter);
 app.use('/api', snapshotsRouter);
 
 // クライアント静的配信（§3.1: Expressが dist/ を配信）

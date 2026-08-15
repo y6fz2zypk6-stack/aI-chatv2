@@ -82,5 +82,10 @@ export function worldUsage(id: string) {
          JOIN chats ch ON ch.id = s.chat_id
         WHERE ch.world_id = ?`,
     ),
+    references: count(
+      `SELECT COUNT(*) c FROM reference_images r
+         JOIN characters ch ON ch.id = r.character_id
+        WHERE ch.world_id = ?`,
+    ),
   };
 }

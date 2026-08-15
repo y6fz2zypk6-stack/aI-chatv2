@@ -157,6 +157,7 @@ try {
   const sw = await s4.setupSnapshotWorld('snap');
   await s4.snapshotSuite(sw);
   await s4.albumSuite();
+  await (await import('./suite-reference.mjs')).referenceSuite();
   await s4.snapshotTimeoutSuite(sw);
 
   // 再起動して同じ状態が復元されるかを見る

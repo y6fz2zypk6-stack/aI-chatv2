@@ -38,7 +38,7 @@ export async function setupSnapshotWorld(label) {
   return { world, ashley, toby, persona, shop: `${p}shop`, harbor: `${p}harbor` };
 }
 
-async function newChat(w, opts = {}) {
+export async function newChat(w, opts = {}) {
   const scenario = (
     await api('POST', `/worlds/${w.world.id}/scenarios`, {
       title: 'snap',
@@ -58,7 +58,7 @@ async function newChat(w, opts = {}) {
 }
 
 /** 直近の assistant メッセージのIDを返す */
-async function lastAssistant(chatId) {
+export async function lastAssistant(chatId) {
   const d = await getChat(chatId);
   return [...d.messages].reverse().find((m) => m.role === 'assistant')?.id;
 }
@@ -141,14 +141,16 @@ export async function snapshotSuite(w) {
     check('地の文が入る', p.includes('雨が窓を叩いている'), p.replace(/\n/g, ' / '));
     check('セリフは入らない', !p.includes('静かですね'), p.replace(/\n/g, ' / '));
     check('ペルソナは既定で入らない', !p.includes('red scarf'), p.replace(/\n/g, ' / '));
-    check('参照に使うアバターを名前で返す',
-      JSON.stringify(r.json.references) === JSON.stringify(['アシュリー']),
+    // 参照専用の画像が無ければアバターに落ちる（§21.4）
+    check('参照に使う画像を名前と出どころで返す',
+      JSON.stringify(r.json.references) === JSON.stringify([{ label: 'アシュリー', from: 'avatar' }]),
       JSON.stringify(r.json.references));
 
     const withPersona = (await api('POST', `/messages/${mid}/snapshot/preview?include_persona=1`)).json;
     check('include_persona でペルソナの外見が入る', withPersona.prompt.includes('red scarf'));
     check('ペルソナのアバターも参照に加わる',
-      JSON.stringify(withPersona.references) === JSON.stringify(['アシュリー', 'ミナ']),
+      JSON.stringify(withPersona.references.map((x) => x.label)) ===
+        JSON.stringify(['アシュリー', 'ミナ']),
       JSON.stringify(withPersona.references));
   }
 
@@ -268,8 +270,8 @@ export async function snapshotSuite(w) {
       String((sent.input_references ?? []).length));
 
     const p = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
-    check('アバターが空のキャラは参照に入れない', !p.references.includes('群衆5'),
-      JSON.stringify(p.references));
+    check('アバターが空のキャラは参照に入れない',
+      !p.references.some((x) => x.label === '群衆5'), JSON.stringify(p.references));
     for (const c of many) await api('DELETE', `/characters/${c.id}`);
   }
 

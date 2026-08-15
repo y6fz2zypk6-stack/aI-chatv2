@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Persona } from '@shared/types';
 import { api } from '../api';
-import { Avatar, AvatarPicker, Field, Row, TopBar } from '../components';
+import { Avatar, AvatarPicker, Field, ReferencePicker, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -106,6 +106,14 @@ export default function PersonasPage() {
             />
             <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
               画像生成にだけ使われ、会話のプロンプトには載りません。英語のタグ列が扱いやすいです
+            </div>
+          </Field>
+
+          {/* 参照画像（§21.4）。上の丸アイコンは正方形320pxに切られるので、参照には向かない */}
+          <Field label="参照画像（スナップショット用。切り抜かずに渡します）">
+            <ReferencePicker base={`/personas/${editing.id}`} onError={(m) => toast(m, true)} />
+            <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+              「自分（ペルソナ）も描く」をONにしたときだけ渡されます（長辺1024pxに縮めて保存します）
             </div>
           </Field>
 

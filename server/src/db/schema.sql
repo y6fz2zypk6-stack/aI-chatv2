@@ -234,3 +234,22 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_message ON snapshots(message_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_chat ON snapshots(chat_id);
+
+-- 参照用の高画質画像（§21.4）。スナップショットの input_references にだけ使う。
+-- **characters.avatar の隣に列を足さない。** characters/personas は SELECT * で引くので、
+-- 数百KBの列を足すと会話画面が読む一覧に全キャラぶんの画像が載ってしまう。
+-- 持ち主はキャラかペルソナのどちらか一方。SQLiteの外部キーは1列で2つのテーブルを
+-- 指せないため列を分け、CHECK で「ちょうど片方」を保証する。
+CREATE TABLE IF NOT EXISTS reference_images (
+  id TEXT PRIMARY KEY,
+  character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+  persona_id   TEXT REFERENCES personas(id)   ON DELETE CASCADE,
+  mime TEXT NOT NULL DEFAULT 'image/webp',
+  image BLOB NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  CHECK ((character_id IS NULL) <> (persona_id IS NULL))
+);
+-- 1人につき1枚。差し替えは delete → insert（IDが変わるので配信を immutable にできる）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reference_character ON reference_images(character_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reference_persona ON reference_images(persona_id);

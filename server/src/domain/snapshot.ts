@@ -8,6 +8,7 @@ import type {
   Settings,
 } from '../../../shared/types.js';
 import { splitDialogue } from '../../../shared/types.js';
+import { getReferenceImageOf, type RefOwner } from '../db/repo/references.js';
 import { daylightOf, toGameTime } from './calendar.js';
 import { MAX_REFERENCES } from '../llm/image.js';
 
@@ -138,12 +139,18 @@ export function buildSnapshotPrompt(input: SnapshotInput): SnapshotPrompt {
 export interface Reference {
   url: string;
   label: string;
+  /** 参照専用に上げた画像か、丸アイコンのアバターか。プレビューで見せる */
+  from: 'reference' | 'avatar';
 }
 
 /**
- * 参照画像（`input_references`）に使うアバターを集める。
+ * 参照画像（`input_references`）を集める。
  *
- * **URLはクライアントから受け取らない。** ここでアバターから組み直すことで、
+ * **参照専用の画像があればそれだけを使う（§21.4）。** アバターは丸アイコン用に
+ * 正方形へ切り抜いて320pxまで落としてあるので、服装や全身が伝わらない。
+ * 無ければ従来どおりアバターへ落とす。
+ *
+ * **URLはクライアントから受け取らない。** ここでDBから組み直すことで、
  * 任意のURLをサーバに取りに行かせられないようにする。
  */
 export function collectReferences(input: {
@@ -152,12 +159,24 @@ export function collectReferences(input: {
   includePersona: boolean;
 }): Reference[] {
   const out: Reference[] = [];
+  const pick = (owner: RefOwner, avatar: string, label: string) => {
+    const ref = getReferenceImageOf(owner);
+    if (ref) {
+      out.push({ url: toDataUrl(ref), label, from: 'reference' });
+    } else if (avatar) {
+      out.push({ url: avatar, label, from: 'avatar' });
+    }
+  };
+
   for (const c of input.characters) {
-    if (c.avatar) out.push({ url: c.avatar, label: c.name });
+    pick({ kind: 'character', id: c.id }, c.avatar, c.name);
   }
-  if (input.includePersona && input.persona?.avatar) {
-    out.push({ url: input.persona.avatar, label: input.persona.name });
+  if (input.includePersona && input.persona) {
+    pick({ kind: 'persona', id: input.persona.id }, input.persona.avatar, input.persona.name);
   }
   // モデルによって上限が違うので、低い方（4件）に合わせて切る
   return out.slice(0, MAX_REFERENCES);
 }
+
+const toDataUrl = (row: { mime: string; image: Buffer }): string =>
+  `data:${row.mime};base64,${row.image.toString('base64')}`;

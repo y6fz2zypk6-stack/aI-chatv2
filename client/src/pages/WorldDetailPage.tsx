@@ -15,6 +15,7 @@ type WorldWithUsage = World & {
     locations: number;
     events: number;
     snapshots: number;
+    references: number;
   };
 };
 
@@ -65,7 +66,7 @@ export default function WorldDetailPage() {
       `キャラ${u.characters}件 / シナリオ${u.scenarios}件 / チャット${u.chats}件 / ` +
       `ロア${u.lorebook}件 / 場所${u.locations}件 / イベント${u.events}件 / ` +
       // 画像は容量が大きいので、何枚消えるかを必ず出す（§21.8）
-      `スナップショット${u.snapshots}枚`;
+      `スナップショット${u.snapshots}枚 / 参照画像${u.references}枚`;
     if (!confirm(msg)) return;
     await api.del(`/worlds/${world.id}`);
     navigate('/worlds');

@@ -486,7 +486,21 @@ export interface SnapshotMeta {
   created_at: number;
 }
 
-/** アルバムの入口（§21.4）。1枚も無い世界は含まれない */
+/**
+ * 参照用の高画質画像（§21.4）。**画像本体（BLOB）を含まない。**
+ * 実体は GET /api/references/:id/image でバイナリ配信する。
+ * 差し替えるたびに `id` が変わるので、URLをそのままキャッシュキーにできる
+ */
+export interface ReferenceMeta {
+  id: string;
+  character_id: string | null;
+  persona_id: string | null;
+  mime: string;
+  bytes: number;
+  created_at: number;
+}
+
+/** アルバムの入口（§21.8）。1枚も無い世界は含まれない */
 export interface AlbumWorld {
   world_id: string;
   world_name: string;

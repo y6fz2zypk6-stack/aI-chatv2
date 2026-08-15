@@ -1148,7 +1148,8 @@ function MessageView(props: {
 interface SnapshotPreview {
   prompt: string;
   warnings: string[];
-  references: string[];
+  /** 何を参照として送るか。`from` は参照専用の画像かアバターか（§21.4） */
+  references: { label: string; from: 'reference' | 'avatar' }[];
   model: string;
   aspect_ratio: string;
   quality: string;
@@ -1278,11 +1279,13 @@ function SnapshotModal(props: {
 
           <div className="setting">
             <div className="txt">
-              <label>アバターを参照に使う</label>
+              <label>参照画像を使う</label>
               <span>
                 {preview.references.length
-                  ? `${preview.references.join('、')} のアバターを渡して見た目を揃えます`
-                  : '参照できるアバターがありません'}
+                  ? `${preview.references
+                      .map((r) => `${r.label}（${r.from === 'reference' ? '参照画像' : 'アバター'}）`)
+                      .join('、')}を渡して見た目を揃えます`
+                  : '参照できる画像がありません'}
               </span>
             </div>
             <button

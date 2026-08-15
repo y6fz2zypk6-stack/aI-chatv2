@@ -1,5 +1,7 @@
-import { useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { ReferenceMeta } from '@shared/types';
+import { api, ApiError } from './api';
 import { Icon } from './icons';
 
 // ---- アバター ----
@@ -67,6 +69,30 @@ export async function fileToAvatarDataUrl(file: File, max = 320): Promise<string
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
+/**
+ * 長辺を max に収めて縮小した data URL を返す。**切り抜かない。**
+ *
+ * `fileToAvatarDataUrl` とはあえて分けてある。あちらは丸アイコン用の
+ * 正方形クロップが本質で、こちらは**全身や服装を渡す**のが目的なので、
+ * 切り抜きの有無を共通化すると片方の都合がもう片方へ漏れる（§21.4）。
+ */
+export async function fileToReferenceDataUrl(file: File, max = 1024): Promise<string> {
+  // スマホ写真の回転（EXIF）を反映する。アバター側は既存の見え方を変えたくないので触らない
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  // 元が小さければ拡大しない。粗い画像を引き伸ばしても情報は増えない
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  // 参照に使うので、アバター（0.85）より品質を上げる
+  const webp = canvas.toDataURL('image/webp', 0.92);
+  if (webp.startsWith('data:image/webp')) return webp;
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
 /** 名前欄の左に置く、丸いアイコン枠＋カメラバッジ。押すと画像を選べる */
 export function AvatarPicker({
   value,
@@ -100,6 +126,108 @@ export function AvatarPicker({
           e.target.value = '';
           if (!file) return;
           onChange(await fileToAvatarDataUrl(file));
+        }}
+      />
+    </div>
+  );
+}
+
+/** バイト数を読める単位に。アルバムと同じ書式 */
+function bytesLabel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 参照用の高画質画像（§21.4）。キャラクターとペルソナの編集画面で使う。
+ *
+ * **本体の保存とは別に、選んだ時点で保存する。** 通常APIのボディ上限は256kbで、
+ * キャラ本体の PUT に画像を混ぜると通らない（専用ルートだけ上限が大きい）。
+ */
+export function ReferencePicker({
+  base,
+  onError,
+}: {
+  /** `/characters/xxx` か `/personas/xxx` */
+  base: string;
+  onError: (message: string) => void;
+}) {
+  const [meta, setMeta] = useState<ReferenceMeta | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setMeta(await api.get<ReferenceMeta>(`${base}/reference`));
+    } catch (err) {
+      // 404は「未設定」。それ以外は黙らせない
+      if (err instanceof ApiError && err.status === 404) setMeta(null);
+      else onError((err as Error).message);
+    }
+    // onError は毎描画で作られることがあるので依存に入れない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const data_url = await fileToReferenceDataUrl(file);
+      setMeta(await api.put<ReferenceMeta>(`${base}/reference`, { data_url }));
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.del(`${base}/reference`);
+      setMeta(null);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="refpick">
+      {meta && (
+        <div className="shot">
+          {/* 差し替えるとIDが変わるので、URLがそのままキャッシュキーになる */}
+          <img src={`/api/references/${meta.id}/image`} alt="参照画像" />
+        </div>
+      )}
+      <div className="acts">
+        <button className="pill sm" disabled={busy} onClick={() => inputRef.current?.click()}>
+          <Icon.upload size={14} />
+          {meta ? '差し替える' : '画像を選ぶ'}
+        </button>
+        {meta && (
+          <>
+            <button className="pill sm danger" disabled={busy} onClick={() => void remove()}>
+              外す
+            </button>
+            <span className="n">{bytesLabel(meta.bytes)}</span>
+          </>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void upload(file);
         }}
       />
     </div>

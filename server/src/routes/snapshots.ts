@@ -102,13 +102,16 @@ snapshotsRouter.post('/messages/:id/snapshot/preview', (req, res) => {
   const { prompt, warnings } = buildSnapshotPrompt(r.input);
   const references = collectReferences(r.input);
   if (references.length === 0) {
-    warnings.push('参照に使えるアバターがありません。アバターを設定すると見た目が安定します');
+    warnings.push(
+      '参照に使える画像がありません。キャラクターの編集画面で参照画像かアバターを設定すると見た目が安定します',
+    );
   }
   res.json({
     prompt,
     warnings,
-    // 何が送られるのかを画面に見せる。URLは返さない（クライアントは使わない）
-    references: references.map((x) => x.label),
+    // 何が送られるのかを画面に見せる。URLは返さない（クライアントは使わない）。
+    // 出どころ（参照画像 / アバター）も添える。アバターは切り抜き済みで質が落ちるため
+    references: references.map((x) => ({ label: x.label, from: x.from })),
     model: r.settings.image_model,
     aspect_ratio: r.settings.image_aspect_ratio,
     quality: r.settings.image_quality,

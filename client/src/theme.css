@@ -1016,6 +1016,43 @@ textarea.tall {
   border-radius: 999px;
 }
 
+/* 参照用の高画質画像（§21.4）。切り抜かずに渡すので、見本も縦横比のまま出す */
+.refpick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.refpick .shot {
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  line-height: 0;
+}
+
+.refpick .shot img {
+  display: block;
+  max-width: 100%;
+  /* アバターと違って正方形に切らない。縦長の立ち絵がそのまま見えること自体が確認になる */
+  max-height: 260px;
+  width: auto;
+  height: auto;
+}
+
+.refpick .acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.refpick .n {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* アルバム（§21.8）。容量の整理が目的なので、枚数とサイズを必ず添える */
 .album-head {
   display: flex;
