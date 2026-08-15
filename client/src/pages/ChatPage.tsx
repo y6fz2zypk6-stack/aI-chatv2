@@ -1045,14 +1045,22 @@ function MessageView(props: {
         }
 
         const isUser = u.speaker === 'user';
+        // その場限りの脇役（`NPC[名前]:`）。登録された人物ではないのでアバターを持たない
+        const isMob = u.speaker === 'npc';
         const char = props.charOf(u.characterId);
         const avatarValue = isUser ? (props.persona?.avatar ?? '') : (char?.avatar ?? '');
-        const rowClass = isUser ? 'user' : u.speaker === 'npc' ? 'mob' : 'char';
+        const rowClass = isUser ? 'user' : isMob ? 'mob' : 'char';
 
         return (
           <div key={i} className={`turn-row ${rowClass}`}>
             <div className="turn-body">
-              <Avatar className="turn-av" value={avatarValue} name={u.name} />
+              <Avatar
+                className="turn-av"
+                value={avatarValue}
+                name={u.name}
+                // 一度きりの相手なので頭文字は手がかりにならない。人型で「登録された人物ではない」と示す
+                fallback={isMob ? <Icon.person size={18} /> : undefined}
+              />
               <div className="turn-col">
                 <span className="turn-name">{u.name}</span>
                 <div className="bubble">

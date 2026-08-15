@@ -13,10 +13,17 @@ export function Avatar({
   value,
   name,
   className = '',
+  fallback,
 }: {
   value: string;
   name?: string;
   className?: string;
+  /**
+   * 画像もアバター値も無いときに、頭文字の代わりに出すもの。
+   * その場限りのモブのように「頭文字が手がかりにならない」相手に使う（§7）。
+   * 文字をそのままアバターにしている人物を上書きしないよう、`value` より後ろで効く。
+   */
+  fallback?: ReactNode;
 }) {
   if (value && isImageAvatar(value)) {
     return (
@@ -25,7 +32,9 @@ export function Avatar({
       </span>
     );
   }
-  return <span className={className}>{value || name?.slice(0, 1) || <Icon.person />}</span>;
+  return (
+    <span className={className}>{value || fallback || name?.slice(0, 1) || <Icon.person />}</span>
+  );
 }
 
 /**
