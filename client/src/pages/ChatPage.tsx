@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  chatDisplayName,
   CURATED_MODELS,
   modelLabel,
   splitDialogue,
@@ -16,7 +17,7 @@ import {
   type Utterance,
 } from '@shared/types';
 import { api, streamGenerate, type DonePayload } from '../api';
-import { Avatar, Field, Modal, TriToggle } from '../components';
+import { Avatar, Field, makeThumb, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -27,7 +28,11 @@ interface ResolvedFlag {
 
 interface Detail {
   chat: Chat;
+  /** 末尾40件だけ。それより前は「さかのぼる」で足す（§5.9） */
   messages: Message[];
+  /** 会話全体の件数。「残りn件」の表示に使う */
+  total: number;
+  hasMore: boolean;
   gameTime: GameTime;
   flags: { events: ResolvedFlag; vars: ResolvedFlag; scenarioMissing: boolean };
   /** 画像本体は含まない。実体は /api/snapshots/:id/image（§21） */
@@ -63,6 +68,14 @@ function FlagResult({ flag }: { flag: ResolvedFlag | undefined }) {
     </div>
   );
 }
+
+/**
+ * 一覧に出す画像のURL。**縮小版があればそちら**（§21.9）。
+ * 原寸は1〜2MBあるので、並べると読み込みが一気に嵩む。
+ * 未作成のもの（この機能より前に作った分）は原寸へ落ちる
+ */
+export const snapshotSrc = (s: SnapshotMeta): string =>
+  s.thumb_bytes > 0 ? `/api/snapshots/${s.id}/thumb` : `/api/snapshots/${s.id}/image`;
 
 /**
  * 吹き出し内: 「」で囲まれた部分がセリフ(dlg)、それ以外は地の文(act)。
@@ -101,6 +114,13 @@ export default function ChatPage() {
   const [imageEnabled, setImageEnabled] = useState(false);
   /** スナップショットを作る対象のメッセージ */
   const [snapshotFor, setSnapshotFor] = useState<Message | null>(null);
+  /** 原寸で見ているスナップショット（一覧は縮小版なので、拡大の逃げ道を用意する） */
+  const [viewing, setViewing] = useState<SnapshotMeta | null>(null);
+  /** 「さかのぼる」を実行中。二重に押されないようにする */
+  const [olderBusy, setOlderBusy] = useState(false);
+  /** 会話の名前を変える（§3.5） */
+  const [renaming, setRenaming] = useState(false);
+  const [renameText, setRenameText] = useState('');
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -152,10 +172,51 @@ export default function ChatPage() {
     localStorage.setItem(draftKey, draft);
   }, [draft, draftKey]);
 
+  /**
+   * 末尾へ寄せる。**依存は「末尾のID」で、件数ではない。**
+   * 件数にすると「さかのぼる」で古い分を足しただけで一番下へ飛んでしまう
+   */
+  const lastId = detail?.messages[detail.messages.length - 1]?.id;
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [detail?.messages.length, streaming]);
+  }, [lastId, streaming]);
+
+  /**
+   * 古い分を足したときの、足す直前の高さ。
+   * **描画のあとに差分を戻さないと、読んでいた場所を見失う。**
+   * `requestAnimationFrame` ではReactの反映前に走ることがあるので、
+   * DOM更新後・描画前に必ず走る `useLayoutEffect` で調整する
+   */
+  const keepScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && keepScroll.current !== null) {
+      el.scrollTop += el.scrollHeight - keepScroll.current;
+      keepScroll.current = null;
+    }
+  }, [detail?.messages.length]);
+
+  /** それより前を40件足す */
+  const loadOlder = async () => {
+    const el = scrollRef.current;
+    const first = detail?.messages[0];
+    if (!first || olderBusy) return;
+    setOlderBusy(true);
+    try {
+      const r = await api.get<{ messages: Message[]; hasMore: boolean }>(
+        `/chats/${id}/messages?before_seq=${first.seq}`,
+      );
+      keepScroll.current = el?.scrollHeight ?? 0;
+      setDetail((d) =>
+        d ? { ...d, messages: [...r.messages, ...d.messages], hasMore: r.hasMore } : d,
+      );
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setOlderBusy(false);
+    }
+  };
 
   const charOf = useMemo(() => {
     const map = new Map(characters.map((c) => [c.id, c]));
@@ -178,8 +239,7 @@ export default function ChatPage() {
       ? Math.round((last.state_after.time - prev.state_after.time) / 60)
       : 0;
 
-  const titleName =
-    charOf(chat.participant_ids[0])?.name || chat.title || '会話';
+  const titleName = chatDisplayName(chat.title, charOf(chat.participant_ids[0])?.name);
 
   const generate = (body: Record<string, unknown>): Promise<DonePayload | null> => {
     setBusy(true);
@@ -431,6 +491,16 @@ export default function ChatPage() {
 
       <div className="content" ref={scrollRef} style={{ padding: '14px 0' }}>
         <div className="messages">
+          {/* 初回は末尾40件だけ読む（§5.9）。画像付きの長い会話を一度に読まないため */}
+          {detail.hasMore && (
+            <div className="load-older">
+              <button className="pill sm" disabled={olderBusy} onClick={() => void loadOlder()}>
+                {olderBusy
+                  ? '読み込み中…'
+                  : `さかのぼる（残り${detail.total - messages.length}件）`}
+              </button>
+            </div>
+          )}
           {messages.map((m) => (
             <MessageView
               key={m.id}
@@ -470,6 +540,8 @@ export default function ChatPage() {
                   toast((err as Error).message, true);
                 }
               }}
+              // 一覧は縮小版なので、細部を見たいときの逃げ道を必ず用意する（§21.9）
+              onOpenSnapshot={setViewing}
             />
           ))}
 
@@ -587,6 +659,22 @@ export default function ChatPage() {
             <span className="txt">
               <b>メモリー候補を確認</b>
               <span>保存せずに、抽出される内容と理由を見る</span>
+            </span>
+          </button>
+          <button
+            className="srow"
+            onClick={() => {
+              setSheetOpen(false);
+              setRenameText(chat.title);
+              setRenaming(true);
+            }}
+          >
+            <span className="ic">
+              <Icon.pencil />
+            </span>
+            <span className="txt">
+              <b>会話の名前を変える</b>
+              <span>一覧とアルバムでの呼び名</span>
             </span>
           </button>
           <button className="srow" onClick={() => { setSheetOpen(false); setShowChatSettings(true); }}>
@@ -793,6 +881,50 @@ export default function ChatPage() {
         />
       )}
 
+      {renaming && (
+        <Modal
+          title="会話の名前"
+          onClose={() => setRenaming(false)}
+          actions={
+            <button
+              className="pill sm primary"
+              onClick={async () => {
+                try {
+                  await api.put(`/chats/${id}`, { title: renameText.trim() });
+                  setRenaming(false);
+                  await load();
+                } catch (err) {
+                  toast((err as Error).message, true);
+                }
+              }}
+            >
+              保存
+            </button>
+          }
+        >
+          <Field label="名前">
+            <input
+              value={renameText}
+              onChange={(e) => setRenameText(e.target.value)}
+              placeholder={charOf(chat.participant_ids[0])?.name ?? '会話'}
+              autoFocus
+            />
+            <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+              空にすると、参加しているキャラクターの名前で表示されます
+            </div>
+          </Field>
+        </Modal>
+      )}
+
+      {viewing && (
+        <Modal title="スナップショット" onClose={() => setViewing(null)}>
+          <div className="album-full">
+            {/* ここだけ原寸。一覧は縮小版（§21.9） */}
+            <img src={`/api/snapshots/${viewing.id}/image`} alt="スナップショット（原寸）" />
+          </div>
+        </Modal>
+      )}
+
       {advanceOpen && (
         <AdvanceModal
           chatId={id!}
@@ -970,6 +1102,7 @@ function MessageView(props: {
   canSnapshot: boolean;
   onSnapshot: () => void;
   onDeleteSnapshot: (id: string) => void;
+  onOpenSnapshot: (s: SnapshotMeta) => void;
 }) {
   const { message: m } = props;
   const utterances: Utterance[] = m.utterances.length
@@ -1077,8 +1210,14 @@ function MessageView(props: {
         <div className="snapshots">
           {props.snapshots.map((s) => (
             <figure key={s.id}>
-              {/* 画像はJSONに載せていないので、実体はこのエンドポイントから取る（§21） */}
-              <img src={`/api/snapshots/${s.id}/image`} alt="この場面のスナップショット" loading="lazy" />
+              {/* 画像はJSONに載せていないので、実体はこのエンドポイントから取る（§21）。
+                  一覧では縮小版を使う。未作成（thumb_bytes=0）なら原寸へ落ちる（§21.9） */}
+              <img
+                src={snapshotSrc(s)}
+                alt="この場面のスナップショット"
+                loading="lazy"
+                onClick={() => props.onOpenSnapshot(s)}
+              />
               <button
                 className="icon-btn"
                 onClick={() => props.onDeleteSnapshot(s.id)}
@@ -1225,13 +1364,14 @@ function SnapshotModal(props: {
     }
     setBusy(true);
     try {
-      await api.post(`/messages/${props.message.id}/snapshot`, {
+      const meta = await api.post<SnapshotMeta>(`/messages/${props.message.id}/snapshot`, {
         prompt,
         aspect_ratio: aspect,
         quality,
         references: useRefs,
         include_persona: includePersona,
       });
+      await makeThumb(meta.id);
       props.toast('スナップショットを作りました');
       props.onDone();
     } catch (err) {

@@ -8,6 +8,7 @@ import {
   putReference,
   type RefOwner,
 } from '../db/repo/references.js';
+import { decodeImageDataUrl } from '../util/imageData.js';
 
 /**
  * 参照用の高画質画像（§21.4）。
@@ -20,68 +21,6 @@ import {
  * 参照画像はそれを超える。この2本だけ大きめのパーサを通してある。
  */
 export const referencesRouter = Router();
-
-/** デコード後の上限。クライアントは1024pxへ縮めて送るが、APIを直接叩かれても止める */
-const MAX_BYTES = 6 * 1024 * 1024;
-
-const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/;
-
-/** 先頭バイトがその種別のものか。宣言だけ信じない */
-function sniff(buf: Buffer): string | null {
-  if (buf.length >= 8 && buf.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') return 'image/png';
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
-  if (
-    buf.length >= 12 &&
-    buf.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    buf.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return 'image/webp';
-  }
-  return null;
-}
-
-type Decoded =
-  | { ok: true; mime: string; image: Buffer }
-  | { ok: false; status: number; message: string };
-
-/**
- * data URL を検証して中身を取り出す。
- *
- * **ここを通ったものをそのまま上流へ送る**ので、素通しにしない。
- * 形式・実際の中身・大きさの3つを見る。
- */
-function decodeDataUrl(raw: unknown): Decoded {
-  if (typeof raw !== 'string' || !raw) {
-    return { ok: false, status: 400, message: '画像が指定されていません' };
-  }
-  const m = DATA_URL.exec(raw.trim());
-  if (!m) {
-    return {
-      ok: false,
-      status: 400,
-      message: 'PNG・JPEG・WebP の data URL だけを受け付けます',
-    };
-  }
-  const image = Buffer.from(m[2], 'base64');
-  if (image.length === 0) return { ok: false, status: 400, message: '画像が空です' };
-  if (image.length > MAX_BYTES) {
-    return {
-      ok: false,
-      status: 413,
-      message: `画像が大きすぎます（${Math.round(image.length / 1024 / 1024)}MB / 上限6MB）`,
-    };
-  }
-  const actual = sniff(image);
-  if (!actual) return { ok: false, status: 400, message: '画像として読めません' };
-  if (actual !== m[1]) {
-    return {
-      ok: false,
-      status: 400,
-      message: `種別が中身と一致しません（${m[1]} と指定されていますが ${actual} です）`,
-    };
-  }
-  return { ok: true, mime: actual, image };
-}
 
 /** 持ち主が実在するか。無ければ404 */
 function ownerOf(kind: RefOwner['kind'], id: string): RefOwner | null {
@@ -116,7 +55,7 @@ function mount(kind: RefOwner['kind'], base: string) {
       res.status(404).json({ error: NOT_FOUND[kind] });
       return;
     }
-    const decoded = decodeDataUrl((req.body ?? {}).data_url);
+    const decoded = decodeImageDataUrl((req.body ?? {}).data_url);
     if (!decoded.ok) {
       res.status(decoded.status).json({ error: decoded.message });
       return;

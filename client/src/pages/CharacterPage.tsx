@@ -127,7 +127,7 @@ export default function CharacterPage() {
           <ReferencePicker base={`/characters/${c.id}`} onError={(m) => toast(m, true)} />
           <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
             この画像がある人物は、丸アイコンの代わりにこちらが画像生成へ渡されます。
-            全身や服装が分かるものが向いています（長辺1024pxに縮めて保存します）
+            全身や服装が分かるものが向いています（長辺1600pxに縮めて保存します）
           </div>
         </Field>
 

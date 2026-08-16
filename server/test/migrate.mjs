@@ -50,6 +50,7 @@ function buildLegacyDb() {
       id TEXT PRIMARY KEY,
       world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
       scenario_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
       state TEXT NOT NULL DEFAULT '{}',
       extracted_up_to TEXT,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -58,6 +59,7 @@ function buildLegacyDb() {
       id TEXT PRIMARY KEY,
       chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
       state_after TEXT NOT NULL DEFAULT '{}',
       created_at INTEGER NOT NULL
     );
@@ -120,15 +122,23 @@ function buildLegacyDb() {
   d.exec(`
     INSERT INTO worlds VALUES ('w1', '旧世界', ${NOW}, ${NOW});
     INSERT INTO scenarios VALUES ('sc1', 'w1', '旧シナリオ', ${NOW}, ${NOW});
-    INSERT INTO chats VALUES ('c1', 'w1', 'sc1', '${st(1000)}', '01CCCC', ${NOW}, ${NOW});
+    INSERT INTO chats VALUES ('c1', 'w1', 'sc1', 'つづけて', '${st(1000)}', '01CCCC', ${NOW}, ${NOW});
+    INSERT INTO chats VALUES ('c2', 'w1', 'sc1', '灯台の夜', '${st(1000)}', NULL, ${NOW}, ${NOW});
   `);
   // ULID は時刻順に並ぶ。旧実装はこの順序に依存していた
   const ids = ['01AAAA', '01BBBB', '01CCCC'];
   ids.forEach((id, i) => {
-    d.prepare('INSERT INTO messages VALUES (?,?,?,?,?)').run(
-      id, 'c1', i % 2 === 0 ? 'user' : 'assistant', st(900 + i * 10), NOW + i,
+    d.prepare('INSERT INTO messages VALUES (?,?,?,?,?,?)').run(
+      id, 'c1', i % 2 === 0 ? 'user' : 'assistant',
+      // c1 のタイトルはこの先頭24文字と一致する＝旧実装の自動命名（移行で消える）
+      i === 0 ? 'つづけて' : `本文${i}`,
+      st(900 + i * 10), NOW + i,
     );
   });
+  // c2 は自分で付けた名前。最初の発言と一致しないので残る
+  d.prepare('INSERT INTO messages VALUES (?,?,?,?,?,?)').run(
+    '01DDDD', 'c2', 'user', 'おはよう', st(900), NOW,
+  );
   // 先頭メッセージの index 0 の候補（＝initial_state のバックフィル元）
   d.prepare('INSERT INTO message_variants VALUES (?,?,?,?,?,?)')
     .run('v0', '01AAAA', 0, 'こんにちは', st(880), NOW);
@@ -177,12 +187,12 @@ try {
   const cols = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 
   console.log('\n── マイグレーション（旧スキーマ → v1.5.3）');
-  check('schema_migrations に7件記録される',
-    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 7,
+  check('全てのマイグレーションが記録される',
+    d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n >= 9,
     String(d.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n));
 
   // #1 seq と一意制約
-  const seqs = d.prepare('SELECT id, seq FROM messages ORDER BY seq').all();
+  const seqs = d.prepare("SELECT id, seq FROM messages WHERE chat_id='c1' ORDER BY seq").all();
   check('messages.seq が ULID 順に採番される',
     seqs.map((r) => r.id).join(',') === '01AAAA,01BBBB,01CCCC',
     seqs.map((r) => `${r.id}:${r.seq}`).join(' '));
@@ -261,6 +271,19 @@ try {
   check('既存のメッセージは normal 扱い',
     d.prepare('SELECT DISTINCT kind k FROM messages').all().map((r) => r.k).join(',') === 'normal',
     JSON.stringify(d.prepare('SELECT id, kind FROM messages').all()));
+
+  // #9 サムネイルの列と、自動命名だったタイトルの掃除
+  {
+    check('snapshots.thumb が追加される',
+      cols('snapshots').includes('thumb') && cols('snapshots').includes('thumb_bytes'),
+      cols('snapshots').join(' '));
+    const titles = Object.fromEntries(
+      d.prepare('SELECT id, title FROM chats').all().map((r) => [r.id, r.title]),
+    );
+    check('自動命名だったタイトルは消える', titles.c1 === '', JSON.stringify(titles.c1));
+    check('自分で付けた名前は残る', titles.c2 === '灯台の夜', titles.c2);
+  }
+
   d.close();
 
   // 暦は列ではなくJSONなので、新しいキーは読み出し時に既定で補われる

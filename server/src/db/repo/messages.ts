@@ -52,6 +52,31 @@ export function getMessage(id: string): Message | undefined {
 }
 
 /** fork用: 指定 seq まで（含む）を昇順で返す */
+/**
+ * 末尾から limit 件（昇順で返す）。会話画面の初回読み込みに使う（§5.9）。
+ * **全件返すと、画像付きの長い会話で読み込みが一気に嵩む。**
+ */
+export function listMessagesTail(chatId: string, limit: number): Message[] {
+  const rows = db
+    .prepare(
+      `SELECT m.*, (SELECT COUNT(*) FROM message_variants v WHERE v.message_id = m.id) AS variant_count
+         FROM messages m WHERE m.chat_id = ? ORDER BY m.seq DESC LIMIT ?`,
+    )
+    .all(chatId, limit) as (Row & { variant_count: number })[];
+  return rows.reverse().map((r) => ({ ...toApi(r), variant_count: r.variant_count }));
+}
+
+/** `beforeSeq` より前を limit 件（昇順で返す）。「さかのぼる」で使う */
+export function listMessagesBefore(chatId: string, beforeSeq: number, limit: number): Message[] {
+  const rows = db
+    .prepare(
+      `SELECT m.*, (SELECT COUNT(*) FROM message_variants v WHERE v.message_id = m.id) AS variant_count
+         FROM messages m WHERE m.chat_id = ? AND m.seq < ? ORDER BY m.seq DESC LIMIT ?`,
+    )
+    .all(chatId, beforeSeq, limit) as (Row & { variant_count: number })[];
+  return rows.reverse().map((r) => ({ ...toApi(r), variant_count: r.variant_count }));
+}
+
 export function listMessagesUpToSeq(chatId: string, seq: number): Message[] {
   const rows = db
     .prepare('SELECT * FROM messages WHERE chat_id = ? AND seq <= ? ORDER BY seq ASC')

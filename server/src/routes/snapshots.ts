@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type { Chat, Message, Settings } from '../../../shared/types.js';
+import { chatDisplayName } from '../../../shared/types.js';
 import { getCalendar } from '../db/repo/calendars.js';
 import { getChat } from '../db/repo/chats.js';
-import { getCharacters } from '../db/repo/characters.js';
+import { getCharacter, getCharacters } from '../db/repo/characters.js';
 import { listLocations } from '../db/repo/locations.js';
 import { getMessage } from '../db/repo/messages.js';
 import { getDefaultPersona, getPersona } from '../db/repo/personas.js';
@@ -13,10 +14,14 @@ import {
   deleteSnapshots,
   getSnapshotImage,
   getSnapshotMeta,
+  getSnapshotThumb,
   listAlbumWorlds,
   listSnapshotsByWorld,
+  listSnapshotsMissingThumb,
+  setSnapshotThumb,
 } from '../db/repo/snapshots.js';
 import { getWorld } from '../db/repo/worlds.js';
+import { decodeImageDataUrl } from '../util/imageData.js';
 import { buildSnapshotPrompt, collectReferences, type SnapshotInput } from '../domain/snapshot.js';
 import { generateImage } from '../llm/image.js';
 
@@ -188,6 +193,38 @@ snapshotsRouter.get('/snapshots/:id/image', (req, res) => {
   res.send(row.image);
 });
 
+/**
+ * 一覧用の縮小版（§21.9）。
+ *
+ * **サーバでは縮小できない。** 画像ライブラリ（ネイティブ依存）を増やしたくないので、
+ * ブラウザのcanvasで作ったものを受け取る。作られていなくても表示は原寸に落ちるだけなので、
+ * ここが失敗しても生成そのものは成功として扱う（呼び出し側で握りつぶしてよい）。
+ */
+snapshotsRouter.put('/snapshots/:id/thumb', (req, res) => {
+  if (!getSnapshotMeta(req.params.id)) {
+    res.status(404).json({ error: 'スナップショットが見つかりません' });
+    return;
+  }
+  const decoded = decodeImageDataUrl((req.body ?? {}).data_url);
+  if (!decoded.ok) {
+    res.status(decoded.status).json({ error: decoded.message });
+    return;
+  }
+  setSnapshotThumb(req.params.id, decoded.mime, decoded.image);
+  res.json(getSnapshotMeta(req.params.id));
+});
+
+snapshotsRouter.get('/snapshots/:id/thumb', (req, res) => {
+  const row = getSnapshotThumb(req.params.id);
+  if (!row) {
+    res.status(404).json({ error: 'サムネイルはまだ作られていません' });
+    return;
+  }
+  res.setHeader('Content-Type', row.mime);
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.send(row.image);
+});
+
 // ---- アルバム（§21.8） ----
 
 /** 世界ごとの枚数と合計サイズ。どこに何枚あるかの入口 */
@@ -201,7 +238,27 @@ snapshotsRouter.get('/worlds/:id/snapshots', (req, res) => {
     res.status(404).json({ error: '世界が見つかりません' });
     return;
   }
-  res.json(listSnapshotsByWorld(req.params.id));
+  const items = listSnapshotsByWorld(req.params.id);
+  // **表示名まで解決して返す（§3.5）。** 名前が未設定の会話は参加キャラの名前で出す。
+  // home・チャット画面と呼び名を揃えるため、ここで `chatDisplayName` を通す。
+  // 会話ごとに1回だけ引く（世界あたりの会話数は多くない）
+  const nameOf = new Map<string, string>();
+  for (const it of items) {
+    if (nameOf.has(it.chat_id)) continue;
+    const chat = getChat(it.chat_id);
+    const first = chat?.participant_ids[0] ? getCharacter(chat.participant_ids[0]) : undefined;
+    nameOf.set(it.chat_id, chatDisplayName(it.chat_title, first?.name));
+  }
+  res.json(items.map((it) => ({ ...it, chat_title: nameOf.get(it.chat_id)! })));
+});
+
+/** サムネイル未作成のID。アルバムの「サムネイルを作る」が使う（§21.9） */
+snapshotsRouter.get('/worlds/:id/snapshots/missing-thumbs', (req, res) => {
+  if (!getWorld(req.params.id)) {
+    res.status(404).json({ error: '世界が見つかりません' });
+    return;
+  }
+  res.json({ ids: listSnapshotsMissingThumb(req.params.id) });
 });
 
 /**

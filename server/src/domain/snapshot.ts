@@ -97,31 +97,32 @@ function sceneText(message: Message): string {
 /**
  * プロンプトを組み立てる。
  *
- * **見出しを付けて節に分ける。** 人物の外見・場面・指示を同じ見た目で並べると、
- * モデルにとっても、プレビューで手直しする側にとっても境目が分からない。
- * 節は空行で区切り、**中身が無い節は見出しごと出さない**（空の `Characters:` を渡さない）。
+ * **見出し（`Characters:` などのラベル）は付けない。** 一度入れて試したが、
+ * gpt-image 系では**付けない方が良い絵が出た**ので戻してある。
+ * 同じことを繰り返し試さないよう、経緯としてここに残す。
  *
- * **画風にだけ見出しを付けない。** ここは `Style:` の前に置く指示も試せる
- * 自由記述欄として使うので、アプリ側が見出しを決め打ちしない。
+ * 要素を1行ずつ並べるだけ。画風は先頭、文字禁止の指示は末尾（プレビューで消せる）。
  */
 export function buildSnapshotPrompt(input: SnapshotInput): SnapshotPrompt {
   const warnings: string[] = [];
-  const sections: string[] = [];
+  const blocks: string[] = [];
 
   if (input.settings.image_style_prompt.trim()) {
-    sections.push(input.settings.image_style_prompt.trim());
+    blocks.push(input.settings.image_style_prompt.trim());
   }
 
   const withAppearance = input.characters.filter((c) => c.appearance.trim());
-  const people = withAppearance.map((c) => `${c.name}: ${c.appearance.trim()}`);
-  if (input.includePersona && input.persona?.appearance.trim()) {
-    people.push(`${input.persona.name}: ${input.persona.appearance.trim()}`);
+  for (const c of withAppearance) {
+    blocks.push(`${c.name}: ${c.appearance.trim()}`);
   }
-  if (people.length) sections.push(['Characters:', ...people].join('\n'));
+  if (input.includePersona && input.persona?.appearance.trim()) {
+    blocks.push(`${input.persona.name}: ${input.persona.appearance.trim()}`);
+  }
 
-  // sceneLine は季節と時刻を必ず含むので、この節は常に出る
+  blocks.push(sceneLine(input));
+
   const scene = sceneText(input.message);
-  sections.push(['Scene:', sceneLine(input), ...(scene ? [scene] : [])].join('\n'));
+  if (scene) blocks.push(scene);
 
   // 気づけるようにしておく。黙って人物なしの絵を作らない
   if (input.characters.length === 0) {
@@ -138,10 +139,10 @@ export function buildSnapshotPrompt(input: SnapshotInput): SnapshotPrompt {
   // 地の文をそのまま渡すので、指示が無いと看板や書類の形で文字を描き込むことがある。
   // プレビューで消せるようにしたいので、ここは末尾に置く
   if (input.settings.image_no_text === 1) {
-    sections.push(['Composition:', NO_TEXT_LINE].join('\n'));
+    blocks.push(NO_TEXT_LINE);
   }
 
-  return { prompt: sections.join('\n\n'), warnings };
+  return { prompt: blocks.join('\n'), warnings };
 }
 
 export interface Reference {

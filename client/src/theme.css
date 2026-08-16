@@ -1073,6 +1073,32 @@ textarea.tall {
   white-space: nowrap;
 }
 
+/* 「さかのぼる」（§5.9）。会話の先頭に置く */
+.load-older {
+  display: flex;
+  justify-content: center;
+  padding: 4px 14px 12px;
+}
+
+/* サムネイル未作成のお知らせ（§21.9）。押さなくても表示はできるので、控えめに置く */
+.album-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--muted-strong);
+}
+
+.album-note span {
+  flex: 1 1 180px;
+}
+
 .album-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

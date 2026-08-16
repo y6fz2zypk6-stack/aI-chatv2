@@ -113,7 +113,7 @@ export default function PersonasPage() {
           <Field label="参照画像（スナップショット用。切り抜かずに渡します）">
             <ReferencePicker base={`/personas/${editing.id}`} onError={(m) => toast(m, true)} />
             <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
-              「自分（ペルソナ）も描く」をONにしたときだけ渡されます（長辺1024pxに縮めて保存します）
+              「自分（ペルソナ）も描く」をONにしたときだけ渡されます（長辺1600pxに縮めて保存します）
             </div>
           </Field>
 

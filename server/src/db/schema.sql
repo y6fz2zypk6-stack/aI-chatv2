@@ -230,6 +230,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
   mime TEXT NOT NULL DEFAULT 'image/png',
   image BLOB NOT NULL,
   bytes INTEGER NOT NULL DEFAULT 0,
+  -- 一覧用の縮小版（§21.9）。原寸をチャットに並べると読み込みが嵩む。
+  -- thumb_bytes = 0 は「未作成」で、表示側は原寸へ落ちる。
+  -- 種別は原寸と違う（原寸PNG／縮小版WebP）ので列を分ける
+  thumb BLOB,
+  thumb_mime TEXT NOT NULL DEFAULT '',
+  thumb_bytes INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_message ON snapshots(message_id);

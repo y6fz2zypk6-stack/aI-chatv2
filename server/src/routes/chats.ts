@@ -16,7 +16,9 @@ import {
   insertMessage,
   insertVariantAt,
   lastMessage,
-  listMessages,
+  countMessages,
+  listMessagesBefore,
+  listMessagesTail,
   listMessagesUpToSeq,
   listVariants,
   updateMessageActive,
@@ -53,6 +55,19 @@ chatsRouter.get('/chats', (req, res) => {
   );
 });
 
+/**
+ * 会話1本分。**メッセージは末尾から `limit` 件だけ返す（§5.9）。**
+ * 全件返すと、画像付きの長い会話を開いたときに読み込みが一気に嵩む。
+ * それより前は `GET /chats/:id/messages?before_seq=` で足す。
+ */
+const PAGE_SIZE = 40;
+
+/** 1〜200 の範囲に収める。0や負の値で全件・空になるのを防ぐ */
+function limitOf(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.min(200, Math.floor(n)) : PAGE_SIZE;
+}
+
 chatsRouter.get('/chats/:id', (req, res) => {
   const chat = getChat(req.params.id);
   if (!chat) {
@@ -60,9 +75,14 @@ chatsRouter.get('/chats/:id', (req, res) => {
     return;
   }
   const calendar = getCalendar(chat.world_id);
+  const limit = limitOf(req.query.limit);
+  const messages = listMessagesTail(chat.id, limit);
+  const total = countMessages(chat.id);
   res.json({
     chat,
-    messages: listMessages(chat.id),
+    messages,
+    total,
+    hasMore: messages.length < total,
     gameTime: toGameTime(calendar, chat.state.time),
     // 3段の解決結果と、どこで決まったか。UIが「いまはON（シナリオの設定）」と出せるようにする
     flags: resolvedFlags(chat),
@@ -70,6 +90,30 @@ chatsRouter.get('/chats/:id', (req, res) => {
     // メッセージごとに引くAPIにするとメッセージ数だけ通信が増える（N+1）。
     // 画像の実体は GET /api/snapshots/:id/image で個別に取る
     snapshots: listSnapshotMeta(chat.id),
+  });
+});
+
+/**
+ * これより前のメッセージ（「さかのぼる」）。
+ * スナップショットのメタは `GET /chats/:id` で全件渡してあるので、ここでは返さない
+ */
+chatsRouter.get('/chats/:id/messages', (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  const beforeSeq = Number(req.query.before_seq);
+  if (!Number.isFinite(beforeSeq)) {
+    res.status(400).json({ error: 'before_seq を指定してください' });
+    return;
+  }
+  const limit = limitOf(req.query.limit);
+  const messages = listMessagesBefore(chat.id, beforeSeq, limit);
+  res.json({
+    messages,
+    // 返した先頭より前がまだあるか。seq の始まりに依存しないよう1件引いて確かめる
+    hasMore: messages.length > 0 && listMessagesBefore(chat.id, messages[0].seq, 1).length > 0,
   });
 });
 
@@ -156,7 +200,8 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
   const newChat = createChat({
     world_id: chat.world_id,
     scenario_id: chat.scenario_id,
-    title: `${chat.title || '無題'}（分岐）`,
+    // 元が無名なら分岐先も無名にする。「無題（分岐）」が名前として残らないように（§3.5）
+    title: chat.title ? `${chat.title}（分岐）` : '',
     persona_id: chat.persona_id,
     participant_ids: [...chat.participant_ids],
     model: chat.model,

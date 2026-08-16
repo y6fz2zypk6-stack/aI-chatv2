@@ -13,7 +13,8 @@ import type { AlbumItem, AlbumWorld, SnapshotMeta } from '../../../../shared/typ
  *   - `getSnapshotImage`                    … 画像だけ。バイナリ配信専用
  */
 
-const META_COLUMNS = 'id, chat_id, message_id, prompt, model, mime, bytes, created_at';
+const META_COLUMNS =
+  'id, chat_id, message_id, prompt, model, mime, bytes, thumb_bytes, created_at';
 
 /** チャット単位でまとめて引く。メッセージごとに引くとN+1になる */
 export function listSnapshotMeta(chatId: string): SnapshotMeta[] {
@@ -51,6 +52,8 @@ export function createSnapshot(input: {
     model: input.model,
     mime: input.mime,
     bytes: input.image.length,
+    // 縮小版は作成のあとにクライアントから届く（§21.9）
+    thumb_bytes: 0,
     created_at: now(),
   };
   db.prepare(
@@ -61,6 +64,45 @@ export function createSnapshot(input: {
     input.image, meta.bytes, meta.created_at,
   );
   return meta;
+}
+
+/**
+ * 一覧用の縮小版（§21.9）。**サーバでは縮小できない**（画像ライブラリを持たない）ので、
+ * ブラウザのcanvasで作ったものを受け取って入れるだけ。
+ * 作られていなくても表示は原寸に落ちるので、機能としては壊れない。
+ */
+export function setSnapshotThumb(id: string, mime: string, thumb: Buffer): boolean {
+  return (
+    db
+      .prepare('UPDATE snapshots SET thumb = ?, thumb_mime = ?, thumb_bytes = ? WHERE id = ?')
+      .run(thumb, mime, thumb.length, id).changes > 0
+  );
+}
+
+/**
+ * サムネイルだけ引く。無ければ undefined（未作成）。
+ * **原寸と種別が違う**（原寸はPNG、縮小版はWebPになることが多い）ので列を分けてある。
+ */
+export function getSnapshotThumb(id: string): { mime: string; image: Buffer } | undefined {
+  const row = db
+    .prepare('SELECT thumb, thumb_mime, thumb_bytes FROM snapshots WHERE id = ?')
+    .get(id) as { thumb: Buffer | null; thumb_mime: string; thumb_bytes: number } | undefined;
+  if (!row?.thumb || row.thumb_bytes === 0) return undefined;
+  return { mime: row.thumb_mime || 'image/webp', image: row.thumb };
+}
+
+/** サムネイルが未作成のもの（アルバムの作り直し用）。世界で絞る */
+export function listSnapshotsMissingThumb(worldId: string): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT s.id FROM snapshots s
+           JOIN chats c ON c.id = s.chat_id
+          WHERE c.world_id = ? AND s.thumb_bytes = 0
+          ORDER BY s.created_at ASC`,
+      )
+      .all(worldId) as { id: string }[]
+  ).map((r) => r.id);
 }
 
 export function deleteSnapshot(id: string): void {

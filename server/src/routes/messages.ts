@@ -332,9 +332,9 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
         ],
         state_after: userState,
       });
-      if (!chat.title) {
-        updateChat(chatId, { title: content.slice(0, 24) });
-      }
+      // **タイトルは自動で付けない（§3.5）。** 最初の発言の先頭24文字を入れていたが、
+      // 「つづけて」のような文字列が会話の名前として残り続けるだけだった。
+      // 未設定なら表示は参加キャラの名前になる
       baseState = userState;
     } else if (mode === 'regenerate') {
       // 末尾assistantに候補を追加。基準は対象の1つ前のメッセージ（§8.5・§8.1）

@@ -73,12 +73,14 @@ export async function fileToAvatarDataUrl(file: File, max = 320): Promise<string
  * 長辺を max に収めて縮小した data URL を返す。**切り抜かない。**
  *
  * `fileToAvatarDataUrl` とはあえて分けてある。あちらは丸アイコン用の
- * 正方形クロップが本質で、こちらは**全身や服装を渡す**のが目的なので、
+ * 正方形クロップが本質で、こちらは**中身をそのまま伝える**のが目的なので、
  * 切り抜きの有無を共通化すると片方の都合がもう片方へ漏れる（§21.4）。
+ *
+ * 参照画像（`fileToReferenceDataUrl`）とスナップショットのサムネイル（§21.9）が使う。
  */
-export async function fileToReferenceDataUrl(file: File, max = 1024): Promise<string> {
+export async function imageToDataUrl(src: Blob, max: number, quality: number): Promise<string> {
   // スマホ写真の回転（EXIF）を反映する。アバター側は既存の見え方を変えたくないので触らない
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const bitmap = await createImageBitmap(src, { imageOrientation: 'from-image' });
   // 元が小さければ拡大しない。粗い画像を引き伸ばしても情報は増えない
   const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
@@ -87,10 +89,41 @@ export async function fileToReferenceDataUrl(file: File, max = 1024): Promise<st
   const ctx = canvas.getContext('2d')!;
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  // 参照に使うので、アバター（0.85）より品質を上げる
-  const webp = canvas.toDataURL('image/webp', 0.92);
+  // WebPが使えれば優先（同画質でJPEGより小さい）
+  const webp = canvas.toDataURL('image/webp', quality);
   if (webp.startsWith('data:image/webp')) return webp;
-  return canvas.toDataURL('image/jpeg', 0.92);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
+/** 参照用の高画質画像（§21.4）。参照に使うので、アバター（0.85）より品質を上げる */
+export const fileToReferenceDataUrl = (file: File, max = 1600): Promise<string> =>
+  imageToDataUrl(file, max, 0.92);
+
+/**
+ * チャットとアルバムの一覧に出すサムネイル（§21.9）。
+ * 表示幅は358pxだが高精細画面では2〜3倍要るので長辺800px。
+ * それでも原寸（1〜2MB）の1/20前後になる。
+ */
+export const blobToThumbDataUrl = (blob: Blob): Promise<string> =>
+  imageToDataUrl(blob, 800, 0.82);
+
+/**
+ * 原寸を取得して縮小版を作り、保存する（§21.9）。
+ *
+ * **サーバでは縮小できない**（画像ライブラリを持たない）ので、ここで作って送る。
+ * **失敗しても呼び出し側を止めない。** 縮小版が無ければ原寸で出るだけなので、
+ * ここでエラーを見せると「絵は作れているのに失敗したように見える」。
+ */
+export async function makeThumb(snapshotId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/snapshots/${snapshotId}/image`, { credentials: 'same-origin' });
+    if (!res.ok) return false;
+    const data_url = await blobToThumbDataUrl(await res.blob());
+    await api.put(`/snapshots/${snapshotId}/thumb`, { data_url });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** 名前欄の左に置く、丸いアイコン枠＋カメラバッジ。押すと画像を選べる */

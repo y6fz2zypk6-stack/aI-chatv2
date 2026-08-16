@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AlbumItem, AlbumWorld } from '@shared/types';
 import { api } from '../api';
-import { Modal, Row, TopBar } from '../components';
+import { makeThumb, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -97,6 +97,7 @@ function WorldAlbum(props: {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [full, setFull] = useState<AlbumItem | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [building, setBuilding] = useState(false);
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -117,8 +118,9 @@ function WorldAlbum(props: {
     const out: { chatId: string; title: string; items: AlbumItem[] }[] = [];
     for (const it of items) {
       const last = out[out.length - 1];
+      // chat_title はサーバ側で表示名まで解決済み（§3.5）
       if (last && last.chatId === it.chat_id) last.items.push(it);
-      else out.push({ chatId: it.chat_id, title: it.chat_title || '(無題の会話)', items: [it] });
+      else out.push({ chatId: it.chat_id, title: it.chat_title, items: [it] });
     }
     return out;
   }, [items]);
@@ -164,6 +166,22 @@ function WorldAlbum(props: {
   };
 
   const bytes = items.reduce((a, x) => a + x.bytes, 0);
+  const missing = items.filter((x) => x.thumb_bytes === 0).length;
+
+  /**
+   * この機能より前に作った画像のサムネイルを作る（§21.9）。
+   * 1枚ずつ原寸を読むので時間がかかる。押さなくても表示は原寸に落ちるだけ
+   */
+  const buildThumbs = async () => {
+    setBuilding(true);
+    let done = 0;
+    for (const it of items.filter((x) => x.thumb_bytes === 0)) {
+      if (await makeThumb(it.id)) done++;
+    }
+    setBuilding(false);
+    props.toast(`${done}枚のサムネイルを作りました`);
+    await load();
+  };
 
   return (
     <>
@@ -185,6 +203,16 @@ function WorldAlbum(props: {
         }
       />
       <div className="content">
+        {missing > 0 && !selecting && (
+          <div className="album-note">
+            <span>
+              サムネイル未作成が{missing}枚あります。作るとチャットの読み込みが軽くなります
+            </span>
+            <button className="pill sm" disabled={building} onClick={() => void buildThumbs()}>
+              {building ? '作成中…' : 'サムネイルを作る'}
+            </button>
+          </div>
+        )}
         {groups.map((g) => {
           const gb = g.items.reduce((a, x) => a + x.bytes, 0);
           return (
@@ -204,9 +232,13 @@ function WorldAlbum(props: {
                       className={`album-cell${sel ? ' sel' : ''}`}
                       onClick={() => (selecting ? toggle(it.id) : setFull(it))}
                     >
-                      {/* 1枚が数百KB〜数MBあるので、近づいたものだけ読む */}
+                      {/* 縮小版があればそちら（§21.9）。近づいたものだけ読む */}
                       <img
-                        src={`/api/snapshots/${it.id}/image`}
+                        src={
+                          it.thumb_bytes > 0
+                            ? `/api/snapshots/${it.id}/thumb`
+                            : `/api/snapshots/${it.id}/image`
+                        }
                         alt={`${g.title} のスナップショット`}
                         loading="lazy"
                       />

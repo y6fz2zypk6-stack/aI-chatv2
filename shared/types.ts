@@ -483,6 +483,11 @@ export interface SnapshotMeta {
   model: string;
   mime: string;
   bytes: number;
+  /**
+   * 一覧用の縮小版の大きさ（§21.9）。**0なら未作成**で、表示側は原寸に落ちる。
+   * 実体は GET /api/snapshots/:id/thumb
+   */
+  thumb_bytes: number;
   created_at: number;
 }
 
@@ -661,6 +666,17 @@ export function parseHhmm(input: string): number | null {
   m = /^(\d{1,2})(\d{2})$/.exec(s); // 「900」「1830」
   if (m) return at(+m[1], +m[2]);
   return null;
+}
+
+/**
+ * 会話の表示名（§3.5）。**付けた名前 → 先頭の参加キャラの名前 → 既定** の順。
+ *
+ * `chats.title` は**利用者が付けたときだけ**入る。最初の発言から自動で埋めるのを
+ * やめたので、未設定はごく普通の状態になる。home・チャット画面・アルバムで
+ * 呼び名がずれると同じ会話だと分からなくなるため、決め方はここに1つだけ置く。
+ */
+export function chatDisplayName(title: string, characterName?: string): string {
+  return title.trim() || characterName?.trim() || '(無題の会話)';
 }
 
 /** 地の文の強調記号（* や _ で囲む書き方）を外す */

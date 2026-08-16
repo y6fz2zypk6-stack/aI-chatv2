@@ -134,15 +134,11 @@ export async function snapshotSuite(w) {
 
     const p = r.json.prompt;
     check('画風が先頭に入る', p.startsWith('anime illustration'), p.split('\n')[0]);
-    // 見出しで節に分ける（§21.2）。境目が無いと手直しできない
-    check('見出しが入る',
-      p.includes('\nCharacters:\n') && p.includes('\nScene:\n') && p.includes('\nComposition:\n'),
+    // 見出し（Characters: など）は付けない。gpt-image系では無い方が良かった（§21.2）
+    check('見出しを付けない',
+      !p.includes('Characters:') && !p.includes('Scene:') && !p.includes('Composition:'),
       p.replace(/\n/g, ' / '));
-    check('節は空行で区切る', p.includes('\n\nCharacters:\n'), p.replace(/\n/g, ' / '));
-    check('外見は Characters: の中',
-      p.includes('Characters:\nアシュリー: silver hair, green coat'), p.replace(/\n/g, ' / '));
-    check('場所と地の文は Scene: の中',
-      /Scene:\n本屋 [^\n]*\n雨が窓を叩いている。/.test(p), p.replace(/\n/g, ' / '));
+    check('空行で区切らない', !p.includes('\n\n'), JSON.stringify(p));
     check('在席キャラの外見が入る', p.includes('silver hair, green coat'), p.replace(/\n/g, ' / '));
     check('不在のキャラの外見は入らない', !p.includes('freckles'), p.replace(/\n/g, ' / '));
     check('場所・時刻が入る', p.includes('本屋') && p.includes('18:'), p.replace(/\n/g, ' / '));
@@ -421,29 +417,25 @@ export async function snapshotSuite(w) {
     await api('PUT', '/settings', { image_no_text: 0 });
     const off = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
     check('OFFなら付かない', !off.prompt.includes('Do not render'), off.prompt.replace(/\n/g, ' / '));
-    // 中身が無い節は見出しごと出さない
-    check('OFFなら Composition: の節ごと消える', !off.prompt.includes('Composition:'),
-      off.prompt.replace(/\n/g, ' / '));
     await api('PUT', '/settings', { image_no_text: 1 });
 
     // 画風が空でも先頭が空行にならない
     await api('PUT', '/settings', { image_style_prompt: '' });
     const noStyle = (await api('POST', `/messages/${mid}/snapshot/preview`)).json;
-    check('画風が空なら先頭が空行にならない', noStyle.prompt.startsWith('Characters:'),
+    check('画風が空なら先頭が空行にならない', !noStyle.prompt.startsWith('\n'),
       JSON.stringify(noStyle.prompt.slice(0, 20)));
     await api('PUT', '/settings', { image_style_prompt: 'anime illustration' });
   }
 
-  // 外見を書いた人が一人もいなければ Characters: ごと消える
+  // 外見を書いた人が一人もいなくても組み立てられる（警告は出す）
   {
     const plain = (await api('POST', `/worlds/${w.world.id}/characters`, { name: '無名' })).json;
     const chat = await newChat(w, { present: [plain.id] });
     setQueue([{ text: reply({ narr: '誰かが立っている。', elapsed: 10, location: w.shop }) }]);
     await generate(chat.id, { content: 't' });
     const p = (await api('POST', `/messages/${await lastAssistant(chat.id)}/snapshot/preview`)).json;
-    check('外見が1件も無ければ Characters: を出さない', !p.prompt.includes('Characters:'),
+    check('外見が無くても場面は入る', p.prompt.includes('誰かが立っている'),
       p.prompt.replace(/\n/g, ' / '));
-    check('Scene: は残る', p.prompt.includes('Scene:\n'), p.prompt.replace(/\n/g, ' / '));
     check('外見が無いことは警告する',
       p.warnings.some((x) => x.includes('外見が設定されていません')), JSON.stringify(p.warnings));
     await api('DELETE', `/characters/${plain.id}`);

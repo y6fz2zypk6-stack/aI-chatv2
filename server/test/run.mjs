@@ -158,6 +158,12 @@ try {
   await s4.snapshotSuite(sw);
   await s4.albumSuite();
   await (await import('./suite-reference.mjs')).referenceSuite();
+
+  // 会話画面まわり（ページング・会話の名前・サムネイル）
+  const s5 = await import('./suite-chatview.mjs');
+  await s5.paginationSuite(w);
+  await s5.chatTitleSuite(w);
+  await s5.thumbSuite(sw);
   await s4.snapshotTimeoutSuite(sw);
 
   // 再起動して同じ状態が復元されるかを見る

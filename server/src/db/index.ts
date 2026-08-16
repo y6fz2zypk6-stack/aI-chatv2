@@ -262,6 +262,35 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       }
     },
   },
+  {
+    // (1) スナップショットのサムネイル（§21.9）。
+    //     チャットに原寸（1〜2MB）を並べると読み込みが嵩むので、縮小版を別の列に持つ。
+    //     0 は「未作成」で、表示側は原寸へ落ちる。
+    // (2) 会話の自動命名をやめたので、**既存の自動タイトルを消す**。
+    //     最初のユーザー発言の先頭24文字と完全に一致するものだけが対象で、
+    //     自分で付けた名前は残る（§3.5）
+    version: 9,
+    up: (d) => {
+      if (!hasColumn(d, 'snapshots', 'thumb')) {
+        d.exec('ALTER TABLE snapshots ADD COLUMN thumb BLOB');
+      }
+      if (!hasColumn(d, 'snapshots', 'thumb_mime')) {
+        d.exec("ALTER TABLE snapshots ADD COLUMN thumb_mime TEXT NOT NULL DEFAULT ''");
+      }
+      if (!hasColumn(d, 'snapshots', 'thumb_bytes')) {
+        d.exec('ALTER TABLE snapshots ADD COLUMN thumb_bytes INTEGER NOT NULL DEFAULT 0');
+      }
+      // **両方の列を確かめてから実行する。** 古いDBには messages.content が無く、
+      // 素で流すと「no such column」で起動そのものが止まる
+      if (hasColumn(d, 'chats', 'title') && hasColumn(d, 'messages', 'content')) {
+        d.exec(`UPDATE chats SET title = ''
+                 WHERE title <> '' AND title = (
+                   SELECT substr(m.content, 1, 24) FROM messages m
+                    WHERE m.chat_id = chats.id AND m.role = 'user'
+                    ORDER BY m.seq ASC LIMIT 1)`);
+      }
+    },
+  },
 ];
 
 const applied = new Set(

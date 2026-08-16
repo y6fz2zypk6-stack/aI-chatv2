@@ -78,7 +78,10 @@ const BIG_BODY_PATHS: RegExp[] = [
  * 1024pxのWebPで300KB前後になるので 256kb では通らない。
  * 取り込みと同じ20mbまでは開けない（画像1枚に必要な余裕だけ）。
  */
-const MEDIUM_BODY_PATHS: RegExp[] = [/^\/(?:characters|personas)\/[^/]+\/reference$/];
+const MEDIUM_BODY_PATHS: RegExp[] = [
+  /^\/(?:characters|personas)\/[^/]+\/reference$/,
+  /^\/snapshots\/[^/]+\/thumb$/,
+];
 
 // 認証より前に body を読むのは /api/login だけ。ここは小さい上限で通す
 app.use('/api/login', smallJson);

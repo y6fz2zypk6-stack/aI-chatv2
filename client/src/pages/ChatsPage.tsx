@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Character, Chat, ChatListItem, Scenario, World } from '@shared/types';
+import { chatDisplayName, type Character, type Chat, type ChatListItem, type Scenario, type World } from '@shared/types';
 import { api } from '../api';
 import { Avatar, HomeHead, Modal, Row } from '../components';
 import { Icon } from '../icons';
@@ -33,7 +33,8 @@ export default function ChatsPage() {
   }, [load]);
 
   const firstChar = (c: ChatListItem) => characters.find((x) => x.id === c.participant_ids[0]);
-  const chatTitle = (c: ChatListItem) => firstChar(c)?.name || c.title || '(無題の会話)';
+  // 付けた名前を最優先する（§3.5）。同じキャラの会話が並ぶと見分けが付かないため
+  const chatTitle = (c: ChatListItem) => chatDisplayName(c.title, firstChar(c)?.name);
   const stamp = (t: number) => {
     const d = new Date(t);
     const p = (n: number) => String(n).padStart(2, '0');
