@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { Character, Chat, Persona, Scenario, World } from '@shared/types';
+import type { CalendarConfig, Character, Chat, GameTime, Persona, ScenarioView, World } from '@shared/types';
 import { api } from '../api';
 import { Avatar, Field, Modal, Row, TopBar, TriToggle } from '../components';
 import { Icon } from '../icons';
@@ -23,9 +23,9 @@ export default function WorldDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [world, setWorld] = useState<WorldWithUsage | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [scenarios, setScenarios] = useState<ScenarioView[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [editingScenario, setEditingScenario] = useState<Scenario | null>(null);
+  const [editingScenario, setEditingScenario] = useState<ScenarioView | null>(null);
   const [varsSchemaJson, setVarsSchemaJson] = useState('[]');
   const navigate = useNavigate();
   const toast = useApp((s) => s.toast);
@@ -40,7 +40,7 @@ export default function WorldDetailPage() {
       })
       .catch(() => {});
     api.get<Character[]>(`/worlds/${id}/characters`).then(setCharacters).catch(() => {});
-    api.get<Scenario[]>(`/worlds/${id}/scenarios`).then(setScenarios).catch(() => {});
+    api.get<ScenarioView[]>(`/worlds/${id}/scenarios`).then(setScenarios).catch(() => {});
     api.get<Persona[]>('/personas').then(setPersonas).catch(() => {});
   }, [id]);
 
@@ -102,12 +102,12 @@ export default function WorldDetailPage() {
   };
 
   const addScenario = async () => {
-    const s = await api.post<Scenario>(`/worlds/${world.id}/scenarios`, { title: '新しいシナリオ' });
+    const s = await api.post<ScenarioView>(`/worlds/${world.id}/scenarios`, { title: '新しいシナリオ' });
     load();
     setEditingScenario(s);
   };
 
-  const startChat = async (s: Scenario) => {
+  const startChat = async (s: ScenarioView) => {
     try {
       const chat = await api.post<Chat>(`/scenarios/${s.id}/chats`);
       navigate(`/chats/${chat.id}`);
@@ -116,7 +116,7 @@ export default function WorldDetailPage() {
     }
   };
 
-  const removeScenario = async (s: Scenario) => {
+  const removeScenario = async (s: ScenarioView) => {
     if (!confirm(`シナリオ「${s.title}」を削除しますか？（既存チャットは残ります）`)) return;
     await api.del(`/scenarios/${s.id}`);
     load();
@@ -328,15 +328,23 @@ export default function WorldDetailPage() {
 }
 
 function ScenarioEditor(props: {
-  scenario: Scenario;
+  scenario: ScenarioView;
   characters: Character[];
   personas: Persona[];
   worldId: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [s, setS] = useState<Scenario>(props.scenario);
+  const [s, setS] = useState<ScenarioView>(props.scenario);
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
+  /**
+   * 開始時刻は年月日時分で編集する（§4.5）。
+   * **通算分への換算はサーバに任せる。** 暦は世界ごとに違うので、
+   * ここで計算するとサーバと二重実装になる
+   */
+  const [gt, setGt] = useState<GameTime>(props.scenario.initial_game_time);
+  /** 月・日の上限を出すためだけに読む（計算には使わない） */
+  const [cal, setCal] = useState<CalendarConfig | null>(null);
   const toast = useApp((st) => st.toast);
 
   useEffect(() => {
@@ -344,6 +352,7 @@ function ScenarioEditor(props: {
       .get<{ id: string; name: string }[]>(`/worlds/${props.worldId}/locations`)
       .then(setLocations)
       .catch(() => {});
+    api.get<CalendarConfig>(`/worlds/${props.worldId}/calendar`).then(setCal).catch(() => {});
   }, [props.worldId]);
 
   const toggleParticipant = (cid: string) => {
@@ -361,7 +370,11 @@ function ScenarioEditor(props: {
 
   const save = async () => {
     try {
-      await api.put(`/scenarios/${s.id}`, s);
+      await api.put(`/scenarios/${s.id}`, {
+        ...s,
+        // 年月日時分で渡し、通算分への変換はサーバ（calendar.ts）に任せる
+        initial_state: { ...s.initial_state, game_time: gt },
+      });
       toast('シナリオを保存しました');
       props.onSaved();
     } catch (err) {
@@ -429,19 +442,39 @@ function ScenarioEditor(props: {
       </Field>
 
       <div className="kicker">初期ステート</div>
+      <Field label="開始時刻">
+        <div className="row wrap">
+          {(
+            [
+              ['年', 'year', 1, undefined],
+              ['月', 'month', 1, cal?.months_per_year],
+              ['日', 'day', 1, cal?.days_per_month],
+              ['時', 'hh', 0, 23],
+              ['分', 'mm', 0, 59],
+            ] as const
+          ).map(([label, key, min, max]) => (
+            <div key={key} className="field" style={{ width: 96 }}>
+              <label>{label}</label>
+              <input
+                type="number"
+                min={min}
+                max={max}
+                value={gt[key]}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  setGt({ ...gt, [key]: Number.isFinite(n) ? n : gt[key] });
+                }}
+              />
+            </div>
+          ))}
+        </div>
+        {cal && (
+          <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+            この世界の暦: 1年 = {cal.months_per_year}か月 / 1か月 = {cal.days_per_month}日
+          </div>
+        )}
+      </Field>
       <div className="grid-2">
-        <Field label="開始時刻（暦元期からの通算分）">
-          <input
-            type="number"
-            value={s.initial_state.time}
-            onChange={(e) =>
-              setS({
-                ...s,
-                initial_state: { ...s.initial_state, time: parseInt(e.target.value, 10) || 0 },
-              })
-            }
-          />
-        </Field>
         <Field label="場所">
           <div className="select-wrap">
             <select

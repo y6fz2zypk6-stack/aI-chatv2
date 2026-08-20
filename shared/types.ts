@@ -188,6 +188,15 @@ export interface Scenario {
   updated_at: number;
 }
 
+/**
+ * APIが返すシナリオ。**開始時刻を年月日時分にほどいたものを添える**（§4.5）。
+ * 暦は世界ごとに違うので、換算はサーバ（`calendar.ts`）だけが行う。
+ * 保存する形（`Scenario`）には混ぜない — 派生値なので、DBへ焼き付けない
+ */
+export interface ScenarioView extends Scenario {
+  initial_game_time: GameTime;
+}
+
 export interface Chat {
   id: string;
   world_id: string;
