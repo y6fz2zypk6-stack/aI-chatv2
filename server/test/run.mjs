@@ -165,6 +165,7 @@ try {
   await s5.chatTitleSuite(w);
   await s5.thumbSuite(sw);
   await (await import('./suite-scenario.mjs')).scenarioTimeSuite(w);
+  await (await import('./suite-calendar.mjs')).calendarSeasonSuite();
   await s4.snapshotTimeoutSuite(sw);
 
   // 再起動して同じ状態が復元されるかを見る

@@ -70,6 +70,61 @@ export function seasonOfMonth(cfg: CalendarConfig, month: number): string {
   return '';
 }
 
+/**
+ * 暦の書き間違いを洗い出す（§12.1）。**保存は止めない。**
+ * `domain/events.ts` の `validateCondition` と同じで、直すかどうかは利用者が決める。
+ *
+ * 季節名は自由（春夏秋冬は既定値にすぎない）。自由なぶん、
+ * 月の割り当てと天候表の対応がずれても黙って動いてしまうので、ここで並べて見せる。
+ */
+export function validateCalendar(cfg: CalendarConfig): string[] {
+  const warnings: string[] = [];
+  const months = cfg.months_per_year;
+  const owner = new Map<number, string>();
+
+  for (const [name, list] of Object.entries(cfg.seasons)) {
+    const outside = (list ?? []).filter((m) => !Number.isInteger(m) || m < 1 || m > months);
+    if (outside.length) {
+      warnings.push(
+        `季節「${name}」に ${outside.join('・')} 月が入っていますが、この暦は1〜${months}月です（この指定は効きません）`,
+      );
+    }
+    for (const m of list ?? []) {
+      if (m < 1 || m > months) continue;
+      const prev = owner.get(m);
+      // seasonOfMonth は先に見つかった方を返す
+      if (prev && prev !== name) {
+        warnings.push(`${m}月が「${prev}」と「${name}」の両方に入っています（先に書いた「${prev}」が使われます）`);
+      } else if (!prev) {
+        owner.set(m, name);
+      }
+    }
+  }
+
+  const unassigned: number[] = [];
+  for (let m = 1; m <= months; m++) if (!owner.has(m)) unassigned.push(m);
+  if (unassigned.length) {
+    warnings.push(
+      `${unassigned.join('・')} 月がどの季節にも入っていません（日付表示の季節が空になり、天候も引けません）`,
+    );
+  }
+
+  for (const name of Object.keys(cfg.seasons)) {
+    const table = cfg.weather_table[name];
+    if (!table || Object.keys(table).length === 0) {
+      warnings.push(`季節「${name}」の天候表がありません（その季節の天候は晴のままになります）`);
+    } else if (!Object.values(table).some((w) => w > 0)) {
+      warnings.push(`季節「${name}」の天候表の重みが全て0です（晴のままになります）`);
+    }
+  }
+  for (const name of Object.keys(cfg.weather_table)) {
+    if (!(name in cfg.seasons)) {
+      warnings.push(`天候表の「${name}」に対応する季節がありません（この表は使われません）`);
+    }
+  }
+  return warnings;
+}
+
 /** 通算分 → 表示用構造体 */
 export function toGameTime(cfg: CalendarConfig, time: number): GameTime {
   const t = Math.max(0, Math.floor(time));
@@ -164,8 +219,21 @@ export function daylightOf(cfg: CalendarConfig, time: number): Daylight {
 }
 
 /** 天候テーブルから重み付き抽選 */
+/** その季節の天候表があるか。無ければ抽選できない（呼び出し側が警告を出す） */
+export function hasWeatherTable(cfg: CalendarConfig, season: string): boolean {
+  const table = cfg.weather_table[season];
+  return !!table && Object.values(table).some((w) => w > 0);
+}
+
+/**
+ * その日の天候を1つ引く。
+ *
+ * **表が無いとき、別の季節の表へ落とさない。** 以前は先頭の表を使っていたが、
+ * 「雨季」の表を書き忘れると乾季の分布で引かれ、しかも誰も気づけなかった。
+ * 表が無ければ晴に固定し、**気づけるように呼び出し側が警告を出す**（`hasWeatherTable`）。
+ */
 export function drawWeather(cfg: CalendarConfig, season: string, rand: () => number = Math.random): string {
-  const table = cfg.weather_table[season] ?? Object.values(cfg.weather_table)[0];
+  const table = cfg.weather_table[season];
   if (!table) return '晴';
   const entries = Object.entries(table).filter(([, w]) => w > 0);
   const total = entries.reduce((s, [, w]) => s + w, 0);

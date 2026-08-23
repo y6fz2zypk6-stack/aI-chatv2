@@ -14,6 +14,11 @@ export default function CalendarPage() {
   const [sunJson, setSunJson] = useState('');
   const [weatherJson, setWeatherJson] = useState('');
   const [weekdaysText, setWeekdaysText] = useState('');
+  /**
+   * 書き間違いの指摘（§12.1）。季節名は自由なので、月の割り当てと天候表の
+   * 対応がずれても動いてしまう。**開いた直後にも出す**（既に壊れている暦に気づけない）
+   */
+  const [warnings, setWarnings] = useState<string[]>([]);
   const toast = useApp((s) => s.toast);
 
   useEffect(() => {
@@ -27,6 +32,10 @@ export default function CalendarPage() {
         setWeatherJson(JSON.stringify(c.weather_table, null, 2));
         setWeekdaysText(c.weekdays.join('、'));
       })
+      .catch(() => {});
+    api
+      .get<{ warnings: string[] }>(`/worlds/${id}/calendar/warnings`)
+      .then((r) => setWarnings(r.warnings))
       .catch(() => {});
   }, [id]);
 
@@ -44,8 +53,14 @@ export default function CalendarPage() {
           .map((s) => s.trim())
           .filter(Boolean),
       };
-      setCfg(await api.put<CalendarConfig>(`/worlds/${id}/calendar`, next));
-      toast('暦を保存しました');
+      const r = await api.put<{ calendar: CalendarConfig; warnings: string[] }>(
+        `/worlds/${id}/calendar`,
+        next,
+      );
+      setCfg(r.calendar);
+      // 保存は通す。直すかどうかは利用者が決める
+      setWarnings(r.warnings);
+      toast(r.warnings.length ? `暦を保存しました（確認したい点が${r.warnings.length}件）` : '暦を保存しました');
     } catch (err) {
       toast(`保存できません: ${(err as Error).message}`, true);
     }
@@ -55,6 +70,14 @@ export default function CalendarPage() {
     <>
       <TopBar title="暦・天候" back={`/worlds/${id}`} />
       <div className="content form">
+        {warnings.length > 0 && (
+          <div className="warn-list">
+            <b>確認したい点</b>
+            {warnings.map((wmsg, i) => (
+              <span key={i}>{wmsg}</span>
+            ))}
+          </div>
+        )}
         <div className="section">
           <span className="kicker">Calendar</span>
           <div className="setting">

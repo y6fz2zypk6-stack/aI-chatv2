@@ -6,7 +6,7 @@ import type {
   StateDelta,
   VarSchemaEntry,
 } from '../../../shared/types.js';
-import { drawWeather, toGameTime, toTotalDay, weatherDayOf } from './calendar.js';
+import { drawWeather, hasWeatherTable, toGameTime, toTotalDay, weatherDayOf } from './calendar.js';
 import { applySetVar } from './vars.js';
 
 export interface ApplyResult {
@@ -106,6 +106,15 @@ export function applyDelta(
   const dayChanged = toTotalDay(newTime) !== toTotalDay(base.time);
   if (weatherDayOf(cfg, newTime) !== weatherDayOf(cfg, base.time)) {
     const season = toGameTime(cfg, newTime).season;
+    // **引けなかったことを黙って飲み込まない。** 表が無ければ晴に固定されるので、
+    // 「雨季なのにずっと晴」の原因が暦の書き忘れだと分かるようにする（§12.1）
+    if (!hasWeatherTable(cfg, season)) {
+      warnings.push(
+        season
+          ? `「${season}」の天候表がありません。晴のままになります（世界の暦・天候を確認してください）`
+          : 'この月がどの季節にも入っていないため、天候を引けません（世界の暦・天候を確認してください）',
+      );
+    }
     state.weather = drawWeather(cfg, season, rand);
   }
   state.time = newTime;

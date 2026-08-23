@@ -11,6 +11,7 @@ import {
 import { removeLocationFromLorebook } from '../db/repo/lorebook.js';
 import { listScenarios } from '../db/repo/scenarios.js';
 import { getWorld } from '../db/repo/worlds.js';
+import { validateCalendar } from '../domain/calendar.js';
 
 export const locationsRouter = Router();
 
@@ -74,10 +75,33 @@ locationsRouter.get('/worlds/:id/calendar', (req, res) => {
   res.json(getCalendar(req.params.id));
 });
 
+/**
+ * 暦の保存。**書き間違いは警告で返し、保存自体は止めない**（§12.1）。
+ * 季節名は自由なので、月の割り当てと天候表の対応がずれても動いてしまう。
+ * 応答が `{ calendar, warnings }` なのはそのため（`warnings` は保存しない）。
+ */
 locationsRouter.put('/worlds/:id/calendar', (req, res) => {
   if (!getWorld(req.params.id)) {
     res.status(404).json({ error: '世界が見つかりません' });
     return;
   }
-  res.json(upsertCalendar(req.params.id, req.body ?? {}));
+  const body = { ...((req.body ?? {}) as Record<string, unknown>) };
+  // **upsertCalendar は浅いマージなので、余計なキーはDBへ焼き付く。**
+  // 画面が受け取った warnings をそのまま送り返してきても保存しない
+  delete body.warnings;
+  const calendar = upsertCalendar(req.params.id, body);
+  res.json({ calendar, warnings: validateCalendar(calendar) });
+});
+
+/**
+ * いま保存されている暦の警告だけを引く。
+ * 画面を**開いた直後**にも出せるようにするため（既に壊れている暦に気づけない）。
+ * `GET /worlds/:id/calendar` の形は変えない（シナリオ編集など他の利用者がいる）
+ */
+locationsRouter.get('/worlds/:id/calendar/warnings', (req, res) => {
+  if (!getWorld(req.params.id)) {
+    res.status(404).json({ error: '世界が見つかりません' });
+    return;
+  }
+  res.json({ warnings: validateCalendar(getCalendar(req.params.id)) });
 });

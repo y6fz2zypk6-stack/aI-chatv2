@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import type { Character, Location, LoreCategory, LorebookEntry } from '@shared/types';
+import type { CalendarConfig, Character, Location, LoreCategory, LorebookEntry } from '@shared/types';
 import { api } from '../api';
 import { Field, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
 const CATEGORIES: LoreCategory[] = ['世界観', '用語', '人物', '場所', 'イベント', 'その他'];
-const SEASONS = ['春', '夏', '秋', '冬'];
+/**
+ * 季節は**世界の暦から取る**（§12.1）。春夏秋冬は既定値にすぎず、
+ * 雨季・乾季のような名前も作れるので、ここで固定すると選べない季節ができる
+ */
 
 export default function LorebookPage() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +21,8 @@ export default function LorebookPage() {
   const [filter, setFilter] = useState('');
   const [category, setCategory] = useState<LoreCategory | ''>('');
   const [state, setState] = useState<'' | 'on' | 'off'>('');
+  /** この世界の季節名。暦から取る */
+  const [seasons, setSeasons] = useState<string[]>([]);
   const toast = useApp((s) => s.toast);
 
   const load = useCallback(() => {
@@ -25,6 +30,10 @@ export default function LorebookPage() {
     api.get<LorebookEntry[]>(`/worlds/${id}/lorebook`).then(setEntries).catch(() => {});
     api.get<Character[]>(`/worlds/${id}/characters`).then(setCharacters).catch(() => {});
     api.get<Location[]>(`/worlds/${id}/locations`).then(setLocations).catch(() => {});
+    api
+      .get<CalendarConfig>(`/worlds/${id}/calendar`)
+      .then((c) => setSeasons(Object.keys(c.seasons)))
+      .catch(() => {});
   }, [id]);
 
   useEffect(load, [load]);
@@ -177,6 +186,7 @@ export default function LorebookPage() {
           entry={editing}
           characters={characters}
           locations={locations}
+          seasons={seasons}
           onClose={() => setEditing(null)}
           onRemove={() => void remove(editing)}
           onSaved={() => {
@@ -193,6 +203,8 @@ function EntryEditor(props: {
   entry: LorebookEntry;
   characters: Character[];
   locations: Location[];
+  /** この世界の暦にある季節名 */
+  seasons: string[];
   onClose: () => void;
   onRemove: () => void;
   onSaved: () => void;
@@ -342,15 +354,29 @@ function EntryEditor(props: {
       </Field>
       <Field label="季節トリガー">
         <div className="row wrap">
-          {SEASONS.map((sn) => (
-            <span
-              key={sn}
-              className={`chip${e.trigger_seasons.includes(sn) ? ' on' : ''}`}
-              onClick={() => setE({ ...e, trigger_seasons: toggleIn(e.trigger_seasons, sn) })}
-            >
-              {sn}
-            </span>
-          ))}
+          {/* **暦に無い季節が選ばれたままなら、それも並べる。** 暦を差し替えたとき
+              （春夏秋冬 → 乾季・雨季）、消えた季節が画面から見えないまま残ると、
+              二度と発火しない条件を抱えたことに気づけない */}
+          {[...props.seasons, ...e.trigger_seasons.filter((sn) => !props.seasons.includes(sn))].map(
+            (sn) => {
+              const on = e.trigger_seasons.includes(sn);
+              const stale = !props.seasons.includes(sn);
+              return (
+                <span
+                  key={sn}
+                  className={`chip${on ? ' on' : ''}${stale ? ' stale' : ''}`}
+                  onClick={() => setE({ ...e, trigger_seasons: toggleIn(e.trigger_seasons, sn) })}
+                  title={stale ? 'この世界の暦にはもう無い季節です' : undefined}
+                >
+                  {sn}
+                  {stale && '（暦に無し）'}
+                </span>
+              );
+            },
+          )}
+        </div>
+        <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+          季節は世界の「暦・天候」で決まります（雨季・乾季のような名前も作れます）
         </div>
       </Field>
       <div className="setting">
