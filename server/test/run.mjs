@@ -139,6 +139,7 @@ try {
   const mw = await s3.setupMemoryWorld('mem');
   await s3.memorySuite(mw);
   await s3.memoryDateSuite(mw);
+  await s3.memoryAtSuite(mw);
   await s3.memoryDateEditSuite(mw);
   await s3.flagResolutionSuite(mw);
   await s3.summarySuite(mw);

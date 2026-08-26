@@ -1216,3 +1216,134 @@ export async function memoryDateEditSuite(w) {
     await api('DELETE', `/memories/${m.id}`);
   }
 }
+
+// ===========================================================================
+// メモリーの日付は「根拠になった発話」の時刻を使う。
+// 範囲が日をまたぐと、末尾に寄せていたときは数日前の出来事まで今日扱いになっていた
+// ===========================================================================
+export async function memoryAtSuite(w) {
+  suite('メモリーの日付は根拠の発話から');
+
+  const base = (await api('GET', '/settings')).json;
+  await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0 });
+
+  const commit = (chatId, body) => api('POST', `/chats/${chatId}/extract/commit`, body);
+  const mems = async () => (await api('GET', `/characters/${w.ashley.id}/memories`)).json;
+  const find = async (content) => (await mems()).find((m) => m.content === content);
+
+  // 10分 → 1日 → 10分。抽出範囲の中で日付が変わる会話を作る
+  const chat = await newChat(w);
+  setQueue([{ text: reply({ char: '「今日はここまで」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'a' });
+  setQueue([{ text: reply({ narr: '一夜明けた。', char: '「おはよう」', elapsed: 1440, location: w.shop }) }]);
+  await generate(chat.id, { content: 'b' });
+  setQueue([{ text: reply({ char: '「そうだね」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'c' });
+
+  const d = (await api('GET', `/chats/${chat.id}`)).json;
+  const msgs = d.messages; // 抽出済み境界は0なので、全件がそのまま抽出範囲になる
+  const timeAt = (n) => msgs[n - 1].state_after.time; // プロンプトの [n] は1始まり
+  const last = msgs.length;
+  check('範囲が日をまたいでいる', timeAt(2) !== timeAt(last), `${timeAt(2)} / ${timeAt(last)}`);
+
+  await clearMockRequests();
+  setQueue([
+    {
+      text: memJson([
+        { subject: '', content: '初日に約束した', why: 'x', at: 2 },
+        { subject: '', content: '翌日に知らされた', why: 'y' },
+      ]),
+    },
+  ]);
+  const p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
+  const prompt = (await mockRequests()).map((q) => q.prompt).join('\n');
+  check('会話に発言番号を振って渡す', prompt.includes('[1] ') && prompt.includes(`[${last}] `),
+    prompt.split('\n').filter((l) => l.startsWith('[')).slice(0, 3).join(' | '));
+  check('本文に番号を混ぜないよう指示する', prompt.includes('[番号] を含めない'), '');
+
+  const c1 = p.candidates.find((c) => c.content === '初日に約束した');
+  const c2 = p.candidates.find((c) => c.content === '翌日に知らされた');
+  check('at で指した発話の時刻になる', c1?.game_time === timeAt(2), String(c1?.game_time));
+  check('根拠の発話の seq を返す', c1?.at_seq === msgs[1].seq, `${c1?.at_seq} / ${msgs[1].seq}`);
+  check('at が無ければ範囲末尾に落ちる', c2?.game_time === timeAt(last), String(c2?.game_time));
+  check('候補ごとに違う日付ラベルになる',
+    !!c1?.game_time_label && c1.game_time_label !== c2?.game_time_label,
+    `${c1?.game_time_label} / ${c2?.game_time_label}`);
+
+  // プレビューで見た日付が、そのまま保存される
+  const saved = await commit(chat.id, {
+    candidates: p.candidates.map((c) => ({
+      character_id: c.character_id, subject: c.subject, content: c.content, at_seq: c.at_seq,
+    })),
+    toSeq: p.range.toSeq,
+  });
+  check('候補をそのまま保存できる', saved.json.added === 2, JSON.stringify(saved.json));
+  check('保存後も根拠の発話の日付になる', (await find('初日に約束した'))?.game_time === timeAt(2),
+    String((await find('初日に約束した'))?.game_time));
+  check('at の無い候補は範囲末尾のまま', (await find('翌日に知らされた'))?.game_time === timeAt(last),
+    String((await find('翌日に知らされた'))?.game_time));
+
+  // 端から端まで: 古い発話に紐づいた記憶は「◯日前」として入る
+  await clearMockRequests();
+  setQueue([{ text: reply({ char: '「ええ」', elapsed: 10, location: w.shop }) }]);
+  await generate(chat.id, { content: 'd' });
+  const injected = (await mockRequests()).map((q) => q.prompt).join('\n');
+  check('初日の記憶は「昨日」として注入する', injected.includes('/ 昨日) 初日に約束した'),
+    injected.split('\n').filter((l) => l.includes('初日に')).join(' | '));
+  check('当日の記憶は「今日」として注入する', injected.includes('/ 今日) 翌日に知らされた'),
+    injected.split('\n').filter((l) => l.includes('翌日に')).join(' | '));
+
+  // 読めない at は今までどおり範囲末尾へ落とす（モデルが答えなくても劣化しない）
+  {
+    const c = await newChat(w);
+    await advance(c.id, w, 5);
+    setQueue([
+      {
+        text: memJson([
+          { subject: '', content: 'atが0', why: 'x', at: 0 },
+          { subject: '', content: 'atが範囲外', why: 'x', at: 999 },
+          { subject: '', content: 'atが文字列', why: 'x', at: 'にばんめ' },
+          { subject: '', content: 'atが負', why: 'x', at: -3 },
+        ]),
+      },
+    ]);
+    const pr = (await api('POST', `/chats/${c.id}/extract-preview`)).json;
+    check('壊れた at は4件とも範囲末尾に落ちる',
+      pr.candidates.length === 4 && pr.candidates.every((x) => x.game_time === T1800 + 50),
+      JSON.stringify(pr.candidates.map((x) => [x.content, x.game_time])));
+  }
+
+  // 日付はクライアントの申告ではなくサーバがDBから引き直す
+  {
+    const c = await newChat(w);
+    await advance(c.id, w, 5);
+    const one = (await api('GET', `/chats/${c.id}`)).json;
+    const firstEnd = one.messages[one.messages.length - 1].seq;
+    await commit(c.id, { candidates: [], toSeq: firstEnd }); // ここまでを抽出済みにする
+
+    await advance(c.id, w, 5);
+    const two = (await api('GET', `/chats/${c.id}`)).json;
+    const end = two.messages[two.messages.length - 1];
+    const r = await commit(c.id, {
+      candidates: [
+        { character_id: w.ashley.id, subject: '', content: '抽出済みの範囲は指せない', at_seq: 2 },
+        { character_id: w.ashley.id, subject: '', content: '範囲より先も指せない', at_seq: end.seq + 99 },
+        { character_id: w.ashley.id, subject: '', content: '範囲内なら効く', at_seq: firstEnd + 1 },
+      ],
+      toSeq: end.seq,
+    });
+    check('3件保存できる', r.json.added === 3, JSON.stringify(r.json));
+    check('抽出済みの範囲を指しても境界の時刻になる',
+      (await find('抽出済みの範囲は指せない'))?.game_time === end.state_after.time,
+      String((await find('抽出済みの範囲は指せない'))?.game_time));
+    check('範囲より先を指しても境界の時刻になる',
+      (await find('範囲より先も指せない'))?.game_time === end.state_after.time,
+      String((await find('範囲より先も指せない'))?.game_time));
+    const inRange = two.messages.find((m) => m.seq === firstEnd + 1);
+    check('範囲内の at_seq はその発話の時刻をDBから引く',
+      (await find('範囲内なら効く'))?.game_time === inRange.state_after.time,
+      `${(await find('範囲内なら効く'))?.game_time} / ${inRange.state_after.time}`);
+  }
+
+  await api('PUT', '/settings', base);
+}

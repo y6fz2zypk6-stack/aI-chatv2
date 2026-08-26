@@ -46,6 +46,8 @@ interface MemoryPreview {
     subject: string;
     content: string;
     why: string;
+    /** 根拠になった発言の seq。保存時に送り返し、日付はサーバが引き直す */
+    at_seq: number;
     /** 「3日前」など。日付不明なら空文字 */
     game_time_label: string;
   }[];
@@ -296,6 +298,7 @@ export default function ChatPage() {
           character_id: c.character_id,
           subject: c.subject,
           content: c.content,
+          at_seq: c.at_seq,
         })),
         toSeq: memPreview.range.toSeq,
       });

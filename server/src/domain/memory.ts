@@ -63,7 +63,9 @@ export interface MemoryCandidate {
   content: string;
   /** 保存条件をどう満たすかの説明。調整用に返すだけで保存はしない */
   why: string;
-  /** 出来事のゲーム内時刻（通算分）。抽出範囲の末尾のステートから採る */
+  /** 根拠になった発言の `seq`。保存時はこれを使ってサーバが日付を引き直す */
+  at_seq: number;
+  /** 出来事のゲーム内時刻（通算分）。根拠の発言のステートから採る */
   game_time: number | null;
 }
 
@@ -111,10 +113,15 @@ ${input.idList || '（なし）'}
 ${input.existing.map((c) => `- ${c}`).join('\n') || '（なし）'}
 
 # 会話
+各行の先頭の [番号] は発言の位置を示す印であり、会話の内容ではない。
+**記憶の本文（content）には [番号] を含めないこと。**
+
 ${input.convo}
 
 次のJSON形式のみで出力すること。
-{"memories": [{"subject": "人物IDまたは空文字", "content": "記憶する事実", "why": "条件3をどう満たすか"}]}`;
+{"memories": [{"subject": "人物IDまたは空文字", "content": "記憶する事実", "why": "条件3をどう満たすか", "at": 発言番号}]}
+
+at は、その記憶の根拠になった発言の番号。複数の発言にまたがるなら最後の番号を書く。`;
 }
 
 /**
@@ -155,14 +162,19 @@ export async function extractCandidates(
   const knownIds = new Set(known.map((c) => c.id));
   const idList = known.map((c) => `${c.id} = ${c.name}`).join('\n');
 
-  const convo = targets.map((m) => m.content).join('\n');
+  // **番号を振って渡す。** 抽出は範囲まとめて1回なので、番号が無いと
+  // 「どの発言が根拠か」を答えさせられず、日付を範囲末尾に寄せるしかなくなる
+  const convo = targets.map((m, i) => `[${i + 1}] ${m.content}`).join('\n');
   const model = settings.utility_model || settings.default_model;
   // 出力の上限。本文生成の max_tokens とは別枠（§14）
   const maxTokens = Math.max(256, settings.utility_max_tokens);
   const candidates: MemoryCandidate[] = [];
-  // 「いつの出来事か」は抽出範囲の末尾のゲーム内時刻とする。
-  // 範囲内で日をまたぐこともあるが、記憶は範囲全体をまとめた1件なので末尾に寄せる
-  const gameTime = targets[targets.length - 1]?.state_after?.time ?? null;
+  // 「いつの出来事か」は根拠の発言の時刻。答えが無い・範囲外なら範囲末尾へ落とす
+  const rangeEnd = targets[targets.length - 1];
+  const sourceOf = (raw: unknown) => {
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) && n >= 1 && n <= targets.length ? targets[n - 1] : rangeEnd;
+  };
 
   for (const c of participants) {
     // 重複除けには **注入を切ったものも含める。**
@@ -190,7 +202,7 @@ export async function extractCandidates(
         failed = true;
         continue;
       }
-      let parsed: { memories?: { subject?: string; content?: string; why?: string }[] };
+      let parsed: { memories?: { subject?: string; content?: string; why?: string; at?: unknown }[] };
       try {
         parsed = JSON.parse(body) as typeof parsed;
       } catch {
@@ -200,7 +212,9 @@ export async function extractCandidates(
       }
       let taken = 0;
       for (const m of parsed.memories ?? []) {
-        const content = (m.content ?? '').trim();
+        // 先頭の `[番号]` は位置の印なので落とす。プロンプトでも禁じているが、
+        // 混ぜてくるモデルがあり、残すと注入文にそのまま出る
+        const content = (m.content ?? '').trim().replace(/^\[\d+\]\s*/, '');
         if (!content) continue;
         if (taken >= HARD_CAP) {
           notes.push(`${c.name}: ${HARD_CAP}件を超えた分は切り捨てました`);
@@ -211,13 +225,15 @@ export async function extractCandidates(
         if (m.subject && !subject) {
           notes.push(`${c.name}: 対象「${m.subject}」は人物IDとして解決できないため常時扱いにしました`);
         }
+        const src = sourceOf(m.at);
         candidates.push({
           character_id: c.id,
           character_name: c.name,
           subject,
           content,
           why: (m.why ?? '').trim(),
-          game_time: gameTime,
+          at_seq: src.seq,
+          game_time: src.state_after?.time ?? null,
         });
         taken++;
       }
@@ -333,7 +349,10 @@ const MAX_COMMIT = 20;
  */
 export function commitCandidates(
   chatId: string,
-  input: { candidates: { character_id?: string; subject?: string; content?: string }[]; toSeq: number },
+  input: {
+    candidates: { character_id?: string; subject?: string; content?: string; at_seq?: number }[];
+    toSeq: number;
+  },
 ): { added: number; message: string; error?: string } {
   const chat = getChat(chatId);
   if (!chat) return { added: 0, message: '', error: 'チャットが見つかりません' };
@@ -349,8 +368,13 @@ export function commitCandidates(
   // 保存先は「このチャットの参加キャラ」に限る。プレビューもそこからしか作らない
   const allowed = new Set(getCharacters(chat.participant_ids).map((c) => c.id));
   const knownIds = new Set(listCharacters(chat.world_id).map((c) => c.id));
-  // 日付はクライアントの申告ではなく、範囲末尾のステートから引き直す
-  const gameTime = boundary.state_after?.time ?? null;
+  // **日付はクライアントの申告を使わない。** 受け取るのは根拠の発言の seq だけで、
+  // 範囲内かを確かめたうえで時刻はDBから引き直す。範囲外・欠落なら境界の時刻
+  const timeAt = (rawSeq: unknown): number | null => {
+    const seq = Math.floor(Number(rawSeq));
+    if (!Number.isFinite(seq) || seq <= from || seq > toSeq) return boundary.state_after?.time ?? null;
+    return messageAtSeq(chatId, seq)?.state_after?.time ?? boundary.state_after?.time ?? null;
+  };
 
   const items = (input.candidates ?? []).slice(0, MAX_COMMIT);
   let added = 0;
@@ -363,7 +387,7 @@ export function commitCandidates(
       continue;
     }
     const subject = c.subject && knownIds.has(c.subject) ? c.subject : '';
-    createMemory(c.character_id, { subject, content, source: 'auto', game_time: gameTime });
+    createMemory(c.character_id, { subject, content, source: 'auto', game_time: timeAt(c.at_seq) });
     added++;
   }
 

@@ -469,7 +469,7 @@ chatsRouter.post('/chats/:id/extract/commit', (req, res) => {
     return;
   }
   const body = (req.body ?? {}) as {
-    candidates?: { character_id?: string; subject?: string; content?: string }[];
+    candidates?: { character_id?: string; subject?: string; content?: string; at_seq?: number }[];
     toSeq?: number;
   };
   if (!Array.isArray(body.candidates) || !Number.isFinite(body.toSeq)) {
