@@ -764,9 +764,12 @@ export const CURATED_MODELS: CuratedModel[] = [
   { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol' },
   { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna' },
   { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
+  { id: 'x-ai/grok-4.6', label: 'Grok 4.6' },
   { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   { id: 'moonshotai/kimi-k3', label: 'Kimi K3' },
+  { id: 'z-ai/glm-5.3', label: 'GLM-5.3' },
   { id: 'qwen/qwen3.7-plus', label: 'Qwen3.7 Plus' },
+  { id: 'qwen/qwen3.8-27b', label: 'Qwen3.8 27B' },
 ];
 
 /** モデルIDを短い表示名にする。未知のIDはスラッシュ以降をそのまま出す */

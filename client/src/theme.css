@@ -1779,7 +1779,10 @@ textarea.tall {
   position: fixed;
   z-index: 60;
   min-width: 210px;
-  max-height: 62vh;
+  /* 上端が 60px 固定なので、そこから画面下まで使い切る。
+     62vh 固定だとモデルを足すたびに末尾が黙って隠れた（スクロールの手掛かりも無い） */
+  max-height: calc(100vh - 84px - env(safe-area-inset-top));
+  max-height: calc(100dvh - 84px - env(safe-area-inset-top));
   overflow-y: auto;
   background: var(--bg);
   border-radius: 18px;
