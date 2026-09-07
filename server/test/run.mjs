@@ -167,6 +167,13 @@ try {
   await s5.thumbSuite(sw);
   await (await import('./suite-scenario.mjs')).scenarioTimeSuite(w);
   await (await import('./suite-calendar.mjs')).calendarSeasonSuite();
+
+  // 一時指示（OOC）。混ざらないことが要なので、要約・抽出・ロアまで見る
+  const s6 = await import('./suite-ooc.mjs');
+  const ow = await s6.setupOocWorld('ooc');
+  await s6.oocSuite(ow);
+  const oocSaved = await s6.oocScopeSuite(ow);
+  await s6.oocIsolationSuite(ow);
   await s4.snapshotTimeoutSuite(sw);
 
   // 再起動して同じ状態が復元されるかを見る
@@ -175,6 +182,7 @@ try {
   server = startServer();
   await waitFor(`http://localhost:${PORT}/api/config`);
   await s.restored(snapshot);
+  await s6.oocRestoredSuite(oocSaved);
 
   // 受付直後のロック取得は、モデル一覧のキャッシュが空の状態でしか観測できない。
   // 再起動直後のここで実行する

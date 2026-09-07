@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS chats (
   initial_state TEXT NOT NULL DEFAULT '{}',
   extracted_up_to TEXT,
   extracted_up_to_seq INTEGER,
+  -- OOCの一時指示（§10.3）。メッセージには保存せず、末尾systemへ専用ブロックで注入する。
+  -- once = 次の生成が正常完了したら消える / persistent = 手動で消すまで残る
+  temporary_instruction TEXT NOT NULL DEFAULT '',
+  temporary_instruction_scope TEXT NOT NULL DEFAULT 'once',
   archived INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

@@ -197,6 +197,21 @@ export interface ScenarioView extends Scenario {
   initial_game_time: GameTime;
 }
 
+/**
+ * 一時指示（OOC）の有効範囲。
+ * `once` は次の生成が正常完了した時点で消え、`persistent` は手動で消すまで残る。
+ */
+export type TemporaryInstructionScope = 'once' | 'persistent';
+
+export const TEMPORARY_INSTRUCTION_SCOPES: TemporaryInstructionScope[] = ['once', 'persistent'];
+
+/** 一時指示の上限。演出の補正であって設定ではないので、短く抑える */
+export const TEMPORARY_INSTRUCTION_MAX_CHARS = 500;
+
+export function isTemporaryScope(v: unknown): v is TemporaryInstructionScope {
+  return v === 'once' || v === 'persistent';
+}
+
 export interface Chat {
   id: string;
   world_id: string;
@@ -215,6 +230,13 @@ export interface Chat {
   extracted_up_to: string | null;
   /** 知識抽出済み範囲の境界。null なら未抽出 */
   extracted_up_to_seq: number | null;
+  /**
+   * OOCの一時指示。空文字なら未設定。
+   * **メッセージとして保存しない。** 末尾systemへ専用ブロックで注入するだけで、
+   * 会話履歴・要約・メモリー・ロア走査には入れない（不変条件41）
+   */
+  temporary_instruction: string;
+  temporary_instruction_scope: TemporaryInstructionScope;
   archived: number;
   created_at: number;
   updated_at: number;

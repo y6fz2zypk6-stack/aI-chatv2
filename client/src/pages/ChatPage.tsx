@@ -14,8 +14,10 @@ import {
   type Message,
   type Persona,
   type SnapshotMeta,
+  type TemporaryInstructionScope,
   type Utterance,
 } from '@shared/types';
+import { TEMPORARY_INSTRUCTION_MAX_CHARS } from '@shared/types';
 import { api, streamGenerate, type DonePayload } from '../api';
 import { Avatar, Field, makeThumb, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
@@ -123,6 +125,10 @@ export default function ChatPage() {
   /** 会話の名前を変える（§3.5） */
   const [renaming, setRenaming] = useState(false);
   const [renameText, setRenameText] = useState('');
+  // 一時指示（OOC、§10.3）
+  const [oocOpen, setOocOpen] = useState(false);
+  const [oocText, setOocText] = useState('');
+  const [oocScope, setOocScope] = useState<TemporaryInstructionScope>('once');
   const [draft, setDraft] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -578,6 +584,38 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {/* 設定中は必ず見えるようにする。persistent の消し忘れが一番効きすぎるため */}
+      {chat.temporary_instruction && (
+        <div className="ooc-bar">
+          <button
+            className="ooc-chip"
+            onClick={() => {
+              setOocText(chat.temporary_instruction);
+              setOocScope(chat.temporary_instruction_scope);
+              setOocOpen(true);
+            }}
+          >
+            <Icon.sparkle size={14} />
+            <b>{chat.temporary_instruction_scope === 'once' ? '今回だけ' : '手動で消すまで'}</b>
+            <span>{chat.temporary_instruction.split('\n').filter(Boolean).join(' / ')}</span>
+          </button>
+          <button
+            className="ooc-x"
+            aria-label="一時指示を消す"
+            onClick={async () => {
+              try {
+                await api.del(`/chats/${id}/temporary-instruction`);
+                await load();
+              } catch (err) {
+                toast((err as Error).message, true);
+              }
+            }}
+          >
+            <Icon.x size={11} />
+          </button>
+        </div>
+      )}
+
       <div className={`composer${sheetOpen ? ' sheet-open' : ''}`}>
         <button
           className={`plus${sheetOpen ? ' open' : ''}`}
@@ -632,6 +670,23 @@ export default function ChatPage() {
             </span>
             <span className="chev">
               <Icon.chevR size={13} />
+            </span>
+          </button>
+          <button
+            className="srow"
+            onClick={() => {
+              setSheetOpen(false);
+              setOocText(chat.temporary_instruction);
+              setOocScope(chat.temporary_instruction_scope);
+              setOocOpen(true);
+            }}
+          >
+            <span className="ic">
+              <Icon.sparkle />
+            </span>
+            <span className="txt">
+              <b>一時指示</b>
+              <span>その場の描写・状態を補正する（会話には残りません）</span>
             </span>
           </button>
           <button className="srow" onClick={() => { setSheetOpen(false); setShowPreview(true); }}>
@@ -914,6 +969,85 @@ export default function ChatPage() {
             />
             <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
               空にすると、参加しているキャラクターの名前で表示されます
+            </div>
+          </Field>
+        </Modal>
+      )}
+
+      {oocOpen && (
+        <Modal
+          title="一時指示"
+          onClose={() => setOocOpen(false)}
+          actions={
+            <>
+              {chat.temporary_instruction && (
+                <button
+                  className="pill sm"
+                  onClick={async () => {
+                    try {
+                      await api.del(`/chats/${id}/temporary-instruction`);
+                      setOocOpen(false);
+                      await load();
+                    } catch (err) {
+                      toast((err as Error).message, true);
+                    }
+                  }}
+                >
+                  消す
+                </button>
+              )}
+              <button
+                className="pill sm primary"
+                onClick={async () => {
+                  try {
+                    await api.put(`/chats/${id}/temporary-instruction`, {
+                      content: oocText.trim(),
+                      scope: oocScope,
+                    });
+                    setOocOpen(false);
+                    await load();
+                  } catch (err) {
+                    toast((err as Error).message, true);
+                  }
+                }}
+              >
+                保存
+              </button>
+            </>
+          }
+        >
+          <Field label="今回の描写・状態への補正（1行に1つ）">
+            <textarea
+              rows={4}
+              value={oocText}
+              maxLength={TEMPORARY_INSTRUCTION_MAX_CHARS}
+              onChange={(e) => setOocText(e.target.value)}
+              placeholder={'今日は元気\nめずらしく髪を結んでいる\n雨がすごく強い'}
+              autoFocus
+            />
+            <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+              会話・あらすじ・メモリーには残りません。天候などのステートも変わりません。
+            </div>
+          </Field>
+          <Field label="有効範囲">
+            <div className="row wrap">
+              <span
+                className={`chip${oocScope === 'once' ? ' on' : ''}`}
+                onClick={() => setOocScope('once')}
+              >
+                今回だけ
+              </span>
+              <span
+                className={`chip${oocScope === 'persistent' ? ' on' : ''}`}
+                onClick={() => setOocScope('persistent')}
+              >
+                手動で消すまで
+              </span>
+            </div>
+            <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+              {oocScope === 'once'
+                ? '次の返信が最後まで生成できた時点で消えます。停止・失敗のときは残ります'
+                : '消すまで毎ターン効きます'}
             </div>
           </Field>
         </Modal>

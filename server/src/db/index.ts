@@ -291,6 +291,21 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       }
     },
   },
+  {
+    // OOCの一時指示（§10.3）。既存行は既定値（未設定・once）のままなので挙動は変わらない。
+    // 空文字のときはプロンプトに1文字も足さない
+    version: 10,
+    up: (d) => {
+      if (!hasColumn(d, 'chats', 'temporary_instruction')) {
+        d.exec("ALTER TABLE chats ADD COLUMN temporary_instruction TEXT NOT NULL DEFAULT ''");
+      }
+      if (!hasColumn(d, 'chats', 'temporary_instruction_scope')) {
+        d.exec(
+          "ALTER TABLE chats ADD COLUMN temporary_instruction_scope TEXT NOT NULL DEFAULT 'once'",
+        );
+      }
+    },
+  },
 ];
 
 const applied = new Set(

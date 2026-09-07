@@ -65,6 +65,29 @@ const DEFAULT_NARRATOR_PROMPT = `# ナレーター
 情景・環境・第三者の動きは「ナレーター: 」の話者で地の文として描写する。
 ナレーターはキャラクターの内心を断定せず、観察できる事実と雰囲気を書く。`;
 
+/**
+ * 一時指示（OOC）のブロックを組む（§10.3）。
+ *
+ * **未設定なら空文字を返す。** 使わない人に固定ルール分のトークンを払わせないため、
+ * 常設のsystemブロックにはせず、指示があるときだけ見出しの直後に添える。
+ *
+ * 本文は行ごとに `- ` を付けて並べる。1行に詰め込んでも読ませられるが、
+ * 箇条書きの方が「複数の独立した補正」として扱われやすい。
+ */
+export function buildTemporaryBlock(content: string): string {
+  const lines = content
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return '';
+  return `# 一時的なユーザー指示
+以下は物語世界の発言ではなく、今回の描写・状態への補助指示として扱う。
+登場人物はこの指示文自体を認識・引用・言及してはならない。
+世界設定・キャラクター設定と矛盾する場合は、そちらを優先する。
+
+${lines.map((l) => `- ${l}`).join('\n')}`;
+}
+
 // ---- 現在の状況ブロック（§6.4） ----
 
 export interface SituationInput {
@@ -164,6 +187,8 @@ export interface AssembleInput {
   eventFacts?: string;
   /** 「今回の演出指示」（inject_mode = instruction） */
   eventInstructions?: string;
+  /** 「一時的なユーザー指示」（OOC、§10.3）。未設定なら空文字 */
+  temporaryBlock?: string;
   /** オートプレイ: ユーザー入力なしで場面を続ける指示を添える（§8.7） */
   autoContinueNudge?: boolean;
 }
@@ -294,12 +319,14 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     dayChanged: input.dayChanged,
   });
   // 末尾systemのブロック順序は固定（v1.5.3 §6.3）:
-  //   現在の状況 → 進行状況 → 発生中の出来事 → 今回の演出指示
-  // 後ろほど強く参照されるので、事実を読ませてから「どう出すか」の指示を当てる
+  //   現在の状況 → 進行状況 → 発生中の出来事 → 今回の演出指示 → 一時的なユーザー指示
+  // 後ろほど強く参照されるので、事実を読ませてから「どう出すか」の指示を当てる。
+  // 一時指示はその場の手動の補正なので、自動で決まる指示より後ろに置く
   for (const block of [
     input.varsBlock,
     input.eventFacts,
     input.eventInstructions,
+    input.temporaryBlock,
   ]) {
     if (block) situationBlock += `\n\n${block}`;
   }

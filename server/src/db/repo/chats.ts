@@ -1,7 +1,21 @@
 import { db, now, fromJson, toJson } from '../index.js';
 import { ulid } from '../../util/ulid.js';
-import type { Chat, ChatListItem, ChatState } from '../../../../shared/types.js';
+import {
+  TEMPORARY_INSTRUCTION_MAX_CHARS,
+  isTemporaryScope,
+} from '../../../../shared/types.js';
+import type {
+  Chat,
+  ChatListItem,
+  ChatState,
+  TemporaryInstructionScope,
+} from '../../../../shared/types.js';
 import { EMPTY_STATE } from './scenarios.js';
+
+/** 一時指示の本文を整える。前後の空白を落とし、上限で切る */
+function normalizeInstruction(v: string): string {
+  return String(v ?? '').trim().slice(0, TEMPORARY_INSTRUCTION_MAX_CHARS);
+}
 
 interface Row extends Omit<Chat, 'participant_ids' | 'state' | 'initial_state'> {
   participant_ids: string;
@@ -88,6 +102,9 @@ export function createChat(input: {
   state: ChatState;
   /** 省略時は state をそのまま初期ステートとする */
   initial_state?: ChatState;
+  /** 分岐（fork）で引き継ぐ。省略時は未設定 */
+  temporary_instruction?: string;
+  temporary_instruction_scope?: TemporaryInstructionScope;
 }): Chat {
   const t = now();
   const c: Chat = {
@@ -105,18 +122,24 @@ export function createChat(input: {
     initial_state: input.initial_state ?? input.state,
     extracted_up_to: null,
     extracted_up_to_seq: null,
+    temporary_instruction: normalizeInstruction(input.temporary_instruction ?? ''),
+    temporary_instruction_scope: isTemporaryScope(input.temporary_instruction_scope)
+      ? input.temporary_instruction_scope
+      : 'once',
     archived: 0,
     created_at: t,
     updated_at: t,
   };
   db.prepare(
-    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, events_enabled, vars_enabled, state, initial_state, extracted_up_to, extracted_up_to_seq, archived, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chats (id, world_id, scenario_id, title, persona_id, participant_ids, model, narrator_enabled, events_enabled, vars_enabled, state, initial_state, extracted_up_to, extracted_up_to_seq, temporary_instruction, temporary_instruction_scope, archived, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     c.id, c.world_id, c.scenario_id, c.title, c.persona_id, toJson(c.participant_ids),
     c.model, c.narrator_enabled, c.events_enabled, c.vars_enabled,
     toJson(c.state), toJson(c.initial_state),
-    c.extracted_up_to, c.extracted_up_to_seq, c.archived, c.created_at, c.updated_at,
+    c.extracted_up_to, c.extracted_up_to_seq,
+    c.temporary_instruction, c.temporary_instruction_scope,
+    c.archived, c.created_at, c.updated_at,
   );
   return c;
 }
@@ -132,14 +155,24 @@ export function updateChat(id: string, patch: Partial<Chat>): Chat | undefined {
     // 初期ステートは作成時に確定させ、以後は書き換えない
     initial_state: cur.initial_state,
     state: patch.state ? { ...cur.state, ...patch.state } : cur.state,
+    // **一時指示はここで正規化する。** PUT /chats/:id は本文をそのまま渡す作りなので、
+    // 弾かないと未知の scope や上限超えの本文がそのまま列に入る
+    temporary_instruction:
+      patch.temporary_instruction === undefined
+        ? cur.temporary_instruction
+        : normalizeInstruction(patch.temporary_instruction),
+    temporary_instruction_scope: isTemporaryScope(patch.temporary_instruction_scope)
+      ? patch.temporary_instruction_scope
+      : cur.temporary_instruction_scope,
     updated_at: now(),
   };
   db.prepare(
-    `UPDATE chats SET scenario_id=?, title=?, persona_id=?, participant_ids=?, model=?, narrator_enabled=?, events_enabled=?, vars_enabled=?, state=?, extracted_up_to=?, extracted_up_to_seq=?, archived=?, updated_at=? WHERE id=?`,
+    `UPDATE chats SET scenario_id=?, title=?, persona_id=?, participant_ids=?, model=?, narrator_enabled=?, events_enabled=?, vars_enabled=?, state=?, extracted_up_to=?, extracted_up_to_seq=?, temporary_instruction=?, temporary_instruction_scope=?, archived=?, updated_at=? WHERE id=?`,
   ).run(
     next.scenario_id, next.title, next.persona_id, toJson(next.participant_ids), next.model,
     next.narrator_enabled, next.events_enabled, next.vars_enabled,
     toJson(next.state), next.extracted_up_to, next.extracted_up_to_seq,
+    next.temporary_instruction, next.temporary_instruction_scope,
     next.archived, next.updated_at, id,
   );
   return next;

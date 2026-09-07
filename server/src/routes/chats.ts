@@ -32,6 +32,10 @@ import {
   latestSummary,
   updateSummaryContent,
 } from '../db/repo/summaries.js';
+import {
+  TEMPORARY_INSTRUCTION_MAX_CHARS,
+  isTemporaryScope,
+} from '../../../shared/types.js';
 import type { Chat, VarValue } from '../../../shared/types.js';
 import { getWorld } from '../db/repo/worlds.js';
 import { memoryDateLabel, toGameTime, toMinutes } from '../domain/calendar.js';
@@ -155,6 +159,43 @@ chatsRouter.put('/chats/:id', (req, res) => {
   res.json(chat);
 });
 
+// ---- 一時指示（OOC、§10.3）----
+// **メッセージとしては保存しない。** チャットの列に置くことで、要約・メモリー抽出・
+// ロア走査（どれも messages.content しか読まない）へ構造的に混ざらない（不変条件41）
+chatsRouter.put('/chats/:id/temporary-instruction', (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  const body = (req.body ?? {}) as { content?: unknown; scope?: unknown };
+  const content = String(body.content ?? '').trim();
+  // **黙って既定へ落とさない。** 未知の値を 'once' に丸めると、
+  // 「手動で消すまで」のつもりが1ターンで消える形で表面化する
+  if (!isTemporaryScope(body.scope)) {
+    res.status(400).json({ error: '有効範囲は once か persistent を指定してください' });
+    return;
+  }
+  if (content.length > TEMPORARY_INSTRUCTION_MAX_CHARS) {
+    res.status(400).json({
+      error: `一時指示は${TEMPORARY_INSTRUCTION_MAX_CHARS}文字までです（現在 ${content.length} 文字）`,
+    });
+    return;
+  }
+  res.json(
+    updateChat(chat.id, { temporary_instruction: content, temporary_instruction_scope: body.scope }),
+  );
+});
+
+chatsRouter.delete('/chats/:id/temporary-instruction', (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  res.json(updateChat(chat.id, { temporary_instruction: '' }));
+});
+
 chatsRouter.delete('/chats/:id', (req, res) => {
   if (!getChat(req.params.id)) {
     res.status(404).json({ error: 'チャットが見つかりません' });
@@ -209,6 +250,10 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
     state: forkState,
     // 分岐は先頭からコピーするので、初期ステートは元Chatと同じものを引き継ぐ
     initial_state: chat.initial_state,
+    // 一時指示も引き継ぐ。model や narrator_enabled と同じチャットの設定であり、
+    // 分岐した途端に「髪を結んでいる」が消えるほうが事故に近い
+    temporary_instruction: chat.temporary_instruction,
+    temporary_instruction_scope: chat.temporary_instruction_scope,
   });
 
   // メッセージと候補を昇順にコピー（seq は新チャット内で1から振り直される）

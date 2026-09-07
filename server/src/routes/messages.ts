@@ -68,7 +68,7 @@ import {
   splitFence,
   type ParseContext,
 } from '../llm/parse.js';
-import { assembleContext, type AssembleInput } from '../llm/prompt.js';
+import { assembleContext, buildTemporaryBlock, type AssembleInput } from '../llm/prompt.js';
 
 export const messagesRouter = Router();
 
@@ -181,6 +181,8 @@ export async function gatherContext(
       varsInstruction: varsEnabled ? varsInstruction(world.vars_schema) : '',
       eventFacts,
       eventInstructions,
+      // 一時指示（§10.3）。空文字なら buildTemporaryBlock が空を返し、1文字も足さない
+      temporaryBlock: buildTemporaryBlock(chat.temporary_instruction),
       settings,
       world,
       scenario,
@@ -648,6 +650,19 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
           finalState = state;
         });
         commit();
+      }
+
+      // ---- 一時指示（once）の消し込み（§10.3）----
+      // **正常完了したときだけ消す。** 判定パイプラインと同じ地点に置くことで、
+      // 停止・タイムアウト・通信失敗では残り、そのまま retry で効き続ける（§5.7の表）。
+      // regenerate は同じ場面の書き直しなので消さない。何度試しても同じ補正が効く
+      if (
+        status === 'complete' &&
+        mode !== 'regenerate' &&
+        chat.temporary_instruction_scope === 'once' &&
+        chat.temporary_instruction
+      ) {
+        updateChat(chatId, { temporary_instruction: '' });
       }
 
       stateWarnings = applied.warnings;
