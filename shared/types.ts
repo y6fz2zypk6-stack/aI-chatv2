@@ -783,6 +783,7 @@ export const CURATED_MODELS: CuratedModel[] = [
   { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },
   { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
   { id: 'anthropic/claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'openai/gpt-6-astra', label: 'GPT-6 Astra' },
   { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol' },
   { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna' },
   { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
