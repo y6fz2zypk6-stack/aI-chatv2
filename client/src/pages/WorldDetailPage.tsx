@@ -166,6 +166,14 @@ export default function WorldDetailPage() {
             onClick={() => navigate(`/worlds/${world.id}/events`)}
             chevron
           />
+          <Row
+            avatar={<Icon.brain size={19} />}
+            avatarTinted
+            name="メモリーの整理"
+            desc="書き出してAIにまとめさせる"
+            onClick={() => navigate(`/worlds/${world.id}/memory-review`)}
+            chevron
+          />
         </div>
 
         <div className="section">

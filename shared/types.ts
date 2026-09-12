@@ -499,6 +499,74 @@ export interface MemoryListItem extends Memory {
   game_time_parts: { year: number; month: number; day: number } | null;
 }
 
+// ---- メモリーの棚卸し（§10.4） ----
+
+/** 書き出しに載せる1件。判断に要る値をサーバ側で解決して添える */
+export interface MemoryReviewItem extends Memory {
+  character_name: string;
+  /** subject を名前に直したもの。常時注入（空）なら空文字 */
+  subject_name: string;
+  /** 「3年8月10日(火)」など。日付不明なら空文字 */
+  game_time_label: string;
+  /**
+   * **注入され得るか。** `enabled` が 0、または `subject` が実在しないIDだと false。
+   * subject には外部キー制約が無いので、保存されているのに永久に注入されない記憶が
+   * 生まれ得る（§10.2）。棚卸しで最初に見つけたいのがこれ
+   */
+  injectable: boolean;
+}
+
+export interface MemoryReviewStats {
+  total: number;
+  enabled: number;
+  disabled: number;
+  /** 注入される記憶の本文の合計文字数。棚卸しの効果はここに出る */
+  chars: number;
+  /** enabled なのに subject が解決できず、永久に注入されない件数 */
+  orphan_subject: number;
+}
+
+/** 整理案。Claude に作らせて貼り付ける */
+export interface MemoryPlan {
+  format?: string;
+  version?: number;
+  memories?: {
+    disable?: string[];
+    enable?: string[];
+    delete?: string[];
+    update?: { id?: string; content?: string; subject?: string; pinned?: number }[];
+    create?: { character_id?: string; subject?: string; content?: string; pinned?: number }[];
+  };
+  lorebook?: {
+    create?: Partial<LorebookEntry>[];
+    update?: (Partial<LorebookEntry> & { id?: string })[];
+  };
+}
+
+export type PlanOp = 'disable' | 'enable' | 'delete' | 'update' | 'create';
+
+/** プレビュー・適用の1行。**IDではなく中身を返す**（何が消えるか読めないと確認にならない） */
+export interface PlanRow {
+  op: PlanOp;
+  kind: 'memory' | 'lore';
+  /** create のときは空（まだIDが無い） */
+  id: string;
+  character_name: string;
+  /** ロアのときだけ入る */
+  title: string;
+  content: string;
+  /** 落とした値・注意点。無ければ空文字 */
+  note: string;
+}
+
+export interface PlanResult {
+  rows: PlanRow[];
+  warnings: string[];
+  stats: { before: MemoryReviewStats; after: MemoryReviewStats };
+  /** apply のときだけ。適用した件数 */
+  applied?: { memories: number; lorebook: number };
+}
+
 // ---- 設定（§12） ----
 
 /**

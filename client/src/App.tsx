@@ -12,6 +12,7 @@ import LocationsPage from './pages/LocationsPage';
 import LoginPage from './pages/LoginPage';
 import LorebookPage from './pages/LorebookPage';
 import MemoriesPage from './pages/MemoriesPage';
+import MemoryReviewPage from './pages/MemoryReviewPage';
 import PersonasPage from './pages/PersonasPage';
 import SettingsPage from './pages/SettingsPage';
 import StatePage from './pages/StatePage';
@@ -79,6 +80,7 @@ export default function App() {
         <Route path="/worlds/:id/locations" element={<LocationsPage />} />
         <Route path="/worlds/:id/calendar" element={<CalendarPage />} />
         <Route path="/worlds/:id/events" element={<EventsPage />} />
+        <Route path="/worlds/:id/memory-review" element={<MemoryReviewPage />} />
         <Route path="/characters/:id" element={<CharacterPage />} />
         <Route path="/characters/:id/memories" element={<MemoriesPage />} />
         <Route path="/personas" element={<PersonasPage />} />

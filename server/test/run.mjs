@@ -174,6 +174,14 @@ try {
   await s6.oocSuite(ow);
   const oocSaved = await s6.oocScopeSuite(ow);
   await s6.oocIsolationSuite(ow);
+
+  // メモリーの棚卸し（書き出し → 整理案 → 適用）
+  const s7 = await import('./suite-memreview.mjs');
+  const rw = await s7.setupReviewWorld('rv');
+  const seeded = await s7.memReviewExportSuite(rw);
+  await s7.memReviewPreviewSuite(rw, seeded);
+  await s7.memReviewApplySuite(rw, seeded);
+  await s7.memReviewEndToEndSuite(rw);
   await s4.snapshotTimeoutSuite(sw);
 
   // 再起動して同じ状態が復元されるかを見る
