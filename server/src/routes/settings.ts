@@ -32,10 +32,11 @@ settingsRouter.get('/config', (_req, res) => {
   });
 });
 
-// 画像モデルの一覧（設定画面の補完用）。これが無いと image_model が完全な手打ちになる
-settingsRouter.get('/images/models', async (_req, res) => {
+// 画像モデルの一覧（設定画面の補完用）。これが無いと image_model が完全な手打ちになる。
+// ?connection= で接続先を指定できる（省略時は組み込み）
+settingsRouter.get('/images/models', async (req, res) => {
   try {
-    res.json(await listImageModels());
+    res.json(await listImageModels(String(req.query.connection ?? '')));
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
@@ -46,10 +47,10 @@ settingsRouter.get('/models/curated', (_req, res) => {
   res.json(CURATED_MODELS);
 });
 
-// OpenRouterの全モデル一覧（設定画面の自由入力の補完用）
-settingsRouter.get('/models', async (_req, res) => {
+// 全モデル一覧（設定画面の自由入力の補完用）。?connection= で接続先を指定できる
+settingsRouter.get('/models', async (req, res) => {
   try {
-    res.json(await listModels());
+    res.json(await listModels(String(req.query.connection ?? '')));
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }

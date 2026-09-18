@@ -1,19 +1,12 @@
 import type { ModelInfo } from '../../../shared/types.js';
+import { headersOf, resolveConnection, resolveModelRef, type ResolvedConnection } from './provider.js';
 
-// 既定はOpenRouter。OPENROUTER_BASE_URL で差し替えられる（テスト用のモックを挟むため）
-export const BASE = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-
-/** 画像生成（image.ts）とも共有する。BASE と合わせて1箇所に置く */
-export function headers(): Record<string, string> {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error('OPENROUTER_API_KEY が設定されていません');
-  return {
-    Authorization: `Bearer ${key}`,
-    'Content-Type': 'application/json',
-    'HTTP-Referer': process.env.APP_URL || 'http://localhost',
-    'X-Title': process.env.APP_TITLE || 'Character Chat',
-  };
-}
+/**
+ * 上流の呼び出し。**接続先（§6.6）ごとにURLとキーを引き直す。**
+ *
+ * 引数のモデルは `<接続先ID>::<モデルID>` の参照。`::` が無ければ組み込み
+ * （`.env` の OpenRouter）なので、呼び出し側は今までどおりモデル文字列を渡すだけでよい。
+ */
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -22,26 +15,51 @@ export interface ChatMessage {
 
 // ---- モデル情報（context_length のキャッシュ、§6.5） ----
 
-let modelCache: { at: number; models: ModelInfo[] } | null = null;
+/** **接続先ごとに分ける。** 1本だと別のサービスの一覧を取り違える */
+const modelCache = new Map<string, { at: number; models: ModelInfo[] }>();
 const MODEL_CACHE_TTL = 1000 * 60 * 60;
 
-export async function listModels(): Promise<ModelInfo[]> {
-  if (modelCache && Date.now() - modelCache.at < MODEL_CACHE_TTL) return modelCache.models;
-  const res = await fetch(`${BASE}/models`, { headers: headers() });
-  if (!res.ok) throw new Error(`OpenRouter /models failed: ${res.status}`);
+export async function listModels(connectionId = ''): Promise<ModelInfo[]> {
+  const conn = resolveConnection(connectionId);
+  const hit = modelCache.get(conn.id);
+  if (hit && Date.now() - hit.at < MODEL_CACHE_TTL) return hit.models;
+  const res = await fetch(`${conn.baseUrl}/models`, { headers: headersOf(conn) });
+  if (!res.ok) throw new Error(`${conn.name} の /models に失敗しました: ${res.status}`);
   const json = (await res.json()) as { data: { id: string; name?: string; context_length?: number }[] };
-  const models = json.data.map((m) => ({
+  const models = (json.data ?? []).map((m) => ({
     id: m.id,
     name: m.name || m.id,
     context_length: m.context_length || 0,
   }));
-  modelCache = { at: Date.now(), models };
+  modelCache.set(conn.id, { at: Date.now(), models });
   return models;
 }
 
-export async function contextLengthOf(modelId: string, fallback: number): Promise<number> {
+/** 接続先を消したり付け替えたりしたときに、古い一覧を掴み続けないようにする */
+export function clearModelCache(connectionId?: string): void {
+  if (connectionId === undefined) modelCache.clear();
+  else modelCache.delete(connectionId);
+}
+
+/**
+ * 予算計算に使うコンテキスト長（§6.5）。
+ *
+ * **接続先の設定を最優先する。** `/models` を返さないサービス（ローカルのLM Studio など）では
+ * 一覧から引けず、黙って `fallback`（既定32768）に落ちる。8kのモデルを繋いでいると
+ * 過積載になるので、接続先側で長さを指定できるようにしてある。
+ */
+export async function contextLengthOf(ref: string, fallback: number): Promise<number> {
+  let conn: ResolvedConnection;
+  let modelId: string;
   try {
-    const models = await listModels();
+    ({ conn, modelId } = resolveModelRef(ref));
+  } catch {
+    // 接続先が見つからない場合でも予算計算は続ける（生成そのものは別途エラーになる）
+    return fallback;
+  }
+  if (conn.contextLength > 0) return conn.contextLength;
+  try {
+    const models = await listModels(conn.id);
     const m = models.find((x) => x.id === modelId);
     return m?.context_length || fallback;
   } catch {
@@ -135,16 +153,18 @@ export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
   };
 
   let full = '';
+  // 接続先の解決は try の外で行う。キー未設定などはそのまま呼び出し側へ投げる
+  const { conn, modelId } = resolveModelRef(opts.model);
   try {
     let res: Response;
     arm(CONNECT_TIMEOUT_MS, 'connect_timeout');
     try {
-      res = await fetch(`${BASE}/chat/completions`, {
+      res = await fetch(`${conn.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: headers(),
+        headers: headersOf(conn),
         signal: ctl.signal,
         body: JSON.stringify({
-          model: opts.model,
+          model: modelId,
           messages: opts.messages,
           max_tokens: opts.maxTokens,
           stop: opts.stop,
@@ -162,7 +182,7 @@ export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '');
-      throw new Error(`OpenRouter error ${res.status}: ${text.slice(0, 300)}`);
+      throw new Error(`${conn.name} からエラー ${res.status}: ${text.slice(0, 300)}`);
     }
 
     const reader = res.body.getReader();
@@ -229,11 +249,12 @@ export async function complete(opts: {
   maxTokens: number;
   json?: boolean;
 }): Promise<CompleteResult> {
-  const res = await fetch(`${BASE}/chat/completions`, {
+  const { conn, modelId } = resolveModelRef(opts.model);
+  const res = await fetch(`${conn.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: headers(),
+    headers: headersOf(conn),
     body: JSON.stringify({
-      model: opts.model,
+      model: modelId,
       messages: opts.messages,
       max_tokens: opts.maxTokens,
       ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
@@ -241,7 +262,7 @@ export async function complete(opts: {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`OpenRouter error ${res.status}: ${text.slice(0, 300)}`);
+    throw new Error(`${conn.name} からエラー ${res.status}: ${text.slice(0, 300)}`);
   }
   const json = (await res.json()) as {
     choices?: { message?: { content?: string; refusal?: string }; finish_reason?: string }[];

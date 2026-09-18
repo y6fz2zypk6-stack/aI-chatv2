@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   chatDisplayName,
-  CURATED_MODELS,
   modelLabel,
   splitDialogue,
   stripMarks,
@@ -19,6 +18,7 @@ import {
 } from '@shared/types';
 import { TEMPORARY_INSTRUCTION_MAX_CHARS } from '@shared/types';
 import { api, streamGenerate, type DonePayload } from '../api';
+import { useModelGroups } from '../models';
 import { Avatar, Field, makeThumb, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
@@ -142,6 +142,8 @@ export default function ChatPage() {
   const [memLoading, setMemLoading] = useState(false);
   const [memSaving, setMemSaving] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
+  /** モデルの選択肢（接続先ごと、§6.6） */
+  const { groups: modelGroups } = useModelGroups();
   const [advanceOpen, setAdvanceOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const autoplayCancel = useRef(false);
@@ -883,19 +885,26 @@ export default function ChatPage() {
                 </span>
               )}
             </button>
-            {CURATED_MODELS.map((m) => (
-              <button
-                key={m.id}
-                className={`mrow${chat.model === m.id ? ' active' : ''}`}
-                onClick={() => void pickModel(m.id)}
-              >
-                {m.label}
-                {chat.model === m.id && (
-                  <span className="ck">
-                    <Icon.check size={16} />
-                  </span>
-                )}
-              </button>
+            {/* 接続先ごとに区切る（§6.6）。組み込みだけのときは見出しを出さない */}
+            {modelGroups.map((g) => (
+              <div key={g.connection.id || 'builtin'}>
+                {modelGroups.length > 1 && <div className="mgroup">{g.connection.name}</div>}
+                {g.failed && <div className="mgroup mute">モデル一覧を取れませんでした</div>}
+                {g.options.map((o) => (
+                  <button
+                    key={o.ref}
+                    className={`mrow${chat.model === o.ref ? ' active' : ''}`}
+                    onClick={() => void pickModel(o.ref)}
+                  >
+                    {o.label}
+                    {chat.model === o.ref && (
+                      <span className="ck">
+                        <Icon.check size={16} />
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         </>

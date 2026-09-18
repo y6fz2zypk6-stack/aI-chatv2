@@ -109,6 +109,11 @@ const server = http.createServer(async (req, res) => {
     at: Date.now(),
     prompt: (reqJson.messages ?? []).map((m) => m.content).join('\n---\n'),
     maxTokens: reqJson.max_tokens ?? null,
+    // 接続先の検証用（§6.6）。どのキーで呼ばれたか・OpenRouter固有ヘッダが付いたか
+    model: reqJson.model ?? null,
+    auth: req.headers.authorization ?? '',
+    referer: req.headers['http-referer'] ?? '',
+    title: req.headers['x-title'] ?? '',
   });
   const item = popQueue() ?? {
     text: 'ナレーター: （既定応答）\n\n@@@STATE\nelapsed_minutes: 10\n@@@END',

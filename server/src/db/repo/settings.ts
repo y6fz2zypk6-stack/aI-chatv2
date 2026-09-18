@@ -101,13 +101,28 @@ export function getSettings(): Settings {
   return { ...DEFAULT_SETTINGS, ...stored } as Settings;
 }
 
+/**
+ * 空文字で「既定へ戻す」意味になるキー。
+ *
+ * **行を消さないと `.env` の値が二度と復活しない。** `getSettings` は
+ * `{...DEFAULT_SETTINGS, ...stored}` なので、空文字が保存されると DEFAULT_SETTINGS
+ * （＝`DEFAULT_MODEL` 環境変数）を上書きし続け、上流へ `model: ""` が飛ぶ。
+ * 画面の「既定（.env の設定）」を選んだときにここを通る
+ */
+const CLEARABLE_KEYS = new Set(['default_model', 'utility_model']);
+
 export function updateSettings(patch: Partial<Settings>): Settings {
   const stmt = db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   );
+  const del = db.prepare('DELETE FROM settings WHERE key = ?');
   const tx = db.transaction(() => {
     for (const [key, value] of Object.entries(patch)) {
       if (!(key in DEFAULT_SETTINGS)) continue;
+      if (CLEARABLE_KEYS.has(key) && typeof value === 'string' && !value.trim()) {
+        del.run(key);
+        continue;
+      }
       stmt.run(key, JSON.stringify(value));
     }
   });

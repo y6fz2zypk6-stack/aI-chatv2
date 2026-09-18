@@ -17,6 +17,7 @@ import { bindsAllInterfaces, isReachRestricted } from './bind.js';
 import { authRouter, cookieSecure, requireAuth } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
 import { chatsRouter } from './routes/chats.js';
+import { connectionsRouter } from './routes/connections.js';
 import { eventsRouter } from './routes/events.js';
 import { exportsRouter } from './routes/exports.js';
 import { locationsRouter } from './routes/locations.js';
@@ -102,6 +103,7 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/api', settingsRouter);
+app.use('/api', connectionsRouter);
 app.use('/api', exportsRouter);
 app.use('/api', eventsRouter);
 app.use('/api', worldsRouter);

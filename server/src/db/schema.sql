@@ -212,6 +212,19 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at INTEGER NOT NULL
 );
 
+-- 上流のOpenAI互換サービス（§6.6）。組み込み（.env の OpenRouter）はここに持たない。
+-- api_key は平文。**APIレスポンスには絶対に載せない**（不変条件43）
+CREATE TABLE IF NOT EXISTS connections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  base_url TEXT NOT NULL DEFAULT '',
+  api_key TEXT NOT NULL DEFAULT '',
+  -- 0 なら settings.fallback_context_length を使う
+  context_length INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

@@ -27,11 +27,17 @@ function freePort() {
 
 const PORT = Number(process.env.TEST_PORT) || (await freePort());
 const MOCK_PORT = Number(process.env.MOCK_PORT) || (await freePort());
+// 2つ目のモック。接続先（§6.6）の振り分けを本当に確かめるために別ポートで立てる
+const MOCK2_PORT = Number(process.env.MOCK2_PORT) || (await freePort());
+const queue2Path = path.join(workDir, 'queue2.json');
 
 writeFileSync(queuePath, '[]');
+writeFileSync(queue2Path, '[]');
 process.env.MOCK_QUEUE = queuePath;
+process.env.MOCK2_QUEUE = queue2Path;
 process.env.TEST_PORT = String(PORT);
 process.env.MOCK_PORT = String(MOCK_PORT);
+process.env.MOCK2_PORT = String(MOCK2_PORT);
 
 const children = [];
 function launch(cmd, args, env, label) {
@@ -106,7 +112,14 @@ try {
       process.exit(1);
     }
   });
+  launch(
+    process.execPath,
+    [path.join(here, 'mock-llm.mjs')],
+    { MOCK_PORT: String(MOCK2_PORT), MOCK_QUEUE: queue2Path },
+    'mock2',
+  );
   await waitFor(`http://localhost:${MOCK_PORT}/v1/models`);
+  await waitFor(`http://localhost:${MOCK2_PORT}/v1/models`);
   let server = startServer();
   await waitFor(`http://localhost:${PORT}/api/config`);
 
@@ -174,6 +187,11 @@ try {
   await s6.oocSuite(ow);
   const oocSaved = await s6.oocScopeSuite(ow);
   await s6.oocIsolationSuite(ow);
+
+  // 接続先（OpenAI互換の直API）。2つ目のモックへ本当に振り分くかを見る
+  const s8 = await import('./suite-connections.mjs');
+  await s8.connectionCrudSuite();
+  await s8.connectionRoutingSuite(MOCK2_PORT);
 
   // メモリーの棚卸し（書き出し → 整理案 → 適用）
   const s7 = await import('./suite-memreview.mjs');

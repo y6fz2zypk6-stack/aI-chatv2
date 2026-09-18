@@ -306,6 +306,23 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
       }
     },
   },
+  {
+    // 接続先（§6.6）。**既存のモデル指定は触らない。**
+    // `::` を含まない値は組み込み（.env の OpenRouter）として読まれるので、
+    // 何も書き換えずに今までどおり動く
+    version: 11,
+    up: (d) => {
+      d.exec(`CREATE TABLE IF NOT EXISTS connections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                base_url TEXT NOT NULL DEFAULT '',
+                api_key TEXT NOT NULL DEFAULT '',
+                context_length INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+              )`);
+    },
+  },
 ];
 
 const applied = new Set(

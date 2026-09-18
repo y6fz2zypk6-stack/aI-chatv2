@@ -20,6 +20,24 @@ export async function clearMockRequests() {
   await fetch(`${MOCK}/__requests`, { method: 'DELETE' });
 }
 
+// ---- 2つ目のモック（接続先の検証用、§6.6）----
+// **同じモックへ向けるだけでは base_url が本当に使われたかを証明できない。**
+// 別ポート・別キューで立てて、どちらへ届いたかで振り分けを見る。
+export const MOCK2 = `http://localhost:${process.env.MOCK2_PORT || 4011}/v1`;
+const QUEUE2 = process.env.MOCK2_QUEUE;
+
+export function setQueue2(items) {
+  writeFileSync(QUEUE2, JSON.stringify(items));
+}
+
+export async function mockRequests2() {
+  return (await fetch(`${MOCK2}/__requests`)).json();
+}
+
+export async function clearMockRequests2() {
+  await fetch(`${MOCK2}/__requests`, { method: 'DELETE' });
+}
+
 /** モデル一覧の応答を遅らせる。受付直後のraceを観測するために使う */
 export async function setModelsDelay(ms) {
   await fetch(`${MOCK}/__models_delay`, {

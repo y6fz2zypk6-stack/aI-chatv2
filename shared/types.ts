@@ -728,6 +728,58 @@ export interface ModelInfo {
   context_length: number;
 }
 
+// ---- 接続先（§6.6） ----
+
+/**
+ * 上流のOpenAI互換サービス。
+ * **組み込み（`.env` の OpenRouter）は `id` が空文字**で、DBには持たない。
+ */
+export interface Connection {
+  id: string;
+  name: string;
+  base_url: string;
+  /** 0 なら全体設定の `fallback_context_length` を使う */
+  context_length: number;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * APIが返す接続先。**`api_key` は絶対に含めない**（不変条件43）。
+ * 設定済みかどうかと末尾4文字だけを渡す。
+ */
+export interface ConnectionView extends Connection {
+  has_key: boolean;
+  /** 「••••1234」の形。未設定なら空文字 */
+  key_hint: string;
+  /** 組み込み（.env）。編集・削除させない */
+  builtin: boolean;
+  /** どこかで使われているか。削除の可否表示に使う */
+  in_use: boolean;
+}
+
+/**
+ * モデル参照の区切り。
+ * **`::` を選んだ理由**: ULIDにもモデルID（`anthropic/claude-opus-5` など）にも現れないので、
+ * 既存の値をそのまま「組み込みの接続先」として読める（移行が要らない）。
+ */
+export const MODEL_REF_SEP = '::';
+
+/** `<接続先ID>::<モデルID>` をほどく。区切りが無ければ組み込み（ID空文字） */
+export function parseModelRef(ref: string): { connectionId: string; modelId: string } {
+  const i = (ref ?? '').indexOf(MODEL_REF_SEP);
+  if (i === -1) return { connectionId: '', modelId: ref ?? '' };
+  return {
+    connectionId: ref.slice(0, i),
+    modelId: ref.slice(i + MODEL_REF_SEP.length),
+  };
+}
+
+/** 組み込み（接続先IDが空）のときは区切りを付けない。既存の値と同じ形に保つ */
+export function makeModelRef(connectionId: string, modelId: string): string {
+  return connectionId ? `${connectionId}${MODEL_REF_SEP}${modelId}` : modelId;
+}
+
 /** モデル選択に出す候補（チャットヘッダー・設定で共通利用） */
 export interface CuratedModel {
   id: string;
@@ -864,9 +916,12 @@ export const CURATED_MODELS: CuratedModel[] = [
 ];
 
 /** モデルIDを短い表示名にする。未知のIDはスラッシュ以降をそのまま出す */
-export function modelLabel(id: string): string {
-  if (!id) return '既定';
-  const found = CURATED_MODELS.find((m) => m.id === id);
-  const label = found ? found.label : id.split('/').pop()!;
+export function modelLabel(ref: string): string {
+  if (!ref) return '既定';
+  // 接続先IDは表示に出さない。モデル名だけを今までどおり短くする
+  const { modelId } = parseModelRef(ref);
+  if (!modelId) return '既定';
+  const found = CURATED_MODELS.find((m) => m.id === modelId);
+  const label = found ? found.label : modelId.split('/').pop()!;
   return label.replace(/^Claude\s+/i, '');
 }

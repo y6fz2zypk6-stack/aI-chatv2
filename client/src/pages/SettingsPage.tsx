@@ -1,20 +1,60 @@
 import { useEffect, useState } from 'react';
 import {
-  CURATED_MODELS,
   modelLabel,
+  parseModelRef,
   summarizeEveryMessages,
+  type ConnectionView,
   type Persona,
   type Settings,
 } from '@shared/types';
 import { api } from '../api';
-import { Field, SettingRow, Stepper, Toggle, TopBar } from '../components';
+import { Field, Modal, SettingRow, Stepper, Toggle, TopBar } from '../components';
+import { Icon } from '../icons';
+import { useModelGroups, type ModelGroup } from '../models';
 import { useApp } from '../store';
+
+/**
+ * モデルの選択肢を接続先ごとに `<optgroup>` で分ける（§6.6）。
+ * 値は `<接続先ID>::<モデルID>`。組み込みは区切り無しの素のモデルID。
+ */
+function ModelSelect({
+  value,
+  groups,
+  onChange,
+}: {
+  value: string;
+  groups: ModelGroup[];
+  onChange: (ref: string) => void;
+}) {
+  const known = groups.some((g) => g.options.some((o) => o.ref === value));
+  return (
+    <div className="select-wrap">
+      <select value={known ? value : ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">既定（.env の設定）</option>
+        {/* 一覧に無いIDを選んでいるとき（自由入力・消えたモデル）も見えるようにする */}
+        {!known && value && <option value={value}>{value}（一覧に無い指定）</option>}
+        {groups.map((g) => (
+          <optgroup key={g.connection.id || 'builtin'} label={g.connection.name}>
+            {g.options.map((o) => (
+              <option key={o.ref} value={o.ref}>
+                {o.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
   /** 画像モデルの候補。取れなくても手打ちできるので、失敗は黙って無視する */
   const [imageModels, setImageModels] = useState<string[]>([]);
+  /** 接続先（§6.6）。モデルの選択肢もここから組む */
+  const { groups, connections, reload } = useModelGroups();
+  const [editing, setEditing] = useState<Partial<ConnectionView> | null>(null);
   const toast = useApp((s) => s.toast);
 
   useEffect(() => {
@@ -39,32 +79,82 @@ export default function SettingsPage() {
     }
   };
 
-  const modelOptions = (
-    <>
-      <option value="">既定（.env の設定）</option>
-      {CURATED_MODELS.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.label}
-        </option>
-      ))}
-    </>
-  );
-
   return (
     <>
       <TopBar title="設定" back="/chats" />
       <div className="content form">
+        {/* 接続先（§6.6）。OpenAI互換のサービスへ振り分ける */}
+        <div className="section">
+          <div className="head">
+            <span className="kicker">Connections</span>
+            <div className="row">
+              <button
+                className="pill sm"
+                onClick={() => setEditing({ name: '', base_url: '', context_length: 0 })}
+              >
+                <Icon.plus size={14} />
+                追加
+              </button>
+            </div>
+          </div>
+          {connections.map((c) => (
+            <div key={c.id || 'builtin'} className="connrow">
+              <div className="body">
+                <b>{c.name}</b>
+                <span className="mono">{c.base_url}</span>
+                <div className="row wrap">
+                  {c.builtin && <span className="tag">.env</span>}
+                  <span className={`tag${c.has_key ? '' : ' mute'}`}>
+                    {c.has_key ? `キー ${c.key_hint}` : 'キー未設定'}
+                  </span>
+                  {c.context_length > 0 && (
+                    <span className="tag mute">コンテキスト {c.context_length.toLocaleString()}</span>
+                  )}
+                  {c.in_use && !c.builtin && <span className="tag mute">使用中</span>}
+                </div>
+              </div>
+              <div className="row">
+                <button
+                  className="pill sm"
+                  onClick={async () => {
+                    const r = await api.post<{ ok: boolean; message: string }>(
+                      `/connections/${c.id}/test`,
+                    );
+                    toast(r.message, !r.ok);
+                  }}
+                >
+                  試す
+                </button>
+                {!c.builtin && (
+                  <button className="icon-btn" onClick={() => setEditing({ ...c })} aria-label="編集">
+                    <Icon.pencil size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {groups.some((g) => g.failed) && (
+            <div className="warn-list">
+              <div>
+                モデル一覧を取れない接続先があります。`/models` を持たないサービスでは、
+                モデル名を直接入力してください
+              </div>
+            </div>
+          )}
+          <div className="empty-note" style={{ textAlign: 'left', padding: '10px 0 0' }}>
+            OpenAI互換のサービス（OpenAI直・DeepSeek直・Groq・手元のLM Studio など）を足せます。
+            <b>APIキーはこのサーバのデータベースに保存されます</b>（画面には末尾4文字しか出ません）。
+          </div>
+        </div>
+
         <div className="section">
           <span className="kicker">Generation</span>
           <Field label="既定モデル">
-            <div className="select-wrap">
-              <select
-                value={CURATED_MODELS.some((m) => m.id === settings.default_model) ? settings.default_model : ''}
-                onChange={(e) => void set({ default_model: e.target.value })}
-              >
-                {modelOptions}
-              </select>
-            </div>
+            <ModelSelect
+              value={settings.default_model}
+              groups={groups}
+              onChange={(v) => void set({ default_model: v })}
+            />
           </Field>
           <SettingRow label="最大トークン" hint="1回の応答の長さの上限（本文の生成だけに効きます）">
             <Stepper
@@ -159,14 +249,11 @@ export default function SettingsPage() {
             />
           </SettingRow>
           <Field label="要約・抽出のモデル">
-            <div className="select-wrap">
-              <select
-                value={CURATED_MODELS.some((m) => m.id === settings.utility_model) ? settings.utility_model : ''}
-                onChange={(e) => void set({ utility_model: e.target.value })}
-              >
-                {modelOptions}
-              </select>
-            </div>
+            <ModelSelect
+              value={settings.utility_model}
+              groups={groups}
+              onChange={(v) => void set({ utility_model: v })}
+            />
           </Field>
           <SettingRow
             label="要約・抽出の最大トークン"
@@ -377,8 +464,137 @@ export default function SettingsPage() {
           変更は自動で保存されます
           <br />
           現在の既定モデル: {modelLabel(settings.default_model)}
+          {parseModelRef(settings.default_model).connectionId && (
+            <>
+              {' / '}
+              {connections.find((c) => c.id === parseModelRef(settings.default_model).connectionId)
+                ?.name ?? '不明な接続先'}
+            </>
+          )}
         </div>
       </div>
+
+      {editing && (
+        <ConnectionEditor
+          value={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * 接続先の追加・編集。
+ * **APIキーの欄は常に空で開く。** サーバはキーを返さないし（不変条件43）、
+ * 触らなければ変わらない作りにしてある
+ */
+function ConnectionEditor({
+  value,
+  onClose,
+  onSaved,
+}: {
+  value: Partial<ConnectionView>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(value.name ?? '');
+  const [url, setUrl] = useState(value.base_url ?? '');
+  const [key, setKey] = useState('');
+  const [ctx, setCtx] = useState(value.context_length ?? 0);
+  const [busy, setBusy] = useState(false);
+  const toast = useApp((s) => s.toast);
+  const isNew = !value.id;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const body: Record<string, unknown> = { name, base_url: url, context_length: ctx };
+      // 空のままなら送らない（既存のキーを消さないため）
+      if (key.trim() || isNew) body.api_key = key.trim();
+      if (isNew) await api.post('/connections', body);
+      else await api.put(`/connections/${value.id}`, body);
+      onSaved();
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.del(`/connections/${value.id}`);
+      onSaved();
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={isNew ? '接続先を追加' : '接続先'}
+      onClose={onClose}
+      actions={
+        <>
+          {!isNew && (
+            <button className="pill sm danger" disabled={busy} onClick={() => void remove()}>
+              削除
+            </button>
+          )}
+          <button className="pill sm primary" disabled={busy || !name.trim() || !url.trim()} onClick={() => void save()}>
+            保存
+          </button>
+        </>
+      }
+    >
+      <Field label="名前">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="手元のLM Studio" autoFocus />
+      </Field>
+      <Field label="ベースURL">
+        <input
+          className="mono"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://api.deepseek.com/v1"
+        />
+        <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+          `/chat/completions` の<b>手前まで</b>を入れてください（末尾の `/v1` まで）
+        </div>
+      </Field>
+      <Field label={value.has_key ? 'APIキー（空のままなら変更しません）' : 'APIキー'}>
+        <input
+          className="mono"
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder={value.has_key ? value.key_hint : 'sk-…'}
+        />
+        {value.has_key && (
+          <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+            消したいときは、半角スペースだけ入れずに空のまま保存しても消えません。
+            キーを外すには別の値を入れ直してください
+          </div>
+        )}
+      </Field>
+      <Field label="コンテキスト長（0 なら全体設定を使う）">
+        <input
+          type="number"
+          value={ctx}
+          min={0}
+          onChange={(e) => setCtx(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+        />
+        <div className="empty-note" style={{ padding: '6px 0 0', textAlign: 'left' }}>
+          `/models` を返さないサービスでは、ここを入れないと既定の 32768 で見積もられます
+        </div>
+      </Field>
+    </Modal>
   );
 }

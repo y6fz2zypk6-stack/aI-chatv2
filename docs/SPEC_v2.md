@@ -653,6 +653,50 @@ assistant・候補・発火履歴・`chats.state` を書き終える前に次の
 **ロアだけは二段構え。** `lore_budget_chars`（既定12,000文字）で発火時に採用を絞ってから、
 この全体予算にも乗る。メモリーに専用予算は無い。
 
+### 6.6 接続先 — `server/src/llm/provider.ts`
+
+上流は OpenRouter 1本だったが、**OpenAI互換のサービスへ振り分けられる**ようにした。
+OpenAI直・DeepSeek直・Groq・手元の LM Studio / Ollama など。
+リクエストもSSEも今の形のまま通るので、**変換層は持たない**
+（Anthropic直・Google直は形が違うため対象外）。
+
+#### 組み込みと登録済み
+
+`.env` の OpenRouter を **ID 空文字の「組み込み」接続先**として扱い、DBには持たない。
+編集も削除もさせない。これで既存の環境は何も変えずに動く。
+
+登録した接続先は `connections` テーブル（名前・ベースURL・APIキー・コンテキスト長）。
+
+#### モデルの指し方 — `<接続先ID>::<モデルID>`
+
+`chat.model` / `settings.default_model` / `utility_model` / `image_model` は**文字列のまま**で、
+参照をこの形に符号化する（`parseModelRef` / `makeModelRef`、`shared/types.ts`）。
+
+**`::` を含まない値は組み込み。** `anthropic/claude-opus-5` のような既存の値がそのまま動く
+（移行が要らない）。`::` は ULID にもモデルIDにも現れないので曖昧さが無い。
+
+#### キーの扱い
+
+**キーはDBに平文で入るが、レスポンスには絶対に載せない**（不変条件43）。
+一覧・取得は `has_key` と `key_hint`（末尾4文字）だけを返す。
+更新でキーを省略したら現状維持、空文字を明示したときだけ消す。
+リポジトリ層は `ConnectionSecret` という別の型でキー入りの行を扱い、
+外へ出す前に必ず `toView` を通す。**DBのバックアップにキーが載る点は GUIDE にも書く。**
+
+#### 気をつける点
+
+- **`HTTP-Referer` / `X-Title` は組み込みのときだけ送る。** OpenRouter 固有のヘッダで、
+  他社には意味が無く、厳しいゲートウェイでは未知のヘッダを弾くことがある
+- **未知の接続先IDは投げる。** 黙って組み込みへ落とすと、消された接続先を指したチャットが
+  別のサービスへ本文を送ってしまう
+- **モデル一覧のキャッシュは接続先ごとに分ける。** 1本だと別のサービスの一覧を取り違える
+- **コンテキスト長は接続先の設定を最優先する。** `/models` を返さないサービスでは
+  `contextLengthOf` が黙って `fallback_context_length`（32768）に落ちるので、
+  8kのモデルを繋ぐと過積載になる
+- **使用中の接続先は消させない（409）。** どこで使われているかを添える
+- 「接続を試す」を必ず用意する。ベースURLの打ち間違いが一番多い失敗で、
+  生成のときに初めて分かるのでは遅い
+
 ---
 
 ## 7. ロアブック
@@ -1421,6 +1465,10 @@ weatherDayOf(cfg, time) = Math.floor((time - weather_rollover_min) / 1440)
 | POST | `/chats/:id/messages` | **SSE。** `content` / `regenerate` / `retry` / `autoContinue` のいずれか1つ |
 | POST | `/chats/:id/stop` | 生成中断 |
 | POST | `/chats/:id/extract/commit` | プレビューで見た候補をそのまま保存し、境界を進める |
+| GET | `/connections` | 接続先の一覧（§6.6）。**`api_key` を含まない** |
+| POST/PUT/DELETE | `/connections[/:id]` | 接続先の作成・更新・削除。使用中の削除は409 |
+| POST | `/connections/:id/test` | 疎通確認。失敗も本文で返す（例外にしない） |
+| GET | `/connections/:id/models` | その接続先のモデル一覧 |
 | GET | `/worlds/:id/memories/export` | 棚卸し用の書き出し（§10.4）。キャラ定義・ロア・全メモリー |
 | GET | `/worlds/:id/memories/review` | 同じ中身を画面表示用に（ダウンロードさせない） |
 | POST | `/worlds/:id/memory-plan/preview` | 整理案の確認。**何も書き換えない** |
@@ -1596,7 +1644,9 @@ GET    /images/models                   画像モデルの一覧（補完用）
 
 実装: `server/src/routes/auth.ts`
 
-- **APIキーはサーバだけが持つ。** ブラウザには一切渡さない
+- **APIキーはサーバだけが持つ。** ブラウザには一切渡さない。
+  組み込みの鍵は `.env`、追加した接続先の鍵は DB にあるが、
+  **どちらもレスポンスには載せない**（`has_key` と末尾4文字だけ。§6.6・不変条件43）
 - `APP_PASSWORD` 未設定時は認証が素通り（開発用）。**ただし公開構成では起動を拒否する（§16.2）**
 - セッションはメモリ上のMap（TTL 30日）。プロセス再起動で失効する
 - パスワード比較はHMACダイジェスト同士の `timingSafeEqual`（長さを揃えるため）
@@ -1709,6 +1759,7 @@ better-sqlite3 のトランザクションは同期実行なので、この中�
 | 7 | `memories.enabled`（既存行はすべて有効。挙動を変えない） |
 | 8-9 | スナップショットの本体・サムネイル（§21）。会話の自動タイトルの削除（§3.5） |
 | 10 | `chats.temporary_instruction` / `..._scope`（既存行は未設定・`once`。挙動を変えない） |
+| 11 | `connections`（接続先。既存のモデル指定は `::` を含まないので組み込みへ落ちる） |
 
 ### 18.1 規則
 
@@ -1770,6 +1821,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | `memoryDateSuite` | メモリーのゲーム内日付: 保存・相対表記・日付不明の扱い・書き出し取り込み |
 | `memoryAtSuite` | 抽出の日付が根拠の発話から採られること・壊れた `at` の落とし先・`at_seq` の引き直し |
 | `memReviewExportSuite` / `memReviewPreviewSuite` / `memReviewApplySuite` / `memReviewEndToEndSuite` | 棚卸し（§10.4）: 書き出しの中身と `injectable`・プレビューが何も書き換えないこと・幻のIDで400・削除と発火条件なしの警告・適用が1トランザクションであること・統合が実際の注入へ反映されること |
+| `connectionCrudSuite` / `connectionRoutingSuite` | 接続先（§6.6）: **`api_key` を返さないこと**・組み込みの保護・使用中の削除が409・**2つ目のモックへ実際に振り分くこと**（URLとキー）・`::` 無しの既存値が組み込みへ落ちること・接続先の `context_length` が予算に効くこと |
 | `oocSuite` / `oocScopeSuite` / `oocIsolationSuite` | 一時指示（§10.3）: 末尾systemの最後への注入・`once` の消し込み（停止/失敗/タイムアウト/再生成で残ること）・**要約/抽出/ロアへ混ざらないこと**・チャット間で漏れないこと |
 
 **新しい不変条件を作ったら、必ずそれを固定するテストを足す。**
@@ -1833,6 +1885,7 @@ OpenRouter互換のモックを立て、応答内容（経過分・場所・`set
 | 40 | メモリーの日付はサーバがDBから引く（クライアントの申告は `at_seq` だけ） | 画面から任意の日付を書き込める |
 | 41 | 一時指示は `chats` に持ち、メッセージとして保存しない | 要約・メモリー・ロアへ静かに昇格する |
 | 42 | 整理案の適用は1トランザクション。未知のIDは400で、黙って読み飛ばさない | 半分だけ適用され、理由も分からない |
+| 43 | APIキーはレスポンスに載せない（`has_key` と末尾4文字だけ） | 画面・ログ・バックアップ経由で鍵が漏れる |
 
 ---
 

@@ -1,4 +1,4 @@
-import { BASE, headers } from './openrouter.js';
+import { headersOf, resolveConnection, resolveModelRef } from './provider.js';
 
 /**
  * 画像生成（§21）。`openrouter.ts` と並ぶ薄い層。
@@ -38,12 +38,15 @@ export interface ImageOptions {
 }
 
 /**
- * OpenRouter の専用 Image API（`POST /images`）で1枚生成する。
+ * 専用 Image API（`POST /images`）で1枚生成する。
  *
  * 新しい画像モデルはこちらにのみ追加されるため、`/chat/completions` +
  * `modalities` の旧経路は使わない。
+ *
+ * モデルは本文生成と同じ `<接続先ID>::<モデルID>` の参照（§6.6）。
  */
 export async function generateImage(opts: ImageOptions): Promise<ImageResult> {
+  const { conn, modelId } = resolveModelRef(opts.model);
   const ctl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -53,7 +56,7 @@ export async function generateImage(opts: ImageOptions): Promise<ImageResult> {
 
   const refs = opts.references.filter((u) => !!u).slice(0, MAX_REFERENCES);
   const body: Record<string, unknown> = {
-    model: opts.model,
+    model: modelId,
     prompt: opts.prompt,
     aspect_ratio: opts.aspectRatio,
     quality: opts.quality,
@@ -67,9 +70,9 @@ export async function generateImage(opts: ImageOptions): Promise<ImageResult> {
   try {
     let res: Response;
     try {
-      res = await fetch(`${BASE}/images`, {
+      res = await fetch(`${conn.baseUrl}/images`, {
         method: 'POST',
-        headers: headers(),
+        headers: headersOf(conn),
         signal: ctl.signal,
         body: JSON.stringify(body),
       });
@@ -112,8 +115,9 @@ function timeoutError(): Error {
 }
 
 /** 画像モデルの一覧（設定画面の補完用）。失敗しても他の機能には影響させない */
-export async function listImageModels(): Promise<unknown> {
-  const res = await fetch(`${BASE}/images/models`, { headers: headers() });
-  if (!res.ok) throw new Error(`OpenRouter /images/models failed: ${res.status}`);
+export async function listImageModels(connectionId = ''): Promise<unknown> {
+  const conn = resolveConnection(connectionId);
+  const res = await fetch(`${conn.baseUrl}/images/models`, { headers: headersOf(conn) });
+  if (!res.ok) throw new Error(`${conn.name} の /images/models に失敗しました: ${res.status}`);
   return res.json();
 }
