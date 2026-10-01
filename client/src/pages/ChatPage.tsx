@@ -152,14 +152,27 @@ export default function ChatPage() {
   const autoplayCancel = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   /**
-   * 末尾に追従するか。末尾の近く（`NEAR_BOTTOM_PX` 以内）にいる間だけ真。
-   * 利用者が上へ動かすと偽になり、末尾の近くへ戻すと真に戻る。
+   * 末尾に追従するか。末尾の近く（`NEAR_BOTTOM_PX` 以内）にいると真になり、
+   * 利用者が上へ動かすと偽になる（末尾の近くへ戻すと真に戻る）。
    * 会話を開いたときと、自分で生成を始めたとき（送信・再試行・再生成）も真にする
    */
   const followTail = useRef(true);
+  const lastScrollTop = useRef(0);
   const onScroll = () => {
     const el = scrollRef.current;
-    if (el) followTail.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    if (!el) return;
+    const movedUp = el.scrollTop < lastScrollTop.current;
+    lastScrollTop.current = el.scrollTop;
+    // **追従をやめるのは、利用者が上へ動かしたときだけ。** 距離だけで決めると、
+    // 末尾へ寄せた直後に画像が読み込まれて伸びたとき、その寄せ自体のスクロールイベントを
+    // 「末尾から離れた」と誤って受け取り、追従をやめてしまう（開いた直後に画像1枚ぶん届かない）
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX) followTail.current = true;
+    else if (movedUp) followTail.current = false;
+  };
+  /** 追従中なら末尾へ寄せる。読み返している（追従していない）ときは何もしない */
+  const scrollToTail = () => {
+    const el = scrollRef.current;
+    if (el && followTail.current) el.scrollTop = el.scrollHeight;
   };
   const draftKey = `draft:${id}`;
 
@@ -205,10 +218,7 @@ export default function ChatPage() {
    * 生成が終わるまで過去の発言を読み返せない
    */
   const lastId = detail?.messages[detail.messages.length - 1]?.id;
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && followTail.current) el.scrollTop = el.scrollHeight;
-  }, [lastId, streaming]);
+  useEffect(scrollToTail, [lastId, streaming]);
 
   /**
    * 古い分を足したときの、足す直前の高さ。
@@ -574,6 +584,9 @@ export default function ChatPage() {
               }}
               // 一覧は縮小版なので、細部を見たいときの逃げ道を必ず用意する（§21.9）
               onOpenSnapshot={setViewing}
+              // 画像は読み込み後に高さが決まる。開いた直後の「末尾へ寄せる」はそれより先に
+              // 走るので、読み込めた時点で寄せ直す（追従中だけ）
+              onImageLoad={scrollToTail}
             />
           ))}
 
@@ -1270,6 +1283,7 @@ function MessageView(props: {
   onSnapshot: () => void;
   onDeleteSnapshot: (id: string) => void;
   onOpenSnapshot: (s: SnapshotMeta) => void;
+  onImageLoad: () => void;
 }) {
   const { message: m } = props;
   const utterances: Utterance[] = m.utterances.length
@@ -1383,6 +1397,7 @@ function MessageView(props: {
                 src={snapshotSrc(s)}
                 alt="この場面のスナップショット"
                 loading="lazy"
+                onLoad={props.onImageLoad}
                 onClick={() => props.onOpenSnapshot(s)}
               />
               <button
