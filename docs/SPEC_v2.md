@@ -1570,6 +1570,8 @@ event: notice  { kind: 'summary' | 'memory', ok, message }   ← done のあと�
 
 ## 15. UI
 
+> 画面ごとの構成・ラベル・デザイントークン・スクリーンショットは [DESIGN_SPEC.md](./DESIGN_SPEC.md)（UI設計書）にまとめてある。この章は設計上の方針と不変条件を扱う。
+
 ### 15.1 方針
 
 - **URLベースのルーティング。** リロードしても同じ画面に戻る
