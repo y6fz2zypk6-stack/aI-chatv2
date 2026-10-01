@@ -57,6 +57,9 @@ interface MemoryPreview {
   notes: string[];
 }
 
+/** 末尾からこれだけ（px）以内なら、利用者は「末尾にいる」とみなして追従する */
+const NEAR_BOTTOM_PX = 80;
+
 const FLAG_SOURCE: Record<ResolvedFlag['from'], string> = {
   chat: 'この会話で指定',
   scenario: 'シナリオの設定',
@@ -148,6 +151,16 @@ export default function ChatPage() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const autoplayCancel = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /**
+   * 末尾に追従するか。末尾の近く（`NEAR_BOTTOM_PX` 以内）にいる間だけ真。
+   * 利用者が上へ動かすと偽になり、末尾の近くへ戻すと真に戻る。
+   * 会話を開いたときと、自分で生成を始めたとき（送信・再試行・再生成）も真にする
+   */
+  const followTail = useRef(true);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (el) followTail.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  };
   const draftKey = `draft:${id}`;
 
   const load = useCallback(async () => {
@@ -174,6 +187,7 @@ export default function ChatPage() {
   }, [id, toast]);
 
   useEffect(() => {
+    followTail.current = true; // 別の会話へ移っても、開いたときは末尾から読む
     void load();
     setDraft(localStorage.getItem(`draft:${id}`) ?? '');
   }, [id, load]);
@@ -184,12 +198,16 @@ export default function ChatPage() {
 
   /**
    * 末尾へ寄せる。**依存は「末尾のID」で、件数ではない。**
-   * 件数にすると「さかのぼる」で古い分を足しただけで一番下へ飛んでしまう
+   * 件数にすると「さかのぼる」で古い分を足しただけで一番下へ飛んでしまう。
+   *
+   * `streaming` は生成中の文字列そのもので、差分が届くたびに変わる。
+   * **利用者が上へ動かしていたら寄せない**（`followTail`）。無条件に寄せると、
+   * 生成が終わるまで過去の発言を読み返せない
    */
   const lastId = detail?.messages[detail.messages.length - 1]?.id;
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && followTail.current) el.scrollTop = el.scrollHeight;
   }, [lastId, streaming]);
 
   /**
@@ -252,6 +270,9 @@ export default function ChatPage() {
   const titleName = chatDisplayName(chat.title, charOf(chat.participant_ids[0])?.name);
 
   const generate = (body: Record<string, unknown>): Promise<DonePayload | null> => {
+    // 利用者が押した生成（送信・再試行・再生成）は末尾へ寄せる。
+    // オートプレイは、途中で読み返している人を毎回引き戻さない
+    if (!body.autoContinue) followTail.current = true;
     setBusy(true);
     setStreaming('');
     setSheetOpen(false);
@@ -500,7 +521,7 @@ export default function ChatPage() {
         <Icon.pencil size={14} />
       </div>
 
-      <div className="content" ref={scrollRef} style={{ padding: '14px 0' }}>
+      <div className="content" ref={scrollRef} onScroll={onScroll} style={{ padding: '14px 0' }}>
         <div className="messages">
           {/* 初回は末尾40件だけ読む（§5.9）。画像付きの長い会話を一度に読まないため */}
           {detail.hasMore && (
