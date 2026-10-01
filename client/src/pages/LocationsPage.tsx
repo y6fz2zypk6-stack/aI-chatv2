@@ -29,7 +29,13 @@ function TimeField({
   onChange: (v: number | null) => void;
 }) {
   const [text, setText] = useState(formatHhmm(value));
-  useEffect(() => setText(formatHhmm(value)), [value]);
+  // **打っている途中の文字を、正規形で上書きしない。** 外から値が変わったとき
+  // （解釈した結果が今の値と違うとき）だけ入れ直す。
+  // 毎回入れ直すと、`1` と打った時点で `1:00` に書き換わり、続けて `6` を打つと
+  // `1:006`（解釈できない）→ 空欄になって、`16:30` を1文字ずつ打てない
+  useEffect(() => {
+    setText((cur) => (parseHhmm(cur) === value ? cur : formatHhmm(value)));
+  }, [value]);
   const parsed = parseHhmm(text);
   const invalid = text.trim() !== '' && parsed === null;
   return (
