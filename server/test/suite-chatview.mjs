@@ -96,6 +96,71 @@ export async function paginationSuite(w) {
 }
 
 // ===========================================================================
+// ストリーミングは圧縮せずに流す（§13.4・不変条件44）
+// ===========================================================================
+/**
+ * `text/event-stream` は mime-db に載っておらず、`compression` の既定の判定
+ * （`text/*` は圧縮できる）に当たって gzip が掛かる。gzip は内部に溜め込むので、
+ * 生成が終わるまで1文字も届かない。画面からは「キャレットだけが出続けて、
+ * 最後にまとめて現れる」ように見える。
+ *
+ * ほかのテストは終わりまで読んでから中身を見るので、これが壊れても気づけない。
+ * ここでは**届く時刻**で見る。
+ */
+export async function streamingSuite(w) {
+  suite('ストリーミング: 圧縮されず、生成中に少しずつ届く');
+
+  const { chat } = await newChat(w);
+  // 1文字ずつ約25msで流れる。全体で3秒前後かかる
+  setQueue([
+    {
+      text: reply({ char: `「${'あ'.repeat(60)}」`, elapsed: 10, location: w.shop }),
+      gapMs: 25,
+    },
+  ]);
+
+  const res = await fetch(`${BASE}/chats/${chat.id}/messages`, {
+    method: 'POST',
+    // ブラウザと同じく、圧縮を受け付ける。受け付けない相手では何も起きないので意味が無い
+    headers: { 'Content-Type': 'application/json', 'Accept-Encoding': 'gzip' },
+    body: JSON.stringify({ content: '案内して' }),
+  });
+  check('SSEの応答は 200', res.status === 200, String(res.status));
+  check('SSEの応答に content-encoding が付かない（圧縮しない）',
+    !res.headers.get('content-encoding'), res.headers.get('content-encoding') ?? '（なし）');
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let firstDelta = 0;
+  let doneAt = 0;
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) break;
+    buf += dec.decode(r.value, { stream: true });
+    const now = Date.now();
+    if (!firstDelta && buf.includes('event: delta')) firstDelta = now;
+    if (!doneAt && buf.includes('event: done')) doneAt = now;
+  }
+  check('最初の delta と done の両方を受け取る', firstDelta > 0 && doneAt > 0,
+    `delta=${firstDelta > 0} / done=${doneAt > 0}`);
+  // 溜め込まれていると、すべてが最後にまとめて届くので差はほぼ 0 になる。
+  // モックの待ちは下限なので、遅い環境でも差は広がる一方で、誤って落ちない
+  check('最初の delta から done まで1秒以上空く（生成中に届いている）',
+    doneAt - firstDelta >= 1000, `${doneAt - firstDelta}ms`);
+
+  // 圧縮を全体で切っていないこと。通常のJSONは今までどおり gzip で返る
+  // （1KB未満は圧縮されないので、会話をいくつも持つ世界の書き出しを使う）
+  const big = await fetch(`${BASE}/worlds/${w.world.id}/export`, {
+    headers: { 'Accept-Encoding': 'gzip' },
+  });
+  const size = (await big.text()).length;
+  check('通常のJSON応答は gzip で返る（圧縮を全体で切っていない）',
+    big.headers.get('content-encoding') === 'gzip',
+    `${big.headers.get('content-encoding') ?? '（なし）'} / ${size}文字`);
+}
+
+// ===========================================================================
 // 会話の名前（§3.5）
 // ===========================================================================
 export async function chatTitleSuite(w) {

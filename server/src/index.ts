@@ -50,7 +50,18 @@ if (trustProxy) {
   app.set('trust proxy', Number.isFinite(n) && trustProxy.trim() !== '' ? n : trustProxy);
 }
 
-app.use(compression());
+// **ストリーミング（SSE）は圧縮しない。** `text/event-stream` は mime-db に載っておらず、
+// `compression` の既定の判定（`text/*` は圧縮できる）に当たってしまう。gzip は書き込みを
+// 内部に溜め込むので、生成が終わるまで1文字も届かなくなる（画面ではキャレットだけが出続け、
+// 最後にまとめて現れる）。ほかの応答は今までどおり圧縮する
+app.use(
+  compression({
+    filter: (req, res) => {
+      if (String(res.getHeader('Content-Type') ?? '').startsWith('text/event-stream')) return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
 app.use(cookieParser());
 
 // ---- JSONボディの上限（§16.3） ----
