@@ -899,15 +899,15 @@ export function summarizeEveryMessages(interval: number): number {
 }
 
 export const CURATED_MODELS: CuratedModel[] = [
-  { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
+  { id: 'anthropic/claude-opus-5.5', label: 'Claude Opus 5.5' },
   { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },
-  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
-  { id: 'anthropic/claude-fable-5', label: 'Claude Fable 5' },
+  { id: 'anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5' },
+  { id: 'anthropic/claude-fable-5.1', label: 'Claude Fable 5.1' },
   { id: 'openai/gpt-6-astra', label: 'GPT-6 Astra' },
-  { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+  { id: 'openai/gpt-6.1-sol', label: 'GPT-6.1 Sol' },
   { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna' },
-  { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
-  { id: 'x-ai/grok-4.6', label: 'Grok 4.6' },
+  { id: 'google/gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+  { id: 'x-ai/grok-4.7', label: 'Grok 4.7' },
   { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   { id: 'moonshotai/kimi-k3', label: 'Kimi K3' },
   { id: 'z-ai/glm-5.3', label: 'GLM-5.3' },

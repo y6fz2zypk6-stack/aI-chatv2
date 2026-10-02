@@ -40,8 +40,8 @@ export const DEFAULT_SETTINGS: Settings = {
   max_tokens: 2048,
   context_safety_tokens: 1024,
   fallback_context_length: 32768,
-  default_model: process.env.DEFAULT_MODEL || 'anthropic/claude-opus-5',
-  utility_model: process.env.UTILITY_MODEL || 'anthropic/claude-sonnet-5',
+  default_model: process.env.DEFAULT_MODEL || 'anthropic/claude-opus-5.5',
+  utility_model: process.env.UTILITY_MODEL || 'anthropic/claude-sonnet-5.5',
   // 要約・抽出の出力上限。本文生成の max_tokens とは別枠。
   // 推論を行うモデルは考えている分もここから引かれるので、2048だと切れることがある
   utility_max_tokens: 8192,

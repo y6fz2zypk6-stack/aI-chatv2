@@ -144,7 +144,7 @@ sudo ufw deny 3000
 | `SESSION_SECRET` | ログインパスワードの比較に使うHMAC鍵（ランダムな長い文字列）。未設定なら `APP_PASSWORD` を代用。セッションIDの署名には使いません |
 | `COOKIE_SECURE` | 認証Cookieに `Secure` を付ける。未設定なら `APP_URL` が https:// のときだけ有効 |
 | `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
-| `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5` / `anthropic/claude-sonnet-5` |
+| `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5.5` / `anthropic/claude-sonnet-5.5` |
 | `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1`。公開IPやLANのアドレスを書いても「絞った」ことにはなりません（パスワード無しなら起動を中止します） |
 | `ALLOW_UNAUTHENTICATED` | `1` のときだけ、無認証＋全インターフェースでの起動を許可する |
 | `STREAM_CONNECT_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` | ストリームの待ち時間の上限（既定60000ミリ秒ずつ）。上流が黙り込んだときに生成を打ち切る |
