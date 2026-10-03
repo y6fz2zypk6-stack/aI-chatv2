@@ -17,6 +17,7 @@ import {
   type Utterance,
 } from '@shared/types';
 import { TEMPORARY_INSTRUCTION_MAX_CHARS } from '@shared/types';
+import { parseUtterances, type ParseContext } from '@shared/utterances';
 import { api, streamGenerate, type DonePayload } from '../api';
 import { useModelGroups } from '../models';
 import { Avatar, Field, makeThumb, Modal, TriToggle } from '../components';
@@ -57,6 +58,30 @@ interface MemoryPreview {
   notes: string[];
 }
 
+/**
+ * 生成中の本文を、完成時と同じ規則（shared/utterances.ts）で話者ごとに分ける。
+ *
+ * **末尾の書きかけの行が話者ラベルの途中かもしれないときは、その行だけ出さない。**
+ * 「ミナ」まで届いた時点では「ミナ: 」になるか分からず、そのまま分けると
+ * 一瞬だけ地の文として出て、次の文字で吹き出しに変わる（ちらつく）。
+ */
+function streamingUtterances(text: string, ctx: ParseContext): Utterance[] {
+  const nl = text.lastIndexOf('\n');
+  const tail = text.slice(nl + 1);
+  const labels = [
+    ...ctx.participants.flatMap((c) => [c.name, ...c.aliases]),
+    ...ctx.npcPool.flatMap((c) => [c.name, ...c.aliases]),
+    ctx.personaName,
+    'ナレーター',
+  ].filter(Boolean);
+  const maybeLabel =
+    tail !== '' &&
+    !/[:：]/.test(tail) &&
+    (labels.some((l) => l.startsWith(tail)) || 'NPC['.startsWith(tail) || /^NPC\[[^\]]*\]?$/.test(tail));
+  const shown = maybeLabel ? text.slice(0, nl + 1) : text;
+  return shown.trim() ? parseUtterances(shown, ctx).utterances : [];
+}
+
 /** 末尾からこれだけ（px）以内なら、利用者は「末尾にいる」とみなして追従する */
 const NEAR_BOTTOM_PX = 80;
 
@@ -92,7 +117,7 @@ export const snapshotSrc = (s: SnapshotMeta): string =>
  * **分割の規則は `splitDialogue`（shared）にある。** スナップショットの
  * プロンプトが拾う地の文と同じ規則を使うため（§21.2）。
  */
-function BubbleText({ text }: { text: string }) {
+function BubbleText({ text, caret }: { text: string; caret?: boolean }) {
   const parts = splitDialogue(text);
   // 「」だけの発話など、分割して何も残らなかったときは元の文をそのまま出す
   if (!parts.length) parts.push({ dlg: true, text: stripMarks(text).trim() });
@@ -101,6 +126,8 @@ function BubbleText({ text }: { text: string }) {
       {parts.map((p, i) => (
         <span key={i} className={p.dlg ? 'dlg' : 'act'}>
           {p.text}
+          {/* 生成中は、最後の文の末尾にキャレットを付ける */}
+          {caret && i === parts.length - 1 && <span className="caret" />}
         </span>
       ))}
     </>
@@ -140,6 +167,13 @@ export default function ChatPage() {
   const [editText, setEditText] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  /** 右上の ⋯（この会話のメニュー）。会話の管理はこちらに置く */
+  const [chatMenu, setChatMenu] = useState(false);
+  /**
+   * 送った直後の発言。サーバに保存された発言が読み直されるまでの間だけ、末尾に出す。
+   * 送信したときだけ使う（再試行・再生成・オートプレイでは出さない）
+   */
+  const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [showChatSettings, setShowChatSettings] = useState(false);
   const [memPreview, setMemPreview] = useState<MemoryPreview | null>(null);
   const [memLoading, setMemLoading] = useState(false);
@@ -218,7 +252,19 @@ export default function ChatPage() {
    * 生成が終わるまで過去の発言を読み返せない
    */
   const lastId = detail?.messages[detail.messages.length - 1]?.id;
-  useEffect(scrollToTail, [lastId, streaming]);
+  useEffect(scrollToTail, [lastId, streaming, pendingUser]);
+
+  // ＋のシートと ⋯ のメニューは Esc で閉じる
+  useEffect(() => {
+    if (!sheetOpen && !chatMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setSheetOpen(false);
+      setChatMenu(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sheetOpen, chatMenu]);
 
   /**
    * 古い分を足したときの、足す直前の高さ。
@@ -292,7 +338,7 @@ export default function ChatPage() {
         onDone: async (p) => {
           setStreaming(null);
           setBusy(false);
-          void load();
+          void load().then(() => setPendingUser(null));
           if (p.generationStatus === 'stopped') toast('生成を停止しました（ここまでを保存）');
           if (p.fenceMissingStreak >= 3) {
             toast('ステート差分が3回連続で欠落しています。モデルの相性を確認してください', true);
@@ -323,7 +369,7 @@ export default function ChatPage() {
           setStreaming(null);
           setBusy(false);
           toast(status === 409 ? '他の端末で生成中です' : message, true);
-          void load();
+          void load().then(() => setPendingUser(null));
           resolve(null);
         },
         // 裏で走った要約・抽出の結果。done のあとに届くので、resolve は待たせない
@@ -380,6 +426,7 @@ export default function ChatPage() {
     if (!content || busy) return;
     setDraft('');
     localStorage.removeItem(draftKey);
+    setPendingUser(content);
     void generate({ content });
   };
 
@@ -391,7 +438,7 @@ export default function ChatPage() {
   // 誤操作を避けるため、削除・アーカイブは一覧ではなくこの会話を開いた状態からのみ行う
   const toggleArchive = async () => {
     const next = chat.archived ? 0 : 1;
-    setSheetOpen(false);
+    setChatMenu(false);
     try {
       await api.put(`/chats/${id}`, { archived: next });
       if (next) {
@@ -408,8 +455,8 @@ export default function ChatPage() {
   };
 
   const removeChat = async () => {
+    setChatMenu(false);
     if (!(await ask({ title: `「${titleName}」を削除しますか？`, body: 'メッセージも全て消えます。元に戻せません。', okLabel: '削除する', danger: true }))) return;
-    setSheetOpen(false);
     try {
       await api.del(`/chats/${id}`);
       navigate('/chats');
@@ -496,6 +543,14 @@ export default function ChatPage() {
   };
 
   const effModel = chat.model || defaultModel;
+
+  // 生成中の本文を話者に分けるための文脈（サーバの組み立てと同じ: 参加キャラ／準レギュラー／ペルソナ名）
+  const parseCtx: ParseContext = {
+    participants: characters.filter((c) => chat.participant_ids.includes(c.id)),
+    npcPool: characters.filter((c) => c.is_npc_pool === 1 && !chat.participant_ids.includes(c.id)),
+    personaName: persona?.name ?? '',
+  };
+  const pad2 = (n: number) => String(n).padStart(2, '0');
   const canRetry = last?.role === 'user' && !busy;
 
   return (
@@ -506,37 +561,49 @@ export default function ChatPage() {
         </button>
         <div className="title">
           <b>{titleName}</b>
-          <span className="sub">{chat.narrator_enabled ? 'narrator on' : 'narrator off'}</span>
+          <span className="sub">{chat.narrator_enabled ? 'ナレーターあり' : 'ナレーターなし'}</span>
         </div>
         <button className="model-pill" onClick={() => setModelMenu(true)}>
           <span className="lbl">{modelLabel(effModel)}</span>
           <Icon.chevD />
+        </button>
+        <button className="icon-btn chat-menu-btn" onClick={() => setChatMenu(true)} aria-label="この会話のメニュー">
+          <Icon.dots />
         </button>
       </header>
 
       {/* ステートバー（§10.2）: タップでステート編集へ */}
       <div className="state-bar" onClick={() => navigate(`/chats/${id}/state`)}>
         {/* 日付・曜日・時刻。季節はプロンプトの「現在の状況」側に出るのでここでは省く */}
-        <span>
-          {gameTime.month}/{gameTime.day} {gameTime.weekday}{' '}
-          {String(gameTime.hh).padStart(2, '0')}:{String(gameTime.mm).padStart(2, '0')}
+        <span className="when">
+          {gameTime.month}/{gameTime.day}（{gameTime.weekday}）{pad2(gameTime.hh)}:{pad2(gameTime.mm)}
         </span>
+        <span className="dot" aria-hidden="true">・</span>
         <span className="loc">{locName}</span>
-        <span>{chat.state.weather}</span>
+        {chat.state.weather && (
+          <>
+            <span className="dot" aria-hidden="true">・</span>
+            <span>{chat.state.weather}</span>
+          </>
+        )}
         <span className="spacer" />
         {bigJumpH > 24 && <span className="tag">+{bigJumpH}H</span>}
         {/* 時間を進める。ステート編集と違い、天候の抽選とイベント判定が走る */}
         <button
           className="icon-btn"
           title="場面を進める"
+          aria-label="場面を進める"
           onClick={(e) => {
             e.stopPropagation();
             setAdvanceOpen(true);
           }}
         >
-          <Icon.clock size={14} />
+          <Icon.clock size={20} />
         </button>
-        <Icon.pencil size={14} />
+        {/* バー全体がステート編集へのリンク */}
+        <span className="go" aria-hidden="true">
+          <Icon.chevR size={14} />
+        </span>
       </div>
 
       <div className="content" ref={scrollRef} onScroll={onScroll} style={{ padding: '14px 0' }}>
@@ -598,23 +665,27 @@ export default function ChatPage() {
             />
           ))}
 
+          {/* 送った直後の発言。保存された発言が読み直されるまでの間だけ出す */}
+          {pendingUser !== null && (
+            <MessageView
+              message={pseudoMessage('pending-user', 'user', [
+                { speaker: 'user', name: persona?.name ?? '', text: pendingUser },
+              ])}
+              {...STREAMING_VIEW}
+              charOf={charOf}
+              persona={persona}
+            />
+          )}
+
+          {/* 生成中の本文。完成時と同じ規則で話者ごとに分けて出す */}
           {streaming !== null && (
-            <div className="turn-row char">
-              <div className="turn-body">
-                <span className="turn-av">
-                  <Icon.sparkle size={16} />
-                </span>
-                <div className="turn-col">
-                  <div className="bubble">
-                    <span className="dlg">
-                      {streaming}
-                      <span className="caret" />
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="msg-side" />
-            </div>
+            <MessageView
+              message={pseudoMessage('streaming', 'assistant', streamingUtterances(streaming, parseCtx))}
+              {...STREAMING_VIEW}
+              streaming
+              charOf={charOf}
+              persona={persona}
+            />
           )}
 
           {canRetry && (
@@ -660,11 +731,12 @@ export default function ChatPage() {
         </div>
       )}
 
-      <div className={`composer${sheetOpen ? ' sheet-open' : ''}`}>
+      <div className="composer">
         <button
           className={`plus${sheetOpen ? ' open' : ''}`}
           onClick={() => setSheetOpen(!sheetOpen)}
-          aria-label="メニュー"
+          aria-label="物語を進めるメニュー"
+          aria-expanded={sheetOpen}
         >
           <Icon.plus />
         </button>
@@ -689,63 +761,144 @@ export default function ChatPage() {
         )}
       </div>
 
+      {/* ＋のシート: 物語を進める操作だけ。会話を押し上げず、上に重ねる */}
       {sheetOpen && (
-        <div className="sheet">
-          <button
-            className="srow"
-            onClick={() => void runAutoplay()}
-            disabled={autoplaying || last?.role !== 'assistant'}
+        <div className="sheet-overlay" onClick={() => setSheetOpen(false)}>
+          <div
+            className="sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sheet-title"
+            onClick={(e) => e.stopPropagation()}
           >
-            <span className="ic">
-              <Icon.forward />
-            </span>
-            <span className="txt">
-              <b>オートプレイ</b>
-              <span>ユーザー入力なしで場面を進める</span>
-            </span>
-          </button>
-          <button className="srow" onClick={() => { setSheetOpen(false); navigate(`/chats/${id}/summary`); }}>
-            <span className="ic">
-              <Icon.scroll />
-            </span>
-            <span className="txt">
-              <b>あらすじ</b>
-              <span>これまでの出来事を確認・編集</span>
-            </span>
-            <span className="chev">
-              <Icon.chevR size={13} />
-            </span>
-          </button>
-          <button
-            className="srow"
-            onClick={() => {
-              setSheetOpen(false);
-              setOocText(chat.temporary_instruction);
-              setOocScope(chat.temporary_instruction_scope);
-              setOocOpen(true);
-            }}
-          >
-            <span className="ic">
-              <Icon.sparkle />
-            </span>
-            <span className="txt">
-              <b>一時指示</b>
-              <span>その場の描写・状態を補正する（会話には残りません）</span>
-            </span>
-          </button>
-          <button className="srow" onClick={() => { setSheetOpen(false); setShowPreview(true); }}>
-            <span className="ic">
-              <Icon.search />
-            </span>
-            <span className="txt">
-              <b>プロンプトを確認</b>
-              <span>組み立て結果とロアの発火状況</span>
-            </span>
-          </button>
-          <button
-            className="srow"
-            onClick={() => {
-              setSheetOpen(false);
+            <span className="grabber" aria-hidden="true" />
+            <div className="sheet-head">
+              <h3 id="sheet-title">物語を進める</h3>
+              <button className="icon-btn" onClick={() => setSheetOpen(false)} aria-label="閉じる">
+                <Icon.x size={16} />
+              </button>
+            </div>
+            <button
+              className="srow"
+              onClick={() => {
+                setSheetOpen(false);
+                void runAutoplay();
+              }}
+              disabled={autoplaying || busy || last?.role !== 'assistant'}
+            >
+              <span className="ic">
+                <Icon.forward />
+              </span>
+              <span className="txt">
+                <b>オートプレイ</b>
+                <span>ユーザー入力なしで場面を進める</span>
+              </span>
+            </button>
+            <button
+              className="srow"
+              onClick={() => {
+                setSheetOpen(false);
+                setAdvanceOpen(true);
+              }}
+            >
+              <span className="ic">
+                <Icon.clock />
+              </span>
+              <span className="txt">
+                <b>場面を進める</b>
+                <span>時間を進める。日付が変われば天候とイベントも動く</span>
+              </span>
+            </button>
+            <button
+              className="srow"
+              onClick={() => {
+                setSheetOpen(false);
+                setOocText(chat.temporary_instruction);
+                setOocScope(chat.temporary_instruction_scope);
+                setOocOpen(true);
+              }}
+            >
+              <span className="ic">
+                <Icon.sparkle />
+              </span>
+              <span className="txt">
+                <b>一時指示</b>
+                <span>その場の描写・状態を補正する（会話には残りません）</span>
+              </span>
+            </button>
+            <button
+              className="srow"
+              onClick={() => {
+                setSheetOpen(false);
+                navigate(`/chats/${id}/summary`);
+              }}
+            >
+              <span className="ic">
+                <Icon.scroll />
+              </span>
+              <span className="txt">
+                <b>あらすじ</b>
+                <span>これまでの出来事を確認・編集</span>
+              </span>
+              <span className="chev">
+                <Icon.chevR size={13} />
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 右上の ⋯: この会話の管理 */}
+      {chatMenu && (
+        <>
+          <div className="menu-backdrop" onClick={() => setChatMenu(false)} />
+          <div className="popover chat-menu" role="menu" aria-label="この会話のメニュー">
+            <button
+              className="prow"
+              role="menuitem"
+              onClick={() => {
+                setChatMenu(false);
+                setShowChatSettings(true);
+              }}
+            >
+              <span className="ic">
+                <Icon.gear size={17} />
+              </span>
+              <span>この会話の設定</span>
+            </button>
+            <button
+              className="prow"
+              role="menuitem"
+              onClick={() => {
+                setChatMenu(false);
+                setRenameText(chat.title);
+                setRenaming(true);
+              }}
+            >
+              <span className="ic">
+                <Icon.pencil size={17} />
+              </span>
+              <span>会話の名前を変える</span>
+            </button>
+            <div className="pgroup">確認する</div>
+            <button
+              className="prow"
+              role="menuitem"
+              onClick={() => {
+                setChatMenu(false);
+                setShowPreview(true);
+              }}
+            >
+              <span className="ic">
+                <Icon.search size={17} />
+              </span>
+              <span>プロンプトを確認</span>
+            </button>
+            <button
+              className="prow"
+              role="menuitem"
+              onClick={() => {
+                setChatMenu(false);
               setMemLoading(true);
               setMemPreview(null);
               void api
@@ -753,69 +906,40 @@ export default function ChatPage() {
                 .then(setMemPreview)
                 .catch((err) => toast((err as Error).message, true))
                 .finally(() => setMemLoading(false));
-            }}
-          >
-            <span className="ic">
-              <Icon.brain size={19} />
-            </span>
-            <span className="txt">
-              <b>メモリー候補を確認</b>
-              <span>保存せずに、抽出される内容と理由を見る</span>
-            </span>
-          </button>
-          <button
-            className="srow"
-            onClick={() => {
-              setSheetOpen(false);
-              setRenameText(chat.title);
-              setRenaming(true);
-            }}
-          >
-            <span className="ic">
-              <Icon.pencil />
-            </span>
-            <span className="txt">
-              <b>会話の名前を変える</b>
-              <span>一覧とアルバムでの呼び名</span>
-            </span>
-          </button>
-          <button className="srow" onClick={() => { setSheetOpen(false); setShowChatSettings(true); }}>
-            <span className="ic">
-              <Icon.gear />
-            </span>
-            <span className="txt">
-              <b>この会話の設定</b>
-              <span>イベントと進行フラグの有効・無効</span>
-            </span>
-          </button>
-          <a className="srow" href={`/api/chats/${id}/export`} download onClick={() => setSheetOpen(false)}>
-            <span className="ic">
-              <Icon.download />
-            </span>
-            <span className="txt">
-              <b>会話を書き出す</b>
-              <span>候補を含むJSON</span>
-            </span>
-          </a>
-          <button className="srow" onClick={() => void toggleArchive()}>
-            <span className="ic">
-              <Icon.archive />
-            </span>
-            <span className="txt">
-              <b>{chat.archived ? 'アーカイブから戻す' : 'アーカイブする'}</b>
-              <span>{chat.archived ? '通常の一覧に表示する' : '一覧から隠す（消えません）'}</span>
-            </span>
-          </button>
-          <button className="srow danger" onClick={() => void removeChat()}>
-            <span className="ic">
-              <Icon.trash />
-            </span>
-            <span className="txt">
-              <b>この会話を削除する</b>
-              <span>メッセージも全て消えます。元に戻せません</span>
-            </span>
-          </button>
-        </div>
+              }}
+            >
+              <span className="ic">
+                <Icon.brain size={17} />
+              </span>
+              <span>メモリー候補を確認</span>
+            </button>
+            <div className="psep" />
+            <a
+              className="prow"
+              role="menuitem"
+              href={`/api/chats/${id}/export`}
+              download
+              onClick={() => setChatMenu(false)}
+            >
+              <span className="ic">
+                <Icon.download size={17} />
+              </span>
+              <span>会話を書き出す</span>
+            </a>
+            <button className="prow" role="menuitem" onClick={() => void toggleArchive()}>
+              <span className="ic">
+                <Icon.archive size={17} />
+              </span>
+              <span>{chat.archived ? 'アーカイブから戻す' : 'アーカイブする'}</span>
+            </button>
+            <button className="prow danger" role="menuitem" onClick={() => void removeChat()}>
+              <span className="ic">
+                <Icon.trash size={17} />
+              </span>
+              <span>この会話を削除する</span>
+            </button>
+          </div>
+        </>
       )}
 
       {(memLoading || memPreview) && (
@@ -1272,8 +1396,51 @@ function AdvanceModal(props: {
 
 // ---- 発話単位の描画（1発話 = 1バブル、narratorはハート付きの独立行） ----
 
+const noop = () => {};
+
+/**
+ * 仮の発言（送った直後のユーザー発言・生成中の応答）の表示設定。
+ * まだ保存されていないので、⋯ や候補の切替といった操作は出さない
+ */
+const STREAMING_VIEW = {
+  isLast: false,
+  busy: true,
+  placeholder: true,
+  menuOpen: false,
+  onToggleMenu: noop,
+  onDelete: noop,
+  onCopy: noop,
+  onEdit: noop,
+  onFork: noop,
+  onRegenerate: noop,
+  onSwitchVariant: noop,
+  snapshots: [] as SnapshotMeta[],
+  canSnapshot: false,
+  onSnapshot: noop,
+  onDeleteSnapshot: noop,
+  onOpenSnapshot: noop,
+  onImageLoad: noop,
+};
+
+/** 仮の発言を、保存済みのメッセージと同じ部品で描くための入れ物 */
+function pseudoMessage(id: string, role: Message['role'], utterances: Utterance[]): Message {
+  return {
+    id,
+    role,
+    kind: 'normal',
+    content: '',
+    utterances,
+    active_variant: 0,
+    variant_count: 1,
+  } as unknown as Message;
+}
+
 function MessageView(props: {
   message: Message;
+  /** 保存前の仮の発言。操作（⋯・候補の切替）を出さない */
+  placeholder?: boolean;
+  /** 生成中。最後の吹き出しの末尾にキャレットを付ける */
+  streaming?: boolean;
   isLast: boolean;
   busy: boolean;
   charOf: (cid?: string) => Character | undefined;
@@ -1294,6 +1461,18 @@ function MessageView(props: {
   onImageLoad: () => void;
 }) {
   const { message: m } = props;
+  // 生成が始まった直後（まだ1行目の話者が分からない）は、キャレットだけを出す
+  if (props.streaming && m.utterances.length === 0) {
+    return (
+      <div className="narr-row typing" aria-label="生成中">
+        <div className="narr-gutter" />
+        <div className="narr-text">
+          <span className="caret" />
+        </div>
+        <div className="msg-side" />
+      </div>
+    );
+  }
   const utterances: Utterance[] = m.utterances.length
     ? m.utterances
     : [{ speaker: m.role === 'user' ? 'user' : 'narrator', name: '', text: m.content }];
@@ -1302,7 +1481,9 @@ function MessageView(props: {
 
   // 操作列は最後の行にだけ付ける（1メッセージ＝複数吹き出しでも操作は1つ）。
   // それ以外の行にも空の列を置き、全ての吹き出し幅を揃える
-  const side = (
+  const side = props.placeholder ? (
+    <div className="msg-side" />
+  ) : (
     <div className="msg-side">
       {showSwipe && (
         <div className="swipe">
@@ -1351,6 +1532,7 @@ function MessageView(props: {
       {utterances.map((u, i) => {
         const isLastUtterance = i === utterances.length - 1;
         const rowSide = isLastUtterance ? side : emptySide;
+        const caret = !!props.streaming && isLastUtterance;
 
         if (u.speaker === 'narrator') {
           return (
@@ -1360,7 +1542,10 @@ function MessageView(props: {
                   <Icon.heart />
                 </span>
               </div>
-              <div className="narr-text">{stripMarks(u.text.trim())}</div>
+              <div className="narr-text">
+                {stripMarks(u.text.trim())}
+                {caret && <span className="caret" />}
+              </div>
               {rowSide}
             </div>
           );
@@ -1386,7 +1571,7 @@ function MessageView(props: {
               <div className="turn-col">
                 <span className="turn-name">{u.name}</span>
                 <div className="bubble">
-                  <BubbleText text={u.text} />
+                  <BubbleText text={u.text} caret={caret} />
                 </div>
               </div>
             </div>
