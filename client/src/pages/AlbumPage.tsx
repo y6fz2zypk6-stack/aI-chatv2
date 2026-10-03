@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { AlbumItem, AlbumWorld } from '@shared/types';
 import { api } from '../api';
 import { formatDateTime } from '../format';
-import { makeThumb, Modal, Row, TopBar } from '../components';
+import { HomeHead, makeThumb, Modal, Row, TabBar, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -53,11 +53,7 @@ export default function AlbumPage() {
 
   return (
     <>
-      <TopBar
-        title="アルバム"
-        sub={count ? `${count}枚 ・ ${sizeLabel(total)}` : undefined}
-        back="/chats"
-      />
+      <HomeHead title="アルバム" sub={count ? `${count}枚 ・ ${sizeLabel(total)}` : undefined} />
       <div className="content">
         {worlds.length === 0 && (
           <div className="empty-note">
@@ -76,6 +72,7 @@ export default function AlbumPage() {
           />
         ))}
       </div>
+      <TabBar />
     </>
   );
 }

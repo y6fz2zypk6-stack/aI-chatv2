@@ -161,6 +161,42 @@ export async function streamingSuite(w) {
 }
 
 // ===========================================================================
+// 会話一覧の世界名・シナリオ名（同じキャラの会話を見分ける手がかり、§3.5）
+// ===========================================================================
+export async function chatListNamesSuite(w) {
+  suite('会話一覧: 世界名とシナリオ名');
+
+  const { scenario, chat } = await newChat(w);
+  await api('PUT', `/scenarios/${scenario.id}`, { ...scenario, title: '雨の日の図書室' });
+  const find = async (q = 'archived=0') =>
+    (await api('GET', `/chats?${q}`)).json.find((c) => c.id === chat.id);
+
+  const row = await find();
+  check('世界名が付く', row?.world_name === w.world.name, JSON.stringify(row?.world_name));
+  check('シナリオ名が付く', row?.scenario_title === '雨の日の図書室', JSON.stringify(row?.scenario_title));
+  check('既存の項目（preview）は残る', typeof row?.preview === 'string');
+
+  // 世界での絞り込み（JOIN で列名がぶつからないこと。scenarios にも world_id がある）
+  const inWorld = (await api('GET', `/chats?world_id=${w.world.id}&archived=0`)).json;
+  check('世界で絞り込める', inWorld.length > 0 && inWorld.every((c) => c.world_id === w.world.id),
+    `${inWorld.length}件`);
+
+  // アーカイブでの絞り込み
+  await api('PUT', `/chats/${chat.id}`, { archived: 1 });
+  check('アーカイブした会話は通常の一覧から外れる', !(await find()));
+  const arch = await find('archived=1');
+  check('アーカイブの一覧にも名前が付く', arch?.world_name === w.world.name && arch?.scenario_title === '雨の日の図書室');
+  await api('PUT', `/chats/${chat.id}`, { archived: 0 });
+
+  // シナリオを消しても会話は残り、シナリオ名は null になる
+  await api('DELETE', `/scenarios/${scenario.id}`);
+  const gone = await find();
+  check('シナリオを消しても会話は一覧に残る', !!gone);
+  check('シナリオを消すとシナリオ名は null', gone?.scenario_title === null, JSON.stringify(gone?.scenario_title));
+  check('世界名はそのまま', gone?.world_name === w.world.name);
+}
+
+// ===========================================================================
 // 会話の名前（§3.5）
 // ===========================================================================
 export async function chatTitleSuite(w) {

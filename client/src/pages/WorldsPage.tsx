@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { World } from '@shared/types';
 import { api } from '../api';
-import { Row, TopBar } from '../components';
+import { HomeHead, Row, TabBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
 
@@ -52,11 +52,10 @@ export default function WorldsPage() {
 
   return (
     <>
-      <TopBar
+      <HomeHead
         title="世界"
-        back="/chats"
         actions={
-          <button className="icon-btn accent" onClick={importWorld} title="取り込み">
+          <button className="icon-btn" onClick={importWorld} title="取り込み" aria-label="世界を取り込む">
             <Icon.upload />
           </button>
         }
@@ -83,6 +82,7 @@ export default function WorldsPage() {
         </div>
         {worlds.length === 0 && <div className="empty-note">世界がまだありません</div>}
       </div>
+      <TabBar />
     </>
   );
 }

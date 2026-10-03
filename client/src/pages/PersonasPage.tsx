@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Persona } from '@shared/types';
 import { api } from '../api';
-import { Avatar, AvatarPicker, Field, ReferencePicker, Row, TopBar } from '../components';
+import { Avatar, AvatarPicker, Field, HomeHead, ReferencePicker, Row, TabBar, TopBar } from '../components';
 import { Icon } from '../icons';
 import { ask, useApp } from '../store';
 
@@ -158,7 +158,7 @@ export default function PersonasPage() {
 
   return (
     <>
-      <TopBar title="ペルソナ" back="/chats" />
+      <HomeHead title="ペルソナ" />
       <div className="content">
         {personas.map((p) => (
           <Row
@@ -187,6 +187,7 @@ export default function PersonasPage() {
           <div className="empty-note">あなたの分身となるペルソナを作成してください</div>
         )}
       </div>
+      <TabBar />
     </>
   );
 }

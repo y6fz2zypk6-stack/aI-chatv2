@@ -246,6 +246,10 @@ export interface Chat {
 export interface ChatListItem extends Chat {
   /** 最新メッセージの本文を話者ラベル・記号を落として短く切ったもの。無ければ空 */
   preview: string;
+  /** 会話が属する世界の名前（一覧で会話を見分けるため） */
+  world_name: string;
+  /** 会話を始めたシナリオの題。シナリオが消されていれば null */
+  scenario_title: string | null;
 }
 
 export type GenerationStatus = 'complete' | 'stopped' | 'failed';

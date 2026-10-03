@@ -84,6 +84,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<ChatsPage />} />
         <Route path="/chats" element={<ChatsPage />} />
+        <Route path="/chats/archive" element={<ChatsPage archived />} />
         <Route path="/chats/:id" element={<ChatPage />} />
         <Route path="/chats/:id/state" element={<StatePage />} />
         <Route path="/chats/:id/summary" element={<SummaryPage />} />

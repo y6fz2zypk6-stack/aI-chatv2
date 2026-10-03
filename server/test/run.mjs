@@ -178,6 +178,7 @@ try {
   await s5.paginationSuite(w);
   await s5.chatTitleSuite(w);
   await s5.streamingSuite(w);
+  await s5.chatListNamesSuite(w);
   await s5.thumbSuite(sw);
   await (await import('./suite-scenario.mjs')).scenarioTimeSuite(w);
   await (await import('./suite-calendar.mjs')).calendarSeasonSuite();

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { modelLabel, summarizeEveryMessages, type ConnectionView, type Persona } from '@shared/types';
 import { api } from '../../api';
-import { NavRow, SectionHead, TopBar } from '../../components';
+import { HomeHead, NavRow, SectionHead, TabBar } from '../../components';
 import { Icon } from '../../icons';
 import { useSettings } from './useSettings';
 
@@ -24,8 +24,11 @@ export default function SettingsHome() {
   if (!s) {
     return (
       <>
-        <TopBar title="設定" back="/chats" />
-        <div className="empty-note">読み込み中…</div>
+        <HomeHead title="設定" />
+        <div className="content">
+          <div className="empty-note">読み込み中…</div>
+        </div>
+        <TabBar />
       </>
     );
   }
@@ -46,7 +49,7 @@ export default function SettingsHome() {
 
   return (
     <>
-      <TopBar title="設定" back="/chats" />
+      <HomeHead title="設定" />
       <div className="content settings-hub">
         <button className="hub-card" onClick={() => navigate('/settings/models')}>
           <span className="txt">
@@ -153,6 +156,7 @@ export default function SettingsHome() {
 
         <p className="hub-foot">✓ 変更はその場で保存されます</p>
       </div>
+      <TabBar />
     </>
   );
 }

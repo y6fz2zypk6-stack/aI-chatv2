@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type { ReferenceMeta } from '@shared/types';
 import { api, ApiError } from './api';
 import { Icon } from './icons';
@@ -312,12 +312,47 @@ export function TopBar({
   );
 }
 
-export function HomeHead({ title, actions }: { title: string; actions?: ReactNode }) {
+/** 下部タブの最上位画面の大見出し。戻るボタンは無い（タブで移るため） */
+export function HomeHead({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
   return (
     <div className="home-head">
-      <h1>{title}</h1>
+      <div className="ttl">
+        <h1>{title}</h1>
+        {sub && <span className="sub">{sub}</span>}
+      </div>
       {actions && <div className="acts">{actions}</div>}
     </div>
+  );
+}
+
+const TABS = [
+  { to: '/chats', label: 'チャット', icon: <Icon.bubble size={21} /> },
+  { to: '/worlds', label: '世界', icon: <Icon.bookOpen size={21} /> },
+  { to: '/personas', label: 'ペルソナ', icon: <Icon.charFile size={21} /> },
+  { to: '/album', label: 'アルバム', icon: <Icon.camera size={21} /> },
+  { to: '/settings', label: '設定', icon: <Icon.gear size={21} /> },
+];
+
+/**
+ * 下部タブ。**最上位の5画面（チャット一覧・世界の一覧・ペルソナの一覧・アルバムの世界一覧・
+ * 設定のハブ）にだけ置く。** 会話・詳細・設定のサブページでは出さない（画面を広く使うため）
+ */
+export function TabBar() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const current = pathname === '/' ? '/chats' : pathname;
+  return (
+    <nav className="tabbar" aria-label="メイン">
+      {TABS.map((t) => {
+        const on = current === t.to;
+        return (
+          <button key={t.to} className={on ? 'on' : ''} aria-current={on ? 'page' : undefined} onClick={() => navigate(t.to)}>
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -628,6 +663,7 @@ export function Row({
   avatar,
   avatarTinted,
   name,
+  meta,
   desc,
   stamp,
   onClick,
@@ -637,6 +673,8 @@ export function Row({
   avatar?: ReactNode;
   avatarTinted?: boolean;
   name: ReactNode;
+  /** 名前の下に1行で添える手がかり（会話なら「世界 ・ シナリオ」） */
+  meta?: ReactNode;
   desc?: ReactNode;
   stamp?: string;
   onClick?: () => void;
@@ -651,6 +689,7 @@ export function Row({
           <span className="nm">{name}</span>
           {stamp && <span className="stamp">{stamp}</span>}
         </div>
+        {meta && <div className="row-meta">{meta}</div>}
         {desc && <div className="desc">{desc}</div>}
       </div>
       {actions && <div className="acts">{actions}</div>}

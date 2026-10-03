@@ -60,12 +60,18 @@ export function toPreview(content: string | null | undefined): string {
 }
 
 export function listChats(opts: { worldId?: string; archived?: boolean } = {}): ChatListItem[] {
-  // 最新メッセージの本文を1件だけ添える（messages.content は常に採用中の候補の本文）
+  // 最新メッセージの本文を1件だけ添える（messages.content は常に採用中の候補の本文）。
+  // 世界名とシナリオ名も添える。同じキャラの会話が並んだとき見分ける手がかりになる（§3.5）。
+  // シナリオは消されても会話は残る（ON DELETE SET NULL）ので LEFT JOIN にする
   let sql = `SELECT c.*, (
                SELECT m.content FROM messages m
                 WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1
-             ) AS last_content
-               FROM chats c`;
+             ) AS last_content,
+             w.name AS world_name,
+             s.title AS scenario_title
+               FROM chats c
+               LEFT JOIN worlds w ON w.id = c.world_id
+               LEFT JOIN scenarios s ON s.id = c.scenario_id`;
   const cond: string[] = [];
   const args: unknown[] = [];
   if (opts.worldId) {
@@ -78,9 +84,15 @@ export function listChats(opts: { worldId?: string; archived?: boolean } = {}): 
   }
   if (cond.length) sql += ' WHERE ' + cond.join(' AND ');
   sql += ' ORDER BY c.updated_at DESC';
-  return (db.prepare(sql).all(...args) as (Row & { last_content: string | null })[]).map((row) => {
-    const { last_content, ...rest } = row;
-    return { ...toApi(rest as Row), preview: toPreview(last_content) };
+  type ListRow = Row & { last_content: string | null; world_name: string | null; scenario_title: string | null };
+  return (db.prepare(sql).all(...args) as ListRow[]).map((row) => {
+    const { last_content, world_name, scenario_title, ...rest } = row;
+    return {
+      ...toApi(rest as Row),
+      preview: toPreview(last_content),
+      world_name: world_name ?? '',
+      scenario_title: scenario_title ?? null,
+    };
   });
 }
 
