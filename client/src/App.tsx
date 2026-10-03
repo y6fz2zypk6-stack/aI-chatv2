@@ -15,7 +15,18 @@ import LorebookPage from './pages/LorebookPage';
 import MemoriesPage from './pages/MemoriesPage';
 import MemoryReviewPage from './pages/MemoryReviewPage';
 import PersonasPage from './pages/PersonasPage';
-import SettingsPage from './pages/SettingsPage';
+import AutoplayPage from './pages/settings/AutoplayPage';
+import BudgetPage from './pages/settings/BudgetPage';
+import DefaultPersonaPage from './pages/settings/DefaultPersonaPage';
+import EventsFlagsPage from './pages/settings/EventsFlagsPage';
+import LoreSettingsPage from './pages/settings/LoreSettingsPage';
+import ModelsPage from './pages/settings/ModelsPage';
+import SettingsHome from './pages/settings/SettingsHome';
+import SnapshotSettingsPage from './pages/settings/SnapshotSettingsPage';
+import StateSettingsPage from './pages/settings/StateSettingsPage';
+import SummaryMemoryPage from './pages/settings/SummaryMemoryPage';
+import SummaryPolicyPage from './pages/settings/SummaryPolicyPage';
+import SystemPromptPage from './pages/settings/SystemPromptPage';
 import StatePage from './pages/StatePage';
 import SummaryPage from './pages/SummaryPage';
 import WorldDetailPage from './pages/WorldDetailPage';
@@ -87,7 +98,18 @@ export default function App() {
         <Route path="/characters/:id/memories" element={<MemoriesPage />} />
         <Route path="/personas" element={<PersonasPage />} />
         <Route path="/album" element={<AlbumPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings" element={<SettingsHome />} />
+        <Route path="/settings/models" element={<ModelsPage />} />
+        <Route path="/settings/persona" element={<DefaultPersonaPage />} />
+        <Route path="/settings/system-prompt" element={<SystemPromptPage />} />
+        <Route path="/settings/state" element={<StateSettingsPage />} />
+        <Route path="/settings/events" element={<EventsFlagsPage />} />
+        <Route path="/settings/lorebook" element={<LoreSettingsPage />} />
+        <Route path="/settings/summary" element={<SummaryMemoryPage />} />
+        <Route path="/settings/summary/policy" element={<SummaryPolicyPage />} />
+        <Route path="/settings/autoplay" element={<AutoplayPage />} />
+        <Route path="/settings/snapshot" element={<SnapshotSettingsPage />} />
+        <Route path="/settings/budget" element={<BudgetPage />} />
         <Route path="*" element={<div className="empty-note">ページが見つかりません</div>} />
       </Routes>
       <Toasts />
