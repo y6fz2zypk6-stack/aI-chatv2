@@ -45,13 +45,13 @@ function failureNote(name: string, finishReason: string, raw: string, cap: numbe
   if (finishReason === 'length') {
     // 本文生成の「最大トークン」ではなく、要約・抽出用の上限であることを明示する。
     // 別物なので、本文側を上げても直らない
-    return `${name}: 応答が上限（要約・抽出の最大トークン ${cap}）で切れました。設定でこの値を上げるか、要約・抽出のモデルを変えてください`;
+    return `${name}: 応答が上限（裏方の処理の出力上限 ${cap}）で切れました。設定の「モデルと接続先」→「裏方の処理」で出力の上限を上げるか、モデルを変えてください`;
   }
   if (finishReason === 'content_filter') {
     return `${name}: モデルが内容を拒否しました（content_filter）`;
   }
   if (!raw.trim()) {
-    return `${name}: モデルが空の応答を返しました（finish_reason=${finishReason || '不明'}）。要約・抽出のモデルを変えると直ることがあります`;
+    return `${name}: モデルが空の応答を返しました（finish_reason=${finishReason || '不明'}）。設定の「モデルと接続先」→「裏方の処理」でモデルを変えると直ることがあります`;
   }
   return `${name}: 応答をJSONとして読めませんでした: ${raw.trim().slice(0, 100)}`;
 }

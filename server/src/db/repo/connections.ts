@@ -98,9 +98,10 @@ export function connectionUsage(id: string): string[] {
     .prepare("SELECT key, value FROM settings WHERE key IN ('default_model','utility_model','image_model')")
     .all() as { key: string; value: string }[];
   const label: Record<string, string> = {
-    default_model: '既定モデル',
-    utility_model: '要約・抽出のモデル',
-    image_model: '画像モデル',
+    // 設定画面の名前に合わせる（「モデルと接続先」の小見出し・「スナップショット」）
+    default_model: '「会話の本文」のモデル',
+    utility_model: '「裏方の処理」のモデル',
+    image_model: 'スナップショットの画像モデル',
   };
   for (const r of keys) {
     let v = r.value;

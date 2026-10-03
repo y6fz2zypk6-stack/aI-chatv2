@@ -120,7 +120,7 @@ export default function MemoriesPage() {
           <div className="empty-note">
             会話をまたいで覚えておく事実を登録できます
             <br />
-            設定の「自動抽出」をONにすると会話から拾われます
+            設定の「あらすじとメモリー」で「会話から候補を自動で拾う」をONにすると会話から拾われます
           </div>
         )}
         {pinned.length > 0 && (

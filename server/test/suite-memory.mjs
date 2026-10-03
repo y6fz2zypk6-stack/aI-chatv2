@@ -169,7 +169,7 @@ export async function memorySuite(w) {
     p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
     check('途中で切れたら失敗として扱う', p.failed === true, String(p.failed));
     check('上限到達だと分かる説明を出す',
-      p.notes.some((n) => n.includes('要約・抽出の最大トークン')), JSON.stringify(p.notes));
+      p.notes.some((n) => n.includes('裏方の処理の出力上限')), JSON.stringify(p.notes));
 
     // 拒否
     setQueue([{ text: '', refusal: 'この内容には応じられません' }]);
@@ -935,7 +935,7 @@ export async function utilityTokensSuite(w) {
     setQueue([{ text: '{"memories": [{"content": "とちゅ', finish: 'length' }]);
     const p = (await api('POST', `/chats/${chat.id}/extract-preview`)).json;
     const note = p.notes.join(' / ');
-    check('要約・抽出側の上限だと分かる', note.includes('要約・抽出の最大トークン 4096'), note);
+    check('裏方の処理側の上限だと分かる', note.includes('裏方の処理の出力上限 4096'), note);
     check('本文側の設定を案内しない', !note.includes('設定の「最大トークン」'), note);
   }
 

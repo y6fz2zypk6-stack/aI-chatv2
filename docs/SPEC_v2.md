@@ -1510,6 +1510,9 @@ weatherDayOf(cfg, time) = Math.floor((time - weather_rollover_min) / 1440)
 | GET / PUT | `/settings` |
 | GET | `/worlds/:id/export`, `/characters/:id/export`, `/worlds/:id/lorebook/export`, `/chats/:id/export` |
 | POST | `/worlds/import`, `/worlds/:id/characters/import`, `/worlds/:id/lorebook/import` |
+| POST | `/messages/:id/snapshot/preview`（プロンプトを組み立てて返す。生成しない）, `/messages/:id/snapshot`（生成して保存） |
+| GET / DELETE | `/snapshots/:id/image`（バイナリ配信。JSONには載せない）, `/snapshots/:id` |
+| GET | `/images/models`（画像モデルの一覧。補完用） |
 
 ### 13.4 SSEのイベント
 
@@ -1589,26 +1592,36 @@ event: notice  { kind: 'summary' | 'memory', ok, message }   ← done のあと�
 ### 15.2 画面
 
 ```
-/chats                     一覧（最新メッセージの抜粋を2行表示）
-/chats/:id                 会話（ステートバーの時計から「場面を進める」、＋から参加キャラの編集）
+下部タブ（最上位の5画面にだけ出す）
+/chats                     一覧（世界名・シナリオ名と、最新メッセージの抜粋を2行表示）
+/worlds                    世界一覧
+/personas                  ペルソナ（一覧と編集は同じURL）
+/album                     アルバム（世界の一覧と世界ごとのグリッドは同じURL）
+/settings                  設定の入口（ハブ）
+
+その下の階層（タブなし・戻るあり）
+/chats/archive             アーカイブした会話
+/chats/:id                 会話（ステートバーの時計と ＋ から「場面を進める」、右上の ⋯ から会話の管理）
 /chats/:id/state           ステート編集・発火履歴
 /chats/:id/summary         あらすじ
-/worlds                    世界一覧
 /worlds/:id                世界（キャラ・シナリオ・各素材への入口）
 /worlds/:id/lorebook       ロアブック
 /worlds/:id/locations      場所（＋エリア編集）
 /worlds/:id/calendar       暦・天候
-
-POST   /messages/:id/snapshot/preview   プロンプトを組み立てて返す（生成しない）
-POST   /messages/:id/snapshot           生成して保存
-GET    /snapshots/:id/image             バイナリ配信（JSONには載せない）
-DELETE /snapshots/:id
-GET    /images/models                   画像モデルの一覧（補完用）
 /worlds/:id/events         イベント
+/worlds/:id/memory-review  メモリーの整理
 /characters/:id            キャラ
 /characters/:id/memories   メモリー
-/personas                  ペルソナ
-/settings                  設定
+/settings/models           モデルと接続先
+/settings/persona          既定のペルソナ
+/settings/system-prompt    共通の指示
+/settings/state            ステート
+/settings/events           イベントと進行フラグ
+/settings/lorebook         ロアブック
+/settings/summary          あらすじとメモリー（/settings/summary/policy 要約の方針）
+/settings/autoplay         オートプレイ
+/settings/snapshot         スナップショット
+/settings/budget           文脈の予算
 ```
 
 ### 15.3 吹き出し
@@ -1617,11 +1630,18 @@ GET    /images/models                   画像モデルの一覧（補完用）
 - 1発話の中でセリフと地の文が並ぶ場合、UI側で改行する
 - **すべての吹き出しの幅を揃える。** `⋯` メニューの有無で幅が変わらないよう、
   操作列の領域は常に確保する
+- **生成中も、完成時と同じ規則で話者ごとに分けて描く。** 発話のパース（`parseUtterances`）は
+  `shared/utterances.ts` にあり、サーバ（保存時）とクライアント（生成中の表示）が同じものを使う。
+  片方だけ直すと、完了した瞬間に吹き出しの区切りが変わって見える
 
 ### 15.4 破壊的操作の置き場所
 
-**削除は一覧に置かない。** チャットの削除・アーカイブは会話を開いた状態の ＋ メニューからのみ行う。
+**削除は一覧に置かない。** チャットの削除・アーカイブは会話を開いた状態の右上 ⋯ からのみ行う。
 一覧に削除ボタンがあると、取り違えて別の会話を消す事故が起きるため。
+
+**確認はアプリの見た目の確認ダイアログで取る**（`ask()` / `ConfirmHost`）。ブラウザ標準の `confirm()` は使わない
+（PWA では端末ごとの見た目になり、実行ボタンの文言も選べないため）。実行ボタンは「削除する」のように動詞で書き、
+取り消せない操作は赤地にする。開いたときは「キャンセル」にフォーカスを置く。
 
 ### 15.5 PWA（Service Worker）
 

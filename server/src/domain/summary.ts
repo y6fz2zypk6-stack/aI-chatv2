@@ -132,12 +132,12 @@ ${lines}`;
     const why = r.refusal
       ? `モデルが拒否しました（${r.refusal.slice(0, 80)}）`
       : r.finishReason === 'length'
-        ? `応答が上限（要約・抽出の最大トークン ${maxTokens}）で切れました`
+        ? `応答が上限（裏方の処理の出力上限 ${maxTokens}）で切れました`
         : `モデルが空の応答を返しました（finish_reason=${r.finishReason || '不明'}）`;
     return {
       ok: false,
       content: prev?.content ?? null,
-      message: `要約に失敗しました: ${why}。要約・抽出のモデルを見直してください`,
+      message: `要約に失敗しました: ${why}。設定の「モデルと接続先」→「裏方の処理」を見直してください`,
       count: targets.length,
       skipped: false,
     };

@@ -47,7 +47,7 @@ export function resolveConnection(id: string): ResolvedConnection {
   const row = getConnectionSecret(id);
   if (!row) {
     throw new Error(
-      `接続先が見つかりません（${id}）。設定の「接続先」で選び直してください`,
+      `接続先が見つかりません（${id}）。設定の「モデルと接続先」で選び直してください`,
     );
   }
   return {
