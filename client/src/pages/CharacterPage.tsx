@@ -4,7 +4,7 @@ import type { Character } from '@shared/types';
 import { api } from '../api';
 import { AvatarPicker, Field, ReferencePicker, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 type CharacterDetail = Character & { memory_count: number };
 
@@ -42,7 +42,7 @@ export default function CharacterPage() {
   };
 
   const remove = async () => {
-    if (!confirm(`「${c.name}」を削除しますか？メモリーも削除されます`)) return;
+    if (!(await ask({ title: `「${c.name}」を削除しますか？`, body: 'メモリーも削除されます。', okLabel: '削除する', danger: true }))) return;
     try {
       await api.del(`/characters/${c.id}`);
       navigate(`/worlds/${c.world_id}`);

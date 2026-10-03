@@ -24,12 +24,12 @@
   --user-bubble-b: #e9834b;
   --char-bubble: #f5efe5;
   --char-text: #5b4636;
-  --char-act: #a88f76; /* 吹き出し内の地の文 */
+  --char-act: #7a634e; /* 吹き出し内の地の文（コントラスト 4.9） */
   --user-text: #fffdf9;
   --user-act: rgba(255, 255, 255, 0.82);
 
   /* --- ナレーション --- */
-  --narration: #9c8265;
+  --narration: #7d6650; /* ナレーション文（コントラスト 5.4） */
   --narr-icon-bg: #f6ddbe;
   --narr-icon-fg: #c9873f;
 
@@ -46,6 +46,8 @@
 
   /* --- 角丸 --- */
   --r-input: 16px;
+  --r-md: 16px; /* 枠・囲み・スナップショットの角 */
+  --r-sm: 10px; /* アルバムのセル・原寸画像の角 */
   --r-bubble: 20px;
   --r-tail: 6px;
 
@@ -59,10 +61,10 @@
   --msg-gap: 17px;
   --bubble-pad-y: 9px;
   --bubble-pad-x: 13px;
-  --bubble-font: 12px;
+  --bubble-font: 14px;
   --bubble-lh: 1.7;
   --act-scale: 0.94;
-  --narr-font: 11.5px;
+  --narr-font: 13px;
   --narr-lh: 1.7;
 
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -406,8 +408,9 @@ textarea.tall {
 
 /* トグル */
 .toggle {
-  width: 48px;
-  height: 28px;
+  position: relative;
+  width: 50px;
+  height: 30px;
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--surface-2);
@@ -417,9 +420,16 @@ textarea.tall {
   transition: background 0.16s;
 }
 
+/* 見た目は高さ30のまま、当たり判定だけ上下に広げて44にする */
+.toggle::before {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+
 .toggle .knob {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: #fff;
   transition: transform 0.16s;
@@ -430,7 +440,7 @@ textarea.tall {
 }
 
 .toggle.on .knob {
-  transform: translateX(20px);
+  transform: translateX(20px); /* 50 - 3*2 - 24 */
 }
 
 /* チェック（四角） */
@@ -456,19 +466,19 @@ textarea.tall {
 
 /* 数値ステッパー */
 .stepper {
-  height: 40px;
+  height: 44px;
   flex: 0 0 auto;
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--surface-2);
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 6px;
+  gap: 0;
+  padding: 0;
 }
 
 .stepper button {
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -476,12 +486,12 @@ textarea.tall {
 }
 
 .stepper .val {
-  width: 58px;
-  height: 30px;
+  width: 64px;
+  height: 36px;
   padding: 0;
   text-align: center;
-  border-radius: 9px;
-  font: 600 13px/1 var(--font-meta);
+  border-radius: 10px;
+  font: 700 15px/1 var(--font-meta);
   color: var(--field-ink);
   font-variant-numeric: tabular-nums;
   background: none;
@@ -503,7 +513,7 @@ textarea.tall {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 0;
+  padding: 12px 0;
 }
 
 .setting + .setting {
@@ -519,13 +529,21 @@ textarea.tall {
 }
 
 .setting .txt label {
-  font: 600 13px/1.4 var(--font-ui);
+  font: 600 14.5px/1.4 var(--font-ui);
   color: var(--text);
 }
 
 .setting .txt span {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
+  color: var(--muted-strong);
+}
+
+/* 項目名のうしろに添える単位（「トークン」「件」など）。数字の枠の中には入れない */
+.setting .txt label .unit {
+  display: inline;
+  margin-left: 6px;
+  font: 500 11px/1 var(--font-ui);
   color: var(--muted-strong);
 }
 
@@ -534,7 +552,7 @@ textarea.tall {
 }
 
 .setting.sub .txt label {
-  font: 600 12.5px/1.4 var(--font-ui);
+  font: 600 13.5px/1.4 var(--font-ui);
   color: var(--muted-strong);
 }
 
@@ -548,6 +566,11 @@ textarea.tall {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+}
+
+/* 戻るボタンが無い最上位画面は、一覧と同じ左端にそろえる */
+.topbar.no-back {
+  padding-left: 18px;
 }
 
 .topbar .title {
@@ -748,7 +771,7 @@ textarea.tall {
 .chatrow .desc {
   font-size: 12.5px;
   line-height: 1.55;
-  color: var(--muted);
+  color: var(--muted-strong);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -2027,7 +2050,7 @@ textarea.tall {
 
 .toast-holder {
   position: fixed;
-  bottom: calc(20px + var(--safe-bottom));
+  bottom: calc(88px + var(--safe-bottom)); /* 入力欄・固定バー・タブに重ならない高さ */
   left: 50%;
   transform: translateX(-50%);
   z-index: 200;
@@ -2156,5 +2179,216 @@ textarea.tall {
 
 .chip.on {
   background: var(--accent);
+  color: #fff;
+}
+
+/* ===== 小見出し・切り替え・択一カード・ハブの行（設定画面などで使う） ===== */
+
+/* 日本語の小見出し。英字の .kicker の代わりに設定画面で使う */
+.section-head {
+  margin: 0;
+  font: 700 12.5px/1.4 var(--font-ui);
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+}
+
+/* 2〜5択の切り替え */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.segmented button {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 10px;
+  font: 600 13px/1 var(--font-ui);
+  color: var(--muted-strong);
+}
+
+.segmented button[aria-checked='true'] {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(90, 66, 44, 0.16);
+}
+
+/* 説明つきの択一 */
+.radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  text-align: left;
+}
+
+.radio-card[aria-checked='true'] {
+  border-color: var(--accent);
+}
+
+.radio-card .dot {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  border: 1.5px solid var(--chevron);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.radio-card[aria-checked='true'] .dot {
+  border-color: var(--accent);
+}
+
+.radio-card[aria-checked='true'] .dot::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.radio-card .txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.radio-card .ttl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 14.5px/1.4 var(--font-ui);
+  color: var(--text);
+}
+
+.radio-card .desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-strong);
+}
+
+/* 設定のハブの行。行全体が押せる */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.nav-row:last-child {
+  border-bottom: none;
+}
+
+.nav-row .ic {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--narr-icon-bg);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+}
+
+.nav-row .ic svg {
+  display: block;
+}
+
+.nav-row .txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-row .ttl {
+  font: 700 15px/1.4 var(--font-ui);
+  color: var(--text);
+}
+
+.nav-row .val {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-row .chev {
+  width: 20px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--chevron);
+}
+
+/* ===== 確認ダイアログ（ブラウザ標準の confirm の代わり） ===== */
+
+.ask-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150; /* モーダル（100）の中から開いても上に出る。トースト（200）よりは下 */
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px 12px calc(12px + var(--safe-bottom));
+  background: rgba(90, 66, 44, 0.32);
+}
+
+.ask-card {
+  width: 100%;
+  max-width: 420px;
+  max-height: 86dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 22px 20px 16px;
+  border-radius: 24px;
+  background: var(--bg);
+  box-shadow: 0 10px 30px rgba(90, 66, 44, 0.22);
+}
+
+.ask-card h3 {
+  margin: 0;
+  font: 700 18px/1.4 var(--font-ui);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.ask-card .body {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--muted-strong);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.ask-card .pill {
+  width: 100%;
+  height: 52px;
+}
+
+/* 取り消せない操作の実行ボタン。淡い面に赤い字（.pill.danger）ではなく、赤地に白で区別する */
+.pill.danger-solid {
+  background: var(--danger);
   color: #fff;
 }

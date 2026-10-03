@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { Summary } from '@shared/types';
 import { api } from '../api';
+import { formatDateTime } from '../format';
 import { TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 export default function SummaryPage() {
   const { id } = useParams<{ id: string }>();
@@ -51,7 +52,7 @@ export default function SummaryPage() {
   };
 
   const removeAll = async () => {
-    if (!confirm('あらすじを全て削除しますか？')) return;
+    if (!(await ask({ title: 'あらすじを全て削除しますか？', body: '元に戻せません。', okLabel: '削除する', danger: true }))) return;
     await api.del(`/chats/${id}/summary`);
     load();
   };
@@ -77,7 +78,7 @@ export default function SummaryPage() {
         />
         {summary && (
           <div className="empty-note" style={{ padding: 0 }}>
-            最終更新: {new Date(summary.created_at).toLocaleString('ja-JP')}
+            最終更新: {formatDateTime(summary.created_at)}
           </div>
         )}
       </div>

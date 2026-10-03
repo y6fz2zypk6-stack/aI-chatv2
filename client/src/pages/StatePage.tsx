@@ -14,9 +14,10 @@ import type {
   VarValue,
 } from '@shared/types';
 import { api } from '../api';
+import { formatDateTime } from '../format';
 import { Field, Stepper, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 interface StateResponse {
   state: ChatState;
@@ -245,7 +246,7 @@ export default function StatePage() {
                 <div className="body">
                   <span className="nm sm">{f.event_title ?? '(削除済みイベント)'}</span>
                   <div className="desc one">
-                    {new Date(f.created_at).toLocaleString('ja-JP')}
+                    {formatDateTime(f.created_at)}
                     {f.scope_key && ` ／ ${f.scope_key}`}
                   </div>
                 </div>
@@ -254,7 +255,7 @@ export default function StatePage() {
                   style={{ color: 'var(--danger)' }}
                   title="この発火を取り消す"
                   onClick={async () => {
-                    if (!confirm('この発火を取り消しますか？（同じイベントが再び発生し得ます）')) return;
+                    if (!(await ask({ title: 'この発火を取り消しますか？', body: '同じイベントが再び発生し得ます。', okLabel: '取り消す' }))) return;
                     await api.del(`/chats/${id}/fires/${f.id}`);
                     void load();
                   }}

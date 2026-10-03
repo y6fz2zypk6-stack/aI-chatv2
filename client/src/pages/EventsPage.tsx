@@ -14,7 +14,7 @@ import type {
 import { api } from '../api';
 import { Field, Modal, Row, Stepper, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 const KIND_LABEL: Record<EventKind, string> = {
   ambient: '雰囲気',
@@ -100,7 +100,7 @@ export default function EventsPage() {
   };
 
   const remove = async (e: WorldEvent) => {
-    if (!confirm(`「${e.title}」を削除しますか？`)) return;
+    if (!(await ask({ title: `「${e.title}」を削除しますか？`, okLabel: '削除する', danger: true }))) return;
     await api.del(`/events/${e.id}`);
     setEditing(null);
     load();

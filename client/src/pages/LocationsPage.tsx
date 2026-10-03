@@ -11,7 +11,7 @@ import {
 import { api } from '../api';
 import { Field, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 /**
  * 開店・閉店の入力欄。
@@ -97,7 +97,7 @@ export default function LocationsPage() {
   };
 
   const remove = async (l: Location) => {
-    if (!confirm(`「${l.name}」を削除しますか？`)) return;
+    if (!(await ask({ title: `「${l.name}」を削除しますか？`, okLabel: '削除する', danger: true }))) return;
     try {
       await api.del(`/locations/${l.id}`);
       setEditing(null);

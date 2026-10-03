@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AlbumItem, AlbumWorld } from '@shared/types';
 import { api } from '../api';
+import { formatDateTime } from '../format';
 import { makeThumb, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useApp } from '../store';
@@ -19,12 +20,6 @@ function sizeLabel(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
-
-const stamp = (t: number) => {
-  const d = new Date(t);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-};
 
 export default function AlbumPage() {
   const [worlds, setWorlds] = useState<AlbumWorld[]>([]);
@@ -295,7 +290,7 @@ function WorldAlbum(props: {
           <div className="album-full">
             <img src={`/api/snapshots/${full.id}/image`} alt="スナップショット" />
             <div className="meta">
-              {stamp(full.created_at)} ・ {sizeLabel(full.bytes)} ・ {full.model}
+              {formatDateTime(full.created_at)} ・ {sizeLabel(full.bytes)} ・ {full.model}
               {'\n\n'}
               {full.prompt}
             </div>

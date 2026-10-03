@@ -4,7 +4,7 @@ import type { CalendarConfig, Character, Location, LoreCategory, LorebookEntry }
 import { api } from '../api';
 import { Field, Modal, Row, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 const CATEGORIES: LoreCategory[] = ['世界観', '用語', '人物', '場所', 'イベント', 'その他'];
 /**
@@ -66,7 +66,7 @@ export default function LorebookPage() {
   };
 
   const remove = async (e: LorebookEntry) => {
-    if (!confirm(`「${e.title}」を削除しますか？`)) return;
+    if (!(await ask({ title: `「${e.title}」を削除しますか？`, okLabel: '削除する', danger: true }))) return;
     await api.del(`/lorebook/${e.id}`);
     setEditing(null);
     load();

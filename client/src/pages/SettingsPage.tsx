@@ -11,7 +11,7 @@ import { api } from '../api';
 import { Field, Modal, SettingRow, Stepper, Toggle, TopBar } from '../components';
 import { Icon } from '../icons';
 import { useModelGroups, type ModelGroup } from '../models';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 /**
  * モデルの選択肢を接続先ごとに `<optgroup>` で分ける（§6.6）。
@@ -229,8 +229,8 @@ export default function SettingsPage() {
                 <div className="row" style={{ marginTop: 10 }}>
                   <button
                     className="pill sm"
-                    onClick={() => {
-                      if (!confirm('要約の方針を既定に戻しますか？')) return;
+                    onClick={async () => {
+                      if (!(await ask({ title: '要約の方針を既定に戻しますか？', body: 'いまの内容は消えます。', okLabel: '既定に戻す' }))) return;
                       void api
                         .get<Settings>('/settings/defaults')
                         .then((d) => set({ summary_policy: d.summary_policy }));

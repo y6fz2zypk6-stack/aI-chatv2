@@ -4,7 +4,7 @@ import type { CalendarConfig, Character, Chat, GameTime, Persona, ScenarioView, 
 import { api } from '../api';
 import { Avatar, Field, Modal, Row, TopBar, TriToggle } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 type WorldWithUsage = World & {
   usage: {
@@ -61,13 +61,13 @@ export default function WorldDetailPage() {
 
   const removeWorld = async () => {
     const u = world.usage;
-    const msg =
-      `「${world.name}」を削除しますか？以下も全て削除されます:\n` +
+    const body =
+      `以下も全て削除されます:\n` +
       `キャラ${u.characters}件 / シナリオ${u.scenarios}件 / チャット${u.chats}件 / ` +
       `ロア${u.lorebook}件 / 場所${u.locations}件 / イベント${u.events}件 / ` +
       // 画像は容量が大きいので、何枚消えるかを必ず出す（§21.8）
       `スナップショット${u.snapshots}枚 / 参照画像${u.references}枚`;
-    if (!confirm(msg)) return;
+    if (!(await ask({ title: `「${world.name}」を削除しますか？`, body, okLabel: '削除する', danger: true }))) return;
     await api.del(`/worlds/${world.id}`);
     navigate('/worlds');
   };
@@ -117,7 +117,7 @@ export default function WorldDetailPage() {
   };
 
   const removeScenario = async (s: ScenarioView) => {
-    if (!confirm(`シナリオ「${s.title}」を削除しますか？（既存チャットは残ります）`)) return;
+    if (!(await ask({ title: `シナリオ「${s.title}」を削除しますか？`, body: '既存の会話は残ります。', okLabel: '削除する', danger: true }))) return;
     await api.del(`/scenarios/${s.id}`);
     load();
   };

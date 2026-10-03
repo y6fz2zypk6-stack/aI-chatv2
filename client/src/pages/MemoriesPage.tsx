@@ -4,7 +4,7 @@ import type { Character, MemoryListItem } from '@shared/types';
 import { api } from '../api';
 import { Field, Modal, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 export default function MemoriesPage() {
   const { id } = useParams<{ id: string }>();
@@ -219,7 +219,7 @@ function MemoryEditor(props: {
   };
 
   const remove = async () => {
-    if (!confirm('このメモリーを削除しますか？')) return;
+    if (!(await ask({ title: 'このメモリーを削除しますか？', okLabel: '削除する', danger: true }))) return;
     try {
       await api.del(`/memories/${m.id}`);
       props.toast('削除しました');

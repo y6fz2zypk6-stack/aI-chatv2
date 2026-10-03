@@ -3,7 +3,7 @@ import type { Persona } from '@shared/types';
 import { api } from '../api';
 import { Avatar, AvatarPicker, Field, ReferencePicker, Row, TopBar } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 export default function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -22,9 +22,19 @@ export default function PersonasPage() {
     setOriginal(null);
   };
 
-  const closeWithConfirm = () => {
+  const closeWithConfirm = async () => {
     const dirty = editing && original && JSON.stringify(editing) !== JSON.stringify(original);
-    if (dirty && !confirm('保存していない変更があります。破棄して戻りますか？')) return;
+    if (
+      dirty &&
+      !(await ask({
+        title: '保存していない変更があります',
+        body: '破棄して戻りますか？',
+        okLabel: '破棄する',
+        cancelLabel: '編集を続ける',
+        danger: true,
+      }))
+    )
+      return;
     close();
   };
 
@@ -56,7 +66,7 @@ export default function PersonasPage() {
   };
 
   const remove = async (p: Persona) => {
-    if (!confirm(`「${p.name}」を削除しますか？`)) return;
+    if (!(await ask({ title: `「${p.name}」を削除しますか？`, okLabel: '削除する', danger: true }))) return;
     await api.del(`/personas/${p.id}`);
     close();
     load();

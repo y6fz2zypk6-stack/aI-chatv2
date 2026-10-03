@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { ReferenceMeta } from '@shared/types';
 import { api, ApiError } from './api';
 import { Icon } from './icons';
+import { useApp } from './store';
 
 // ---- アバター ----
 
@@ -275,11 +276,14 @@ export function TopBar({
   back,
   onBack,
   actions,
+  hideBack,
 }: {
   title: string;
   sub?: string;
   /** 戻り先。省略時は履歴を1つ戻る */
   back?: string;
+  /** 戻るボタンを出さない（下部タブの最上位画面。戻り先が無いため） */
+  hideBack?: boolean;
   /**
    * 画面内の状態だけで前の表示に戻す場合に使う（URLが変わらない編集画面など）。
    * 指定したときは back より優先し、遷移は行わない。
@@ -289,14 +293,16 @@ export function TopBar({
 }) {
   const navigate = useNavigate();
   return (
-    <header className="topbar">
-      <button
-        className="icon-btn"
-        onClick={() => (onBack ? onBack() : back ? navigate(back) : navigate(-1))}
-        aria-label="戻る"
-      >
-        <Icon.back />
-      </button>
+    <header className={`topbar${hideBack ? ' no-back' : ''}`}>
+      {!hideBack && (
+        <button
+          className="icon-btn"
+          onClick={() => (onBack ? onBack() : back ? navigate(back) : navigate(-1))}
+          aria-label="戻る"
+        >
+          <Icon.back />
+        </button>
+      )}
       <div className="title">
         <b>{title}</b>
         {sub && <span className="sub">{sub}</span>}
@@ -411,22 +417,145 @@ export function TriToggle({
   );
 }
 
+/** 日本語の小見出し。設定画面では英字の `.kicker` の代わりにこれを使う */
+export function SectionHead({ children }: { children: ReactNode }) {
+  return <h2 className="section-head">{children}</h2>;
+}
+
+/**
+ * 2〜5択の切り替え。`role="radiogroup"`。
+ * 矢印キーで移動する（選択中だけが Tab で止まる、ラジオと同じ作法）
+ */
+export function Segmented<T extends string | number>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: { value: T; label: ReactNode; ariaLabel?: string }[];
+  onChange: (v: T) => void;
+  /** 読み上げ用の名前 */
+  label: string;
+}) {
+  const move = (i: number, d: -1 | 1) => {
+    const next = options[(i + d + options.length) % options.length];
+    onChange(next.value);
+  };
+  return (
+    <div className="segmented" role="radiogroup" aria-label={label}>
+      {options.map((o, i) => (
+        <button
+          key={String(o.value)}
+          role="radio"
+          aria-checked={o.value === value}
+          aria-label={o.ariaLabel}
+          tabIndex={o.value === value ? 0 : -1}
+          onClick={() => onChange(o.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+              e.preventDefault();
+              move(i, 1);
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              move(i, -1);
+            }
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 説明つきの択一。`radiogroup` の中に並べて使う（`RadioGroup`） */
+export function RadioCard({
+  selected,
+  onSelect,
+  title,
+  tag,
+  children,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: ReactNode;
+  /** 「既定」などの小さなタグ */
+  tag?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <button className="radio-card" role="radio" aria-checked={selected} onClick={onSelect}>
+      <span className="dot" aria-hidden="true" />
+      <span className="txt">
+        <span className="ttl">
+          {title}
+          {tag && <span className="tag">{tag}</span>}
+        </span>
+        {children && <span className="desc">{children}</span>}
+      </span>
+    </button>
+  );
+}
+
+/** RadioCard を束ねる。読み上げに「何の択一か」を伝える */
+export function RadioGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div role="radiogroup" aria-label={label} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {children}
+    </div>
+  );
+}
+
+/** 設定のハブの行。丸アイコン＋項目名＋今の値＋›。行全体が押せる */
+export function NavRow({
+  icon,
+  title,
+  value,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  /** 開かなくても分かるように、今の値を1行で添える */
+  value?: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button className="nav-row" onClick={onClick}>
+      <span className="ic">{icon}</span>
+      <span className="txt">
+        <span className="ttl">{title}</span>
+        {value !== undefined && value !== '' && <span className="val">{value}</span>}
+      </span>
+      <span className="chev">
+        <Icon.chevR size={16} />
+      </span>
+    </button>
+  );
+}
+
 /** ラベル＋説明＋右側の操作 を1行にする（設定画面など） */
 export function SettingRow({
   label,
   hint,
   sub,
+  unit,
   children,
 }: {
   label: string;
   hint?: string;
   sub?: boolean;
+  /** 項目名のうしろに小さく添える単位（「トークン」「件」）。数字の枠の中には入れない */
+  unit?: string;
   children: ReactNode;
 }) {
   return (
     <div className={`setting${sub ? ' sub' : ''}`}>
       <div className="txt">
-        <label>{label}</label>
+        <label>
+          {label}
+          {unit && <span className="unit">{unit}</span>}
+        </label>
         {hint && <span>{hint}</span>}
       </div>
       {children}
@@ -530,6 +659,60 @@ export function Row({
           <Icon.chevR />
         </span>
       )}
+    </div>
+  );
+}
+
+/**
+ * 確認ダイアログ（ブラウザ標準の confirm の代わり）。`App` に1つだけ置く。
+ * 呼ぶ側は `ask()`（store.ts）。
+ *
+ * - `role="alertdialog"`。開いたら「キャンセル」にフォーカスする（Enter の押し間違いで実行しない）
+ * - Esc と暗幕のタップは**キャンセル**
+ */
+export function ConfirmHost() {
+  const pending = useApp((s) => s.pendingConfirm);
+  const answer = useApp((s) => s.answerConfirm);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!pending) return;
+    cancelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') answer(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pending, answer]);
+
+  if (!pending) return null;
+  const { opts } = pending;
+  return (
+    <div className="ask-overlay" onClick={() => answer(false)}>
+      <div
+        className="ask-card"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="ask-title"
+        aria-describedby={opts.body ? 'ask-body' : undefined}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="ask-title">{opts.title}</h3>
+        {opts.body && (
+          <p className="body" id="ask-body">
+            {opts.body}
+          </p>
+        )}
+        <button
+          className={`pill ${opts.danger ? 'danger-solid' : 'primary'}`}
+          onClick={() => answer(true)}
+        >
+          {opts.okLabel}
+        </button>
+        <button className="pill" ref={cancelRef} onClick={() => answer(false)}>
+          {opts.cancelLabel ?? 'キャンセル'}
+        </button>
+      </div>
     </div>
   );
 }

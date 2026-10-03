@@ -21,7 +21,7 @@ import { api, streamGenerate, type DonePayload } from '../api';
 import { useModelGroups } from '../models';
 import { Avatar, Field, makeThumb, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
-import { useApp } from '../store';
+import { ask, useApp } from '../store';
 
 interface ResolvedFlag {
   enabled: boolean;
@@ -289,7 +289,7 @@ export default function ChatPage() {
     return new Promise((resolve) => {
       void streamGenerate(id!, body, {
         onDelta: (text) => setStreaming((s) => (s ?? '') + text),
-        onDone: (p) => {
+        onDone: async (p) => {
           setStreaming(null);
           setBusy(false);
           void load();
@@ -301,12 +301,20 @@ export default function ChatPage() {
           for (const w of p.warnings.slice(0, 2)) toast(w);
           if (p.autoJoinSuggested.length) {
             const names = p.autoJoinSuggested.map((cid) => charOf(cid)?.name ?? cid).join('、');
-            if (confirm(`${names} が発話しました。参加者に追加しますか？`)) {
-              void api
+            // 答えを待ってから resolve する（オートプレイが、答えの出る前に次の生成を始めない）
+            const yes = await ask({
+              title: `${names} が発話しました`,
+              body: '参加キャラに加えますか？加えると毎ターン定義が渡ります。',
+              okLabel: '参加させる',
+              cancelLabel: '今回はしない',
+            });
+            if (yes) {
+              await api
                 .put(`/chats/${id}`, {
                   participant_ids: [...chat.participant_ids, ...p.autoJoinSuggested],
                 })
-                .then(() => load());
+                .then(() => load())
+                .catch((err) => toast((err as Error).message, true));
             }
           }
           resolve(p);
@@ -400,7 +408,7 @@ export default function ChatPage() {
   };
 
   const removeChat = async () => {
-    if (!confirm(`「${titleName}」を削除しますか？メッセージも全て消えます`)) return;
+    if (!(await ask({ title: `「${titleName}」を削除しますか？`, body: 'メッセージも全て消えます。元に戻せません。', okLabel: '削除する', danger: true }))) return;
     setSheetOpen(false);
     try {
       await api.del(`/chats/${id}`);
@@ -458,7 +466,7 @@ export default function ChatPage() {
   };
 
   const removeMessage = async (m: Message) => {
-    if (!confirm('このメッセージを削除しますか？')) return;
+    if (!(await ask({ title: 'このメッセージを削除しますか？', body: '元に戻せません。', okLabel: '削除する', danger: true }))) return;
     await api.del(`/messages/${m.id}`);
     setMenuFor(null);
     void load();
@@ -466,7 +474,7 @@ export default function ChatPage() {
 
   const fork = async (m: Message) => {
     setMenuFor(null);
-    if (!confirm('このメッセージまでを新しいチャットに分岐しますか？')) return;
+    if (!(await ask({ title: 'ここから分岐しますか？', body: 'このメッセージまでをコピーした、新しい会話を作ります。', okLabel: '分岐する' }))) return;
     try {
       const c = await api.post<Chat>(`/chats/${id}/fork`, { message_id: m.id });
       toast('分岐しました');
@@ -574,7 +582,7 @@ export default function ChatPage() {
                 setMenuFor(null);
               }}
               onDeleteSnapshot={async (sid) => {
-                if (!confirm('このスナップショットを削除しますか？')) return;
+                if (!(await ask({ title: 'このスナップショットを削除しますか？', body: '元に戻せません。', okLabel: '削除する', danger: true }))) return;
                 try {
                   await api.del(`/snapshots/${sid}`);
                   await load();

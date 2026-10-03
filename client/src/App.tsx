@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { api } from './api';
+import { ConfirmHost } from './components';
 import { useApp } from './store';
 import AlbumPage from './pages/AlbumPage';
 import CalendarPage from './pages/CalendarPage';
@@ -62,6 +63,7 @@ export default function App() {
       <>
         <LoginPage />
         <Toasts />
+        <ConfirmHost />
       </>
     );
   }
@@ -89,6 +91,7 @@ export default function App() {
         <Route path="*" element={<div className="empty-note">ページが見つかりません</div>} />
       </Routes>
       <Toasts />
+      <ConfirmHost />
     </>
   );
 }
