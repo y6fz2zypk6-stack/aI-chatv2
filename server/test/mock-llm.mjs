@@ -107,7 +107,10 @@ const server = http.createServer(async (req, res) => {
   seen.push({
     stream: !!reqJson.stream,
     at: Date.now(),
-    prompt: (reqJson.messages ?? []).map((m) => m.content).join('\n---\n'),
+    prompt: (reqJson.messages ?? [])
+      .map((m) => (Array.isArray(m.content) ? m.content.map((p) => p.text ?? '').join('') : m.content))
+      .join('\n---\n'),
+    rawMessages: reqJson.messages ?? [],
     maxTokens: reqJson.max_tokens ?? null,
     // 接続先の検証用（§6.6）。どのキーで呼ばれたか・OpenRouter固有ヘッダが付いたか
     model: reqJson.model ?? null,

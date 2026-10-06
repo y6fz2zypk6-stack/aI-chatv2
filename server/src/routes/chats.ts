@@ -394,7 +394,7 @@ chatsRouter.get('/chats/:id/prompt-preview', async (req, res) => {
     const brief = (e: { id: string; title: string }) => ({ id: e.id, title: e.title });
     res.json({
       system: a.system,
-      historyMessages: a.messages.slice(1, -1),
+      historyMessages: a.historyMessages,
       situationBlock: a.situationBlock,
       lore: {
         fired: a.lore.fired.map(brief),

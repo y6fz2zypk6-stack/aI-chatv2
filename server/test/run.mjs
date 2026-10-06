@@ -190,6 +190,9 @@ try {
   const oocSaved = await s6.oocScopeSuite(ow);
   await s6.oocIsolationSuite(ow);
 
+  // プロンプトキャッシュ（§6.7）
+  await (await import('./suite-cache.mjs')).promptCacheSuite();
+
   // 接続先（OpenAI互換の直API）。2つ目のモックへ本当に振り分くかを見る
   const s8 = await import('./suite-connections.mjs');
   await s8.connectionCrudSuite();

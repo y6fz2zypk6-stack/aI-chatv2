@@ -115,6 +115,34 @@ export function historyWindow(chatId: string, afterSeq: number, limit: number): 
   return rows.reverse().map(toApi);
 }
 
+/**
+ * 段階窓（§6.2・§6.7）。最低 `window` 件、最大 `window + step` 件を昇順で返す。
+ *
+ * **1件ずつずらさない。** 先頭が毎ターン1件ずつ動くと、履歴の前置きが毎回変わって
+ * プロンプトキャッシュが一度も当たらない。超えたら step 件まとめて落とし、
+ * その後 step ターンは先頭を固定する。落とす件数は要約境界からの通し番号で決まるので、
+ * 再生成しても同じ位置で切れる
+ */
+export function historyWindowStepped(
+  chatId: string,
+  afterSeq: number,
+  window: number,
+  step: number,
+): Message[] {
+  const total = (
+    db.prepare('SELECT COUNT(*) c FROM messages WHERE chat_id = ? AND seq > ?').get(chatId, afterSeq) as {
+      c: number;
+    }
+  ).c;
+  const st = Math.max(1, step);
+  const over = total - (window + st);
+  const drop = over > 0 ? Math.ceil(over / st) * st : 0;
+  const rows = db
+    .prepare('SELECT * FROM messages WHERE chat_id = ? AND seq > ? ORDER BY seq ASC LIMIT -1 OFFSET ?')
+    .all(chatId, afterSeq, drop) as Row[];
+  return rows.map(toApi);
+}
+
 /** 未要約メッセージ（要約対象の全件、昇順） */
 export function messagesAfterSeq(chatId: string, afterSeq: number): Message[] {
   const rows = db
