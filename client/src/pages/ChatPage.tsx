@@ -844,6 +844,24 @@ export default function ChatPage() {
                 <Icon.chevR size={13} />
               </span>
             </button>
+            <button
+              className="srow"
+              onClick={() => {
+                setSheetOpen(false);
+                navigate(`/chats/${id}/diary`);
+              }}
+            >
+              <span className="ic">
+                <Icon.bookOpen />
+              </span>
+              <span className="txt">
+                <b>日記</b>
+                <span>その日の出来事をキャラクターに綴ってもらう（物語には影響しません）</span>
+              </span>
+              <span className="chev">
+                <Icon.chevR size={13} />
+              </span>
+            </button>
           </div>
         </div>
       )}

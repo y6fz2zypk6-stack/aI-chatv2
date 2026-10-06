@@ -27,11 +27,28 @@ export const DEFAULT_CALENDAR: CalendarConfig = {
     秋: { 晴: 50, 曇: 30, 雨: 20 },
     冬: { 雨: 30, みぞれ: 25, 曇: 25, 雪: 10, 晴: 10 },
   },
-  weather_rollover_min: 240,
+  day_rollover_min: 240,
 };
 
+/**
+ * 旧キーを新キーへ読み替える。**新キーがあればそちらを優先し、旧キーは捨てる。**
+ * 暦はDBにJSONのまま保存され、世界の書き出しやスナップショットにも同じ形で載るので、
+ * キー名を変えただけだと既存の世界の区切り時刻が黙って既定（4時）に戻ってしまう。
+ * 読み込み（getCalendar）と書き込みの差分（upsertCalendar）の両方がここを通る
+ */
+export function migrateCalendarKeys(
+  partial: Partial<CalendarConfig> | null | undefined,
+): Partial<CalendarConfig> {
+  const p = { ...(partial ?? {}) } as Partial<CalendarConfig> & { weather_rollover_min?: unknown };
+  if (p.day_rollover_min === undefined && typeof p.weather_rollover_min === 'number') {
+    p.day_rollover_min = p.weather_rollover_min;
+  }
+  delete p.weather_rollover_min;
+  return p;
+}
+
 export function normalizeCalendar(partial: Partial<CalendarConfig> | null | undefined): CalendarConfig {
-  return { ...DEFAULT_CALENDAR, ...(partial ?? {}) };
+  return { ...DEFAULT_CALENDAR, ...migrateCalendarKeys(partial) };
 }
 
 function minutesPerYear(cfg: CalendarConfig): number {
@@ -44,11 +61,11 @@ export function toTotalDay(time: number): number {
 }
 
 /**
- * 天候の「日」。既定では朝4時起点（§12.3）。
+ * 世界の「日」。既定では朝4時起点（§12.3）。天候の引き直しと日記の範囲（§22）が使う。
  *
  * **日付の変わり目とは別に持つ。** 0:00 を境にすると、深夜に会話している最中に
- * 日付が変わった瞬間だけ天気が切り替わる。RPでは日付をまたぐ時間帯の会話が
- * 珍しくないので、天候だけ朝へずらす。
+ * 日付が変わった瞬間だけ天気が切り替わり、日記も夜の場面の途中で切れる。
+ * RPでは日付をまたぐ時間帯の会話が珍しくないので、1日の区切りを朝へずらす。
  *
  * **`Math.floor` であること。** 起点より前（1日目の 0:00〜3:59）は商が負になるので、
  * `Math.trunc` や `| 0` だと 0 に丸まって、初日の4時に引き直されない。
@@ -56,10 +73,17 @@ export function toTotalDay(time: number): number {
  * 判定と抽選の種の**両方**がこの関数を通ること。片方だけ変えると
  * 「同じ日なら同じ天気」（§20-8）が崩れる。
  */
-export function weatherDayOf(cfg: CalendarConfig, time: number): number {
-  const raw = Math.floor(cfg.weather_rollover_min ?? 0);
+export function worldDayOf(cfg: CalendarConfig, time: number): number {
+  const raw = Math.floor(cfg.day_rollover_min ?? 0);
   const rollover = Number.isFinite(raw) ? ((raw % MIN_PER_DAY) + MIN_PER_DAY) % MIN_PER_DAY : 0;
   return Math.floor((time - rollover) / MIN_PER_DAY);
+}
+
+/** 世界の日 → その日が始まる通算分（区切り時刻ちょうど） */
+export function worldDayStart(cfg: CalendarConfig, day: number): number {
+  const raw = Math.floor(cfg.day_rollover_min ?? 0);
+  const rollover = Number.isFinite(raw) ? ((raw % MIN_PER_DAY) + MIN_PER_DAY) % MIN_PER_DAY : 0;
+  return day * MIN_PER_DAY + rollover;
 }
 
 /** 月番号から季節名を返す */

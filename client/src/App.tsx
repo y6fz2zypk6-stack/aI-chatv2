@@ -29,6 +29,7 @@ import SummaryPolicyPage from './pages/settings/SummaryPolicyPage';
 import SystemPromptPage from './pages/settings/SystemPromptPage';
 import StatePage from './pages/StatePage';
 import SummaryPage from './pages/SummaryPage';
+import DiaryPage from './pages/DiaryPage';
 import WorldDetailPage from './pages/WorldDetailPage';
 import WorldsPage from './pages/WorldsPage';
 
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/chats/:id" element={<ChatPage />} />
         <Route path="/chats/:id/state" element={<StatePage />} />
         <Route path="/chats/:id/summary" element={<SummaryPage />} />
+        <Route path="/chats/:id/diary" element={<DiaryPage />} />
         <Route path="/worlds" element={<WorldsPage />} />
         <Route path="/worlds/:id" element={<WorldDetailPage />} />
         <Route path="/worlds/:id/lorebook" element={<LorebookPage />} />

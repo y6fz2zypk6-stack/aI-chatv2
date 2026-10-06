@@ -192,21 +192,22 @@ export default function CalendarPage() {
               onChange={(e) => setWeatherJson(e.target.value)}
             />
           </Field>
-          {/* 日付の変わり目（0:00）とは別の境界。深夜の会話中に天気が変わるのを避ける */}
+          {/* 日付の変わり目（0:00）とは別の境界。深夜の会話中に天気が変わったり、
+              日記が夜の場面の途中で切れたりするのを避ける */}
           <div className="setting">
             <div className="txt">
-              <label>天候を引き直す時刻</label>
+              <label>1日の区切り時刻（天候の引き直し・日記）</label>
               <span>
-                0時からの分。240 = 朝4時。日付の変わり目ではなくこの時刻に切り替わるので、
-                深夜の会話中に急に天気が変わりません。0 にすると0:00起点に戻ります
+                0時からの分。240 = 朝4時。天候はこの時刻に切り替わり、日記もこの時刻で1日を区切ります。
+                深夜まで続いた場面は前日の出来事として扱われます。0 にすると0:00起点に戻ります
               </span>
             </div>
             <Stepper
-              value={cfg.weather_rollover_min ?? 240}
+              value={cfg.day_rollover_min ?? 240}
               step={60}
               min={0}
               max={1380}
-              onChange={(v) => setCfg({ ...cfg, weather_rollover_min: v })}
+              onChange={(v) => setCfg({ ...cfg, day_rollover_min: v })}
             />
           </div>
         </div>
