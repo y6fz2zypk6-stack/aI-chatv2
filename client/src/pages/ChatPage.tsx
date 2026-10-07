@@ -881,6 +881,20 @@ export default function ChatPage() {
               </span>
               <span>会話の名前を変える</span>
             </button>
+            {/* 日記は物語を進める操作ではなく読み物なので、＋シートではなくここに置く（§22） */}
+            <button
+              className="prow"
+              role="menuitem"
+              onClick={() => {
+                setChatMenu(false);
+                navigate(`/chats/${id}/diary`);
+              }}
+            >
+              <span className="ic">
+                <Icon.bookOpen size={17} />
+              </span>
+              <span>日記を読む</span>
+            </button>
             <div className="pgroup">確認する</div>
             <button
               className="prow"

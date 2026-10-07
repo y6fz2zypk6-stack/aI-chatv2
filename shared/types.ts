@@ -345,12 +345,15 @@ export interface CalendarConfig {
   /** 季節 → { 天候: 重み } */
   weather_table: Record<string, Record<string, number>>;
   /**
-   * 天候を引き直す時刻（0時からの分）。既定 240 = 朝4時。
-   * 日付の変わり目（0:00）とは別に持つ。深夜に会話していると
-   * 日付が変わった瞬間に天気が切り替わって不自然なため（§12.3）。
+   * 世界の「1日」の区切り時刻（0時からの分）。既定 240 = 朝4時。
+   * 天候の引き直しと日記の範囲（§12.3・§22）がこの境界で揃う。
+   * 日付の変わり目（0:00）とは別に持つ。深夜まで続く場面を前日の出来事として扱うため。
    * 0 にすると 0:00 起点（日付の変わり目と同じ）になる。
+   *
+   * 旧名 `weather_rollover_min`。保存済みのJSON・書き出し・スナップショットには旧名が
+   * 残っているので、読み込みは必ず normalizeCalendar（読み替え付き）を通すこと。
    */
-  weather_rollover_min: number;
+  day_rollover_min: number;
 }
 
 // ---- 条件付きイベント（v1.5.3 §4・§5） ----
@@ -478,6 +481,40 @@ export interface DirectorView {
   pending: number;
   interval: number;
   running: boolean;
+}
+
+/**
+ * キャラクターの日記（§22）。**プロンプトには一切載せない**読み物。
+ * 1チャット × 1キャラ × 世界の1日につき1件（書き直しは上書き）
+ */
+export interface Diary {
+  id: string;
+  chat_id: string;
+  character_id: string;
+  /** 世界の日（worldDayOf。1日の区切り時刻起点の通算日） */
+  day: number;
+  /** 書いた時点の日付表記（「3年8月10日(月)」）。暦を変えても書いたときの表記を残す */
+  date_label: string;
+  content: string;
+  model: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/** 日記を書ける日（そのチャットに出てきた世界の日） */
+export interface DiaryDay {
+  day: number;
+  date_label: string;
+  /** その日に居合わせた登録キャラ */
+  character_ids: string[];
+  message_count: number;
+}
+
+export interface DiaryIndex {
+  days: DiaryDay[];
+  entries: Diary[];
+  /** days に出てくるキャラの表示用情報 */
+  characters: { id: string; name: string; avatar: string }[];
 }
 
 export interface Summary {

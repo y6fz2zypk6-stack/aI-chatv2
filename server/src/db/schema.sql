@@ -211,6 +211,21 @@ CREATE TABLE IF NOT EXISTS director_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_director_notes_chat ON director_notes(chat_id, created_at);
 
+-- キャラクターの日記（§22）。プロンプトには載せない読み物。
+-- day は世界の日（1日の区切り時刻起点）。1チャット×1キャラ×1日で1件、書き直しは上書き
+CREATE TABLE IF NOT EXISTS diaries (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+  day INTEGER NOT NULL,
+  date_label TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (chat_id, character_id, day)
+);
+
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY,
   character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,

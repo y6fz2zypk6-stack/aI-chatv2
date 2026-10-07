@@ -1,6 +1,6 @@
 import { db, now, fromJson, toJson } from '../index.js';
 import type { CalendarConfig } from '../../../../shared/types.js';
-import { DEFAULT_CALENDAR, normalizeCalendar } from '../../domain/calendar.js';
+import { DEFAULT_CALENDAR, migrateCalendarKeys, normalizeCalendar } from '../../domain/calendar.js';
 
 export function getCalendar(worldId: string): CalendarConfig {
   const row = db.prepare('SELECT config FROM calendars WHERE world_id = ?').get(worldId) as
@@ -10,7 +10,8 @@ export function getCalendar(worldId: string): CalendarConfig {
 }
 
 export function upsertCalendar(worldId: string, patch: Partial<CalendarConfig>): CalendarConfig {
-  const next = { ...getCalendar(worldId), ...patch };
+  // 差分も読み替える。旧キーだけの書き出しファイルを取り込んだときに値を落とさないため
+  const next = normalizeCalendar({ ...getCalendar(worldId), ...migrateCalendarKeys(patch) });
   const t = now();
   db.prepare(
     `INSERT INTO calendars (world_id, config, created_at, updated_at) VALUES (?, ?, ?, ?)
