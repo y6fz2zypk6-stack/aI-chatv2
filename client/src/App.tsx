@@ -18,6 +18,7 @@ import PersonasPage from './pages/PersonasPage';
 import AutoplayPage from './pages/settings/AutoplayPage';
 import BudgetPage from './pages/settings/BudgetPage';
 import DefaultPersonaPage from './pages/settings/DefaultPersonaPage';
+import DirectorSettingsPage from './pages/settings/DirectorSettingsPage';
 import EventsFlagsPage from './pages/settings/EventsFlagsPage';
 import LoreSettingsPage from './pages/settings/LoreSettingsPage';
 import ModelsPage from './pages/settings/ModelsPage';
@@ -105,6 +106,7 @@ export default function App() {
         <Route path="/settings/system-prompt" element={<SystemPromptPage />} />
         <Route path="/settings/state" element={<StateSettingsPage />} />
         <Route path="/settings/events" element={<EventsFlagsPage />} />
+        <Route path="/settings/director" element={<DirectorSettingsPage />} />
         <Route path="/settings/lorebook" element={<LoreSettingsPage />} />
         <Route path="/settings/summary" element={<SummaryMemoryPage />} />
         <Route path="/settings/summary/policy" element={<SummaryPolicyPage />} />

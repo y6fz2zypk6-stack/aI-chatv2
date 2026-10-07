@@ -187,6 +187,8 @@ export interface AssembleInput {
   eventFacts?: string;
   /** 「今回の演出指示」（inject_mode = instruction） */
   eventInstructions?: string;
+  /** 裏の台本の演出指示（§23）。OFF・台本なしなら空文字 */
+  directorBlock?: string;
   /** 「一時的なユーザー指示」（OOC、§10.3）。未設定なら空文字 */
   temporaryBlock?: string;
   /** オートプレイ: ユーザー入力なしで場面を続ける指示を添える（§8.7） */
@@ -323,13 +325,16 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     dayChanged: input.dayChanged,
   });
   // 末尾systemのブロック順序は固定（v1.5.3 §6.3）:
-  //   現在の状況 → 進行状況 → 発生中の出来事 → 今回の演出指示 → 一時的なユーザー指示
+  //   現在の状況 → 進行状況 → 発生中の出来事 → 今回の演出指示 → 物語の舵取り → 一時的なユーザー指示
   // 後ろほど強く参照されるので、事実を読ませてから「どう出すか」の指示を当てる。
   // 一時指示はその場の手動の補正なので、自動で決まる指示より後ろに置く
   for (const block of [
     input.varsBlock,
     input.eventFacts,
     input.eventInstructions,
+    // 裏の台本（§23）は数場面に渡る方針なので、そのターン限りのイベント指示より手前の扱い。
+    // 一時指示はその場の手動の補正なので、さらに後ろに置く
+    input.directorBlock,
     input.temporaryBlock,
   ]) {
     if (block) situationBlock += `\n\n${block}`;

@@ -184,6 +184,8 @@ export interface Scenario {
   /** 3段の解決順（チャット → シナリオ → 全体設定）。NULLで継承（v1.5.3 §1.1） */
   events_enabled: number | null;
   vars_enabled: number | null;
+  /** 裏の台本（§23）。NULLで継承 */
+  director_enabled: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -224,6 +226,8 @@ export interface Chat {
   /** 3段の解決順（チャット → シナリオ → 全体設定）。NULLで継承（v1.5.3 §1.1） */
   events_enabled: number | null;
   vars_enabled: number | null;
+  /** 裏の台本（§23）。NULLで継承 */
+  director_enabled: number | null;
   state: ChatState;
   /** Chat作成時にシナリオからコピーした初期ステート。以後変更しない（§4.6） */
   initial_state: ChatState;
@@ -449,6 +453,33 @@ export interface EventEvalRow {
   detail?: string;
 }
 
+/**
+ * 裏の台本（§23）。最新1件だけを使い、履歴は残す。
+ * `ledger` は作者側の裏設定で**本文のプロンプトには載せない**。
+ * 載せるのは `cue`（次の数場面への短い演出指示）だけ
+ */
+export interface DirectorNote {
+  id: string;
+  chat_id: string;
+  /** この seq までを読んで書いた */
+  up_to_seq: number;
+  ledger: string;
+  cue: string;
+  model: string;
+  created_at: number;
+}
+
+/** GET /chats/:id/director */
+export interface DirectorView {
+  enabled: boolean;
+  from: 'chat' | 'scenario' | 'settings';
+  note: DirectorNote | null;
+  /** 前回の更新から増えた応答の数と、次の更新までの間隔 */
+  pending: number;
+  interval: number;
+  running: boolean;
+}
+
 export interface Summary {
   id: string;
   chat_id: string;
@@ -464,7 +495,7 @@ export interface Summary {
  * 「静かに失敗した」を作らないため、成功・失敗の両方を必ず返す。
  */
 export interface Notice {
-  kind: 'summary' | 'memory';
+  kind: 'summary' | 'memory' | 'director';
   ok: boolean;
   message: string;
 }
@@ -676,6 +707,14 @@ export interface Settings {
   vars_enabled: number;
   /** 1ターンに注入するイベントの上限件数 */
   event_max_per_turn: number;
+  /** 裏の台本（§23）。既定はOFF。シナリオ・会話で上書きできる */
+  director_enabled: number;
+  /** 台本の更新に使うモデル。空なら utility_model */
+  director_model: string;
+  /** 何回の応答ごとに台本を更新するか */
+  director_interval: number;
+  /** 台本本体の文字数の目安 */
+  director_max_chars: number;
 }
 
 // ---- API リクエスト/レスポンス ----

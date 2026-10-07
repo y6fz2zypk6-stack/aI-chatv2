@@ -7,6 +7,7 @@ import {
   stripMarks,
   type Character,
   type Chat,
+  type DirectorView,
   type EventEvalRow,
   type GameTime,
   type Location,
@@ -37,7 +38,7 @@ interface Detail {
   total: number;
   hasMore: boolean;
   gameTime: GameTime;
-  flags: { events: ResolvedFlag; vars: ResolvedFlag; scenarioMissing: boolean };
+  flags: { events: ResolvedFlag; vars: ResolvedFlag; director?: ResolvedFlag; scenarioMissing: boolean };
   /** 画像本体は含まない。実体は /api/snapshots/:id/image（§21） */
   snapshots: SnapshotMeta[];
 }
@@ -1030,6 +1031,15 @@ export default function ChatPage() {
             />
             <FlagResult flag={detail.flags?.vars} />
           </Field>
+          <Field label="裏の台本">
+            <TriToggle
+              value={chat.director_enabled ?? null}
+              onChange={(v) => void api.put(`/chats/${id}`, { director_enabled: v }).then(load)}
+              inheritedLabel="シナリオ / 全体設定"
+            />
+            <FlagResult flag={detail.flags?.director} />
+            <DirectorPanel chatId={chat.id} enabled={!!detail.flags?.director?.enabled} />
+          </Field>
           <div className="empty-note" style={{ padding: 0, textAlign: 'left' }}>
             「継承」は シナリオ → 全体設定 の順に見ます。
             {detail.flags?.scenarioMissing && ' このチャットのシナリオは削除済みのため、全体設定を見ています。'}
@@ -1884,6 +1894,89 @@ const EVENT_OUTCOME: Record<EventEvalRow['outcome'], string> = {
   chance: '抽選外れ',
   capped: '上限超過',
 };
+
+/**
+ * 裏の台本（§23）。**中身は折りたたんで隠す。** ネタバレを避けたい人は開かずに遊べる。
+ * 調整したいときだけ開いて、必要なら今すぐ書き直させる
+ */
+function DirectorPanel({ chatId, enabled }: { chatId: string; enabled: boolean }) {
+  const [view, setView] = useState<DirectorView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useApp((s) => s.toast);
+
+  const reload = useCallback(() => {
+    void api
+      .get<DirectorView>(`/chats/${chatId}/director`)
+      .then(setView)
+      .catch(() => setView(null));
+  }, [chatId]);
+  useEffect(reload, [reload, enabled]);
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ message: string; view: DirectorView }>(`/chats/${chatId}/director/refresh`);
+      setView(r.view);
+      toast(r.message);
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    const ok = await ask({
+      title: '裏の台本を白紙に戻しますか？',
+      body: '次の更新で、これまでの本文から一から書き直します。',
+      okLabel: '白紙に戻す',
+      danger: true,
+    });
+    if (!ok) return;
+    await api.del(`/chats/${chatId}/director`);
+    reload();
+  };
+
+  if (!view) return null;
+  const note = view.note;
+  return (
+    <div className="director-panel">
+      <div className="flag-result">
+        {note
+          ? `前回の更新から応答${view.pending}回（${view.interval}回ごとに更新）`
+          : enabled
+            ? 'まだ台本はありません。応答2回で最初の台本を作ります'
+            : 'まだ台本はありません'}
+        {view.running && ' ・ 更新中…'}
+      </div>
+      <div className="row wrap" style={{ gap: 8, marginTop: 8 }}>
+        <button className="pill sm" disabled={busy || view.running} onClick={() => void refresh()}>
+          {busy ? '書き直し中…' : '今すぐ更新'}
+        </button>
+        {note && (
+          <button className="pill sm" disabled={busy} onClick={() => void reset()}>
+            白紙に戻す
+          </button>
+        )}
+      </div>
+      {!enabled && note && (
+        <div className="flag-result">OFFの間は、台本があっても本文には渡しません</div>
+      )}
+      {note && (
+        <details className="set-more" style={{ marginTop: 10 }}>
+          <summary>台本をのぞく（ネタバレ注意）</summary>
+          <div className="set-more-body">
+            <div style={{ fontWeight: 700, margin: '4px 0 6px' }}>本文に渡している指示</div>
+            <pre className="pre-block">{note.cue}</pre>
+            <div style={{ fontWeight: 700, margin: '12px 0 6px' }}>台本（本文には渡さない）</div>
+            <pre className="pre-block">{note.ledger}</pre>
+            <div className="flag-result">{modelLabel(note.model)} が書きました</div>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
 
 function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
   const [data, setData] = useState<PreviewData | null>(null);

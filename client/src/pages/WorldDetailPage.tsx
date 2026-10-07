@@ -550,6 +550,13 @@ function ScenarioEditor(props: {
           inheritedLabel="全体設定"
         />
       </Field>
+      <Field label="裏の台本">
+        <TriToggle
+          value={s.director_enabled ?? null}
+          onChange={(v) => setS({ ...s, director_enabled: v })}
+          inheritedLabel="全体設定"
+        />
+      </Field>
     </Modal>
   );
 }

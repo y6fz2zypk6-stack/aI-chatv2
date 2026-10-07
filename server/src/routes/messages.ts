@@ -56,6 +56,7 @@ import { scopeEntries } from '../domain/lorebook.js';
 import { maybeExtract } from '../domain/memory.js';
 import { applyDelta } from '../domain/state.js';
 import { maybeSummarize } from '../domain/summary.js';
+import { buildDirectorBlock, maybeDirect } from '../domain/director.js';
 import { extractStateSeparate } from '../llm/extract.js';
 import { completeText, contextLengthOf, streamChat, streamTimeoutSeconds } from '../llm/openrouter.js';
 import {
@@ -187,6 +188,8 @@ export async function gatherContext(
       varsInstruction: varsEnabled ? varsInstruction(world.vars_schema) : '',
       eventFacts,
       eventInstructions,
+      // 裏の台本（§23）。OFFなら空文字で、1文字も足さない
+      directorBlock: buildDirectorBlock(chat, scenario, settings),
       // 一時指示（§10.3）。空文字なら buildTemporaryBlock が空を返し、1文字も足さない
       temporaryBlock: buildTemporaryBlock(chat.temporary_instruction),
       settings,
@@ -683,6 +686,9 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     // 結果は done のあとに notice として流す（§5.9）
     const summaryTask = maybeSummarize(chatId, settings);
     const extractTask = maybeExtract(chatId, settings);
+    // 裏の台本（§23）。**正常完了したときだけ。** 停止した応答を読んで台本を進めない
+    const directorTask =
+      status === 'complete' ? maybeDirect(chatId, settings) : { needed: false, done: Promise.resolve(null) };
     const needsSummary = summaryTask.needed;
 
     // オートプレイの継続判定（§8.7）: 区切りが良ければ自動停止
@@ -711,7 +717,7 @@ messagesRouter.post('/chats/:id/messages', async (req, res) => {
     // 裏で走った要約・抽出の結果を、ストリームを閉じる前に流す（§5.9）。
     // done は先に送っているので画面はもう待たされていない。inflight も解放済みなので
     // 次のターンを始めることもできる。
-    for (const n of await settleNotices([summaryTask.done, extractTask.done])) {
+    for (const n of await settleNotices([summaryTask.done, extractTask.done, directorTask.done])) {
       send('notice', n);
     }
     res.end();

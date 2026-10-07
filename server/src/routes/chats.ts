@@ -43,6 +43,8 @@ import { applyManualVars } from '../domain/vars.js';
 import { commitCandidates, extractCandidates, runExtract } from '../domain/memory.js';
 import { normalizeState } from '../domain/state.js';
 import { runSummarize } from '../domain/summary.js';
+import { getDirectorView, resolveDirector, runDirector } from '../domain/director.js';
+import { copyDirectorNotesForFork, deleteDirectorNotes } from '../db/repo/directorNotes.js';
 import { assembleContext } from '../llm/prompt.js';
 import { gatherContext, visitIdOf } from './messages.js';
 
@@ -141,6 +143,7 @@ function resolvedFlags(chat: Chat) {
   return {
     events: one(chat.events_enabled, scenario?.events_enabled, settings.events_enabled),
     vars: one(chat.vars_enabled, scenario?.vars_enabled, settings.vars_enabled),
+    director: resolveDirector(chat, scenario, settings),
     /**
      * シナリオの段を飛ばしているか。
      * シナリオを削除すると chats.scenario_id は FK で NULL になるので、
@@ -254,10 +257,13 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
     // 分岐した途端に「髪を結んでいる」が消えるほうが事故に近い
     temporary_instruction: chat.temporary_instruction,
     temporary_instruction_scope: chat.temporary_instruction_scope,
+    // 裏の台本のON/OFFも引き継ぐ。分岐した途端に台本が止まると、試し比べができない
+    director_enabled: chat.director_enabled,
   });
 
   // メッセージと候補を昇順にコピー（seq は新チャット内で1から振り直される）
   const idMap = new Map<string, string>();
+  const seqPairs: [number, number][] = [];
   for (const m of listMessagesUpToSeq(chat.id, target.seq)) {
     const isTarget = m.id === target.id;
     const copied = insertMessage({
@@ -270,6 +276,7 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
       kind: m.kind,
     });
     idMap.set(m.id, copied.id);
+    seqPairs.push([m.seq, copied.seq]);
     const variants = listVariants(m.id);
     for (const v of variants) {
       insertVariantAt({
@@ -288,6 +295,12 @@ chatsRouter.post('/chats/:id/fork', (req, res) => {
 
   // 発火履歴も引き継ぐ。コピーしないと分岐先で once イベントがもう一度起きる（v1.5.3 §8）
   copyFiresForFork(chat.id, newChat.id, target.seq, idMap);
+  // 裏の台本も分岐点までに書かれた分だけ引き継ぐ（§23）。境界は分岐先の seq に読み替える
+  copyDirectorNotesForFork(chat.id, newChat.id, target.seq, (oldSeq) => {
+    let mapped = 0;
+    for (const [o, n] of seqPairs) if (o <= oldSeq) mapped = n;
+    return mapped;
+  });
 
   res.status(201).json(getChat(newChat.id));
 });
@@ -476,6 +489,40 @@ chatsRouter.post('/chats/:id/summarize', async (req, res) => {
 
 chatsRouter.delete('/chats/:id/summary', (req, res) => {
   deleteSummaries(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- 裏の台本（§23）----
+
+chatsRouter.get('/chats/:id/director', (req, res) => {
+  const view = getDirectorView(req.params.id);
+  if (!view) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  res.json(view);
+});
+
+/** 間隔を待たずに今すぐ書き直す。OFFでも実行はできる（保存されるが、ONにするまで注入しない） */
+chatsRouter.post('/chats/:id/director/refresh', async (req, res) => {
+  const chat = getChat(req.params.id);
+  if (!chat) {
+    res.status(404).json({ error: 'チャットが見つかりません' });
+    return;
+  }
+  const r = await runDirector(chat.id, getSettings());
+  if (r.skipped) {
+    res.status(409).json({ error: '裏の台本はいま更新中です' });
+    return;
+  }
+  res
+    .status(r.ok ? 200 : 502)
+    .json({ ...r, ...(r.ok ? {} : { error: r.message }), view: getDirectorView(chat.id) });
+});
+
+/** 台本を白紙に戻す。次の更新で一から書き直される */
+chatsRouter.delete('/chats/:id/director', (req, res) => {
+  deleteDirectorNotes(req.params.id);
   res.json({ ok: true });
 });
 

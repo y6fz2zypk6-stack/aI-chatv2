@@ -69,6 +69,11 @@ export const DEFAULT_SETTINGS: Settings = {
   events_enabled: 1,
   vars_enabled: 0,
   event_max_per_turn: 2,
+  // 裏の台本（§23）。**既定はOFF。** 呼び出しが増えるので、使う人だけが払う
+  director_enabled: 0,
+  director_model: '',
+  director_interval: 6,
+  director_max_chars: 1500,
 };
 
 /**

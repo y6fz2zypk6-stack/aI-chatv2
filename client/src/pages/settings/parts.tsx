@@ -162,16 +162,19 @@ export function ModelSelect({
   value,
   groups,
   onChange,
+  emptyLabel = '既定（.env の設定）',
 }: {
   value: string;
   groups: ModelGroup[];
   onChange: (ref: string) => void;
+  /** 空を選んだときの意味。裏の台本では「裏方の処理と同じ」になる */
+  emptyLabel?: string;
 }) {
   const known = groups.some((g) => g.options.some((o) => o.ref === value));
   return (
     <div className="select-wrap">
       <select value={known ? value : ''} onChange={(e) => onChange(e.target.value)}>
-        <option value="">既定（.env の設定）</option>
+        <option value="">{emptyLabel}</option>
         {/* 一覧に無いIDを選んでいるとき（自由入力・消えたモデル）も見えるようにする */}
         {!known && value && <option value={value}>{value}（一覧に無い指定）</option>}
         {groups.map((g) => (

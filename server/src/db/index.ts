@@ -323,6 +323,18 @@ const migrations: { version: number; up: (d: Database.Database) => void }[] = [
               )`);
     },
   },
+  {
+    // 裏の台本（§23）の有効化スイッチ。events_enabled と同じ3段解決。NULLで継承
+    version: 12,
+    up: (d) => {
+      if (!hasColumn(d, 'scenarios', 'director_enabled')) {
+        d.exec('ALTER TABLE scenarios ADD COLUMN director_enabled INTEGER');
+      }
+      if (!hasColumn(d, 'chats', 'director_enabled')) {
+        d.exec('ALTER TABLE chats ADD COLUMN director_enabled INTEGER');
+      }
+    },
+  },
 ];
 
 const applied = new Set(
