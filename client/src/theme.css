@@ -61,10 +61,10 @@
   --msg-gap: 17px;
   --bubble-pad-y: 9px;
   --bubble-pad-x: 13px;
-  --bubble-font: 14px;
+  --bubble-font: 12px;
   --bubble-lh: 1.7;
   --act-scale: 0.94;
-  --narr-font: 13px;
+  --narr-font: 11.5px;
   --narr-lh: 1.7;
 
   /* --- PC幅: 画面を1本の列にして中央に置く --- */
