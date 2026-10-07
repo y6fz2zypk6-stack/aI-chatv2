@@ -2902,6 +2902,11 @@ textarea.tall {
   margin-top: 4px;
 }
 
+/* 折りたたみの地（--surface-2）と同じ色だと、枠の内側の余白が字下げに見える */
+.director-panel .pre-block {
+  background: var(--surface);
+}
+
 /* ===== 日記（§22） =====
    読み物の画面なので、操作の部品は控えめにして紙面を主役にする。
    罫線は背景のグラデーションで引き、行送りと揃える */
