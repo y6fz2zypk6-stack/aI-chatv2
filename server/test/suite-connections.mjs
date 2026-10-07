@@ -170,6 +170,21 @@ export async function connectionRoutingSuite(mock2Port) {
       !r2[0].referer && !r2[0].title, `${r2[0].referer} / ${r2[0].title}`);
   }
 
+  // プロンプトキャッシュの区切り（§6.7）は OpenRouter 経由の Anthropic だけ。
+  // 自前の接続先には、モデル名が anthropic/ でも未知のフィールドを送らない
+  {
+    await api('PUT', `/chats/${chat.id}`, { model: `${CONN}::anthropic/claude-local` });
+    await clearMockRequests2();
+    setQueue2([{ text: answer }]);
+    await generate(chat.id, { content: 'さん' });
+    const r2 = await mockRequests2();
+    const raw = r2[0]?.rawMessages ?? [];
+    check('接続先には cache_control を送らない',
+      raw.length > 0 && raw.every((m) => typeof m.content === 'string'),
+      JSON.stringify(raw.map((m) => typeof m.content)));
+    await api('PUT', `/chats/${chat.id}`, { model: `${CONN}::local-llama` });
+  }
+
   // 要約・抽出（utility_model）も振り分く
   {
     await api('PUT', '/settings', { utility_model: `${CONN}::local-small` });

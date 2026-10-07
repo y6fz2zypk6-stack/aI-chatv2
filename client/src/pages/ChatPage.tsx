@@ -1915,7 +1915,7 @@ function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
                 <span className="tag">メモリー −{data.trimmed.memories}</span>
               )}
             </div>
-            <div className="kicker">現在の状況</div>
+            <div className="kicker">末尾（毎ターン変わる部分）</div>
             <pre className="pre-block">{data.situationBlock}</pre>
             {data.varsEnabled && data.varsBlock && (
               <>
@@ -1951,7 +1951,7 @@ function PromptPreviewModal(props: { chatId: string; onClose: () => void }) {
                 </span>
               ))}
             </div>
-            <div className="kicker">system</div>
+            <div className="kicker">前置き（キャッシュする部分）</div>
             <pre className="pre-block">{data.system}</pre>
           </>
         )}

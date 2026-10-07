@@ -1060,7 +1060,8 @@ export async function participantsSuite(w) {
   const chat = await newChat(w);
   const sheetIn = async () => {
     const pv = (await api('GET', `/chats/${chat.id}/prompt-preview`)).json;
-    return pv.system.includes('サーニャの人物像です');
+    // 準レギュラーの定義は末尾 system（層D、§6.7）に載る
+    return (pv.system + pv.situationBlock).includes('サーニャの人物像です');
   };
 
   // 準レギュラーのまま・対象キャラ未指定では注入されない（今回の調査結果の固定）

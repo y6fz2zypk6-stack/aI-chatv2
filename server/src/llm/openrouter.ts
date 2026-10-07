@@ -11,6 +11,59 @@ import { headersOf, resolveConnection, resolveModelRef, type ResolvedConnection 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /**
+   * プロンプトキャッシュの区切り。**このメッセージまでを前置きとしてキャッシュする。**
+   * 組み立て側は「どこで切るか」だけを決め、送信形式（cache_control・TTL）はここで決める。
+   * 対応しない接続先・モデルでは黙って外す（§6.7）
+   */
+  cache?: boolean;
+}
+
+// ---- プロンプトキャッシュ（§6.7） ----
+
+type CacheTtl = '5m' | '1h';
+
+/**
+ * `PROMPT_CACHE_TTL`: `1h`（既定）/ `5m` / `off`。
+ * 1シーンを読んで考えている間に5分は過ぎやすいので既定は1時間。
+ * 書き込みは割高（5分=1.25倍・1時間=2倍）だが、読み出しは0.1倍なので続けて遊ぶほど得になる
+ */
+function cacheTtl(): CacheTtl | null {
+  const v = (process.env.PROMPT_CACHE_TTL || '1h').trim().toLowerCase();
+  if (v === 'off' || v === '0' || v === 'false') return null;
+  return v === '5m' ? '5m' : '1h';
+}
+
+/**
+ * 明示的な区切りが必要なのは Anthropic のモデルで、OpenRouter 経由なら
+ * content パーツの `cache_control` がそのまま渡る。
+ * それ以外の接続先（OpenAI互換の自前サービスなど）には未知のフィールドを送らない
+ */
+export function supportsPromptCache(conn: ResolvedConnection, modelId: string): boolean {
+  const viaOpenRouter = conn.builtin || /openrouter\.ai/i.test(conn.baseUrl);
+  return viaOpenRouter && /^~?anthropic\//i.test(modelId);
+}
+
+/** 上流へ送る形に直す。`cache` 印はここで `cache_control` に変換するか、捨てる */
+export function toWireMessages(
+  messages: ChatMessage[],
+  conn: ResolvedConnection,
+  modelId: string,
+): unknown[] {
+  const ttl = supportsPromptCache(conn, modelId) ? cacheTtl() : null;
+  return messages.map(({ role, content, cache }) => {
+    if (!cache || !ttl || !content) return { role, content };
+    return {
+      role,
+      content: [
+        {
+          type: 'text',
+          text: content,
+          cache_control: ttl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' },
+        },
+      ],
+    };
+  });
 }
 
 // ---- モデル情報（context_length のキャッシュ、§6.5） ----
@@ -165,7 +218,7 @@ export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
         signal: ctl.signal,
         body: JSON.stringify({
           model: modelId,
-          messages: opts.messages,
+          messages: toWireMessages(opts.messages, conn, modelId),
           max_tokens: opts.maxTokens,
           stop: opts.stop,
           stream: true,
@@ -255,7 +308,7 @@ export async function complete(opts: {
     headers: headersOf(conn),
     body: JSON.stringify({
       model: modelId,
-      messages: opts.messages,
+      messages: toWireMessages(opts.messages, conn, modelId),
       max_tokens: opts.maxTokens,
       ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
     }),

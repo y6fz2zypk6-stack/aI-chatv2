@@ -196,8 +196,12 @@ export interface AssembleInput {
 export interface AssembleResult {
   messages: ChatMessage[];
   stop: string[];
+  /** 前置きの system（層A+B）。プレビュー表示用 */
   system: string;
+  /** 末尾の system（層D: 準レギュラー・ロア・現在の状況・イベント・一時指示） */
   situationBlock: string;
+  /** 履歴（プレビュー表示用。キャッシュ印は外してある） */
+  historyMessages: ChatMessage[];
   lore: LoreFireResult;
   estimatedTokens: number;
   inputBudget: number;
@@ -397,23 +401,34 @@ export function assembleContext(input: AssembleInput): AssembleResult {
 
   const overBudget = overBudgetNow() && history.length <= 2;
 
-  // ---- 最終組み立て（§6.1の順序） ----
-  const sys: string[] = [
-    ...sysHead, // 1〜6. フォーマット・設定の扱い・共通/世界/シナリオ・参加キャラ
-    ...optionalNpcDefs, // 7. 準レギュラー
-    ...sysTail, // 8〜9. ナレーター・ペルソナ
-    ...memories, // 10. メモリー
-  ];
-  if (summaryBlock) sys.push(summaryBlock); // 11. あらすじ
+  // ---- 最終組み立て（§6.1の順序・§6.7 キャッシュ層） ----
+  // 前から「変わりにくい順」に並べ、層の切れ目でキャッシュを区切る。
+  // 途中に毎ターン変わるものが1つでも挟まると、それより後ろは全部キャッシュから外れる。
+  //   A 固定      : フォーマット〜参加キャラ・ナレーター・ペルソナ          ← 区切り1
+  //   B 準固定    : メモリー・あらすじ（要約・抽出のときだけ変わる）        ← 区切り2
+  //   C 履歴      : 段階窓（§6.2）で先頭が毎ターンずれないようにしてある  ← 区切り3
+  //   D 毎ターン  : 準レギュラー・発火ロア・現在の状況・イベント・一時指示
+  // 準レギュラーとロアは発火次第で出入りするので D に置く。末尾ほど強く参照されるので、
+  // 場面に効かせたい情報としてもこの位置の方が都合がよい
+  const layerA = [...sysHead, ...sysTail].join('\n\n'); // 1〜6・8〜9
+  const layerB = [...memories, summaryBlock].filter(Boolean).join('\n\n'); // 10〜11
+  const system = [layerA, layerB].filter(Boolean).join('\n\n');
+
+  const tail: string[] = [...optionalNpcDefs]; // 7. 準レギュラー
   if (adoptedLore.length) {
-    sys.push(`# 関連する世界観情報\n${adoptedLore.map((e) => e.content).join('\n\n')}`); // 12. ロア
+    tail.push(`# 関連する世界観情報\n${adoptedLore.map((e) => e.content).join('\n\n')}`); // 12. ロア
   }
-  const system = sys.join('\n\n');
+  tail.push(situationBlock);
+  const tailBlock = tail.join('\n\n');
+
+  const historyMessages = historyToMessages(history);
+  if (historyMessages.length) historyMessages[historyMessages.length - 1].cache = true;
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: system },
-    ...historyToMessages(history),
-    { role: 'system', content: situationBlock },
+    { role: 'system', content: layerA, cache: true },
+    ...(layerB ? [{ role: 'system' as const, content: layerB, cache: true }] : []),
+    ...historyMessages,
+    { role: 'system', content: tailBlock },
   ];
 
   // §5.5 stopシーケンス（先頭の改行は1文字目での誤停止対策）
@@ -423,7 +438,8 @@ export function assembleContext(input: AssembleInput): AssembleResult {
     messages,
     stop,
     system,
-    situationBlock,
+    situationBlock: tailBlock,
+    historyMessages: historyMessages.map(({ role, content }) => ({ role, content })),
     lore: { ...lore, adopted: adoptedLore, dropped: [...lore.dropped, ...lore.adopted.filter((e) => !adoptedLore.includes(e))] },
     estimatedTokens: estimateTokens(totalChars()),
     inputBudget,

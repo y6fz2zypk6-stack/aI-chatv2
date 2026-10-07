@@ -25,7 +25,7 @@ import { listMemories } from '../db/repo/memories.js';
 import {
   deleteMessage,
   getMessage,
-  historyWindow,
+  historyWindowStepped,
   insertMessage,
   insertVariant,
   lastMessage,
@@ -122,7 +122,13 @@ export async function gatherContext(
     ...npcPool.map((c) => c.id),
   ]);
   const summary = latestSummary(chatId) ?? null;
-  let history = historyWindow(chatId, summary?.up_to_seq ?? 0, settings.history_window);
+  // 段階窓（§6.7）: 履歴窓の1/3ずつまとめて落とし、キャッシュの前置きを保つ
+  let history = historyWindowStepped(
+    chatId,
+    summary?.up_to_seq ?? 0,
+    settings.history_window,
+    Math.max(1, Math.round(settings.history_window / 3)),
+  );
   if (excludeMessageId) history = history.filter((m) => m.id !== excludeMessageId);
 
   // ロアのキーワード走査窓（§7.2）: 履歴窓とは独立に直近 lore_scan_window 件
