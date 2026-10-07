@@ -67,6 +67,11 @@
   --narr-font: 13px;
   --narr-lh: 1.7;
 
+  /* --- PC幅: 画面を1本の列にして中央に置く --- */
+  --app-w: 760px;
+  /* 列の左右の余り。スマホでは 0。画面の端に固定する部品（FAB・メニュー）はこれを足して列の中に収める */
+  --app-edge: max(0px, (100vw - var(--app-w)) / 2);
+
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
 }
@@ -105,6 +110,22 @@ body {
   flex-direction: column;
   overflow-x: hidden;
   max-width: 100%;
+}
+
+/* PC幅では横いっぱいに伸ばさず、幅760pxの列にする。
+   外側は淡いクリーム地、列の左右にヘアラインを引いて、アプリの範囲を見せる */
+@media (min-width: 761px) {
+  body {
+    background: var(--surface-2);
+  }
+
+  #root {
+    max-width: var(--app-w);
+    margin: 0 auto;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
 }
 
 a {
@@ -259,7 +280,7 @@ button:disabled {
   place-items: center;
   box-shadow: 0 6px 20px rgba(200, 110, 40, 0.32);
   position: fixed;
-  right: 18px;
+  right: calc(18px + var(--app-edge));
   /* 下部タブ（52 + 下余白16）の上に浮かせる */
   bottom: calc(52px + 22px + 16px + var(--safe-bottom));
   z-index: 30;
@@ -1613,6 +1634,9 @@ textarea.tall {
 }
 
 .sheet {
+  width: 100%;
+  max-width: var(--app-w);
+  margin: 0 auto;
   background: var(--bg);
   border-radius: 24px 24px 0 0;
   padding: 8px 0 calc(12px + var(--safe-bottom));
@@ -1961,7 +1985,7 @@ textarea.tall {
 
 /* 右上の ⋯（この会話のメニュー） */
 .popover.chat-menu {
-  right: 12px;
+  right: calc(12px + var(--app-edge));
   top: calc(60px + var(--safe-top));
   width: 248px;
   max-height: calc(100dvh - 84px - var(--safe-top));
@@ -2009,7 +2033,7 @@ textarea.tall {
   align-items: center;
   gap: 6px;
   font: 600 12.5px/1 var(--font-meta);
-  max-width: 42vw;
+  max-width: min(42vw, 320px);
 }
 
 .model-pill .lbl {
@@ -2026,6 +2050,8 @@ textarea.tall {
 .model-menu {
   position: fixed;
   z-index: 60;
+  right: calc(12px + var(--app-edge));
+  top: calc(60px + var(--safe-top));
   min-width: 210px;
   /* 上端が 60px 固定なので、そこから画面下まで使い切る。
      62vh 固定だとモデルを足すたびに末尾が黙って隠れた（スクロールの手掛かりも無い） */

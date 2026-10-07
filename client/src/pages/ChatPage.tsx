@@ -1042,7 +1042,7 @@ export default function ChatPage() {
       {modelMenu && (
         <>
           <div className="menu-backdrop" onClick={() => setModelMenu(false)} />
-          <div className="model-menu" style={{ right: 12, top: 'calc(60px + env(safe-area-inset-top))' }}>
+          <div className="model-menu">
             <button className={`mrow${!chat.model ? ' active' : ''}`} onClick={() => void pickModel('')}>
               既定（{modelLabel(defaultModel)}）
               {!chat.model && (
