@@ -2896,3 +2896,8 @@ textarea.tall {
 .archive-row .n {
   font: 600 12.5px/1 var(--font-meta);
 }
+
+/* 裏の台本（§23）: 会話の設定の中。中身は折りたたみで隠す */
+.director-panel {
+  margin-top: 4px;
+}

@@ -110,6 +110,16 @@ export default function SettingsHome() {
               onClick={() => navigate('/settings/events')}
             />
             <NavRow
+              icon={<Icon.sparkle size={18} />}
+              title="裏の台本"
+              value={
+                s.director_enabled === 1
+                  ? `ON ・ 応答${s.director_interval}回ごとに更新`
+                  : 'OFF（シナリオ・会話ごとにONにできます）'
+              }
+              onClick={() => navigate('/settings/director')}
+            />
+            <NavRow
               icon={<Icon.book size={18} />}
               title="ロアブック"
               value={`予算 ${n(s.lore_budget_chars)}字 ・ 直近${s.lore_scan_window}件から探す`}

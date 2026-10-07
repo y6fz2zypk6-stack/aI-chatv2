@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS scenarios (
   -- NULL は「上位（全体設定）から継承」を表す
   events_enabled INTEGER,
   vars_enabled INTEGER,
+  director_enabled INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS chats (
   -- NULL は「上位（シナリオ → 全体設定）から継承」を表す
   events_enabled INTEGER,
   vars_enabled INTEGER,
+  director_enabled INTEGER,
   state TEXT NOT NULL DEFAULT '{}',
   -- Chat作成時にシナリオからコピーした初期ステート（§4.6）。以後変更しない。
   -- 先頭メッセージの再生成の基準、および全メッセージ削除時の復元に使う。
@@ -196,6 +198,18 @@ CREATE TABLE IF NOT EXISTS summaries (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_summaries_chat ON summaries(chat_id, created_at);
+
+-- 裏の台本（§23）。最新1件を使い、履歴は残す。ledger はプロンプトに載せない
+CREATE TABLE IF NOT EXISTS director_notes (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  up_to_seq INTEGER NOT NULL DEFAULT 0,
+  ledger TEXT NOT NULL DEFAULT '',
+  cue TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_director_notes_chat ON director_notes(chat_id, created_at);
 
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY,
