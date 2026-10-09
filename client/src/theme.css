@@ -2047,36 +2047,6 @@ textarea.tall {
   flex: 0 0 auto;
 }
 
-.model-menu {
-  position: fixed;
-  z-index: 60;
-  right: calc(12px + var(--app-edge));
-  top: calc(60px + var(--safe-top));
-  min-width: 210px;
-  /* 上端が 60px 固定なので、そこから画面下まで使い切る。
-     62vh 固定だとモデルを足すたびに末尾が黙って隠れた（スクロールの手掛かりも無い） */
-  max-height: calc(100vh - 84px - env(safe-area-inset-top));
-  max-height: calc(100dvh - 84px - env(safe-area-inset-top));
-  overflow-y: auto;
-  background: var(--bg);
-  border-radius: 18px;
-  box-shadow: 0 10px 30px rgba(90, 66, 44, 0.22);
-}
-
-/* 接続先の見出し（§6.6）。組み込みだけのときは出さない。
-   名前は利用者が付けるので、uppercase にはしない（「LM Studio」が潰れる） */
-.model-menu .mgroup {
-  padding: 9px 16px 5px;
-  font: 700 11px/1.3 var(--font-ui);
-  color: var(--accent-ink);
-  background: var(--surface-2);
-}
-
-.model-menu .mgroup.mute {
-  color: var(--muted);
-  font-weight: 500;
-}
-
 /* 接続先の一覧行（設定画面） */
 .connrow {
   display: flex;
@@ -2107,64 +2077,246 @@ textarea.tall {
   font-size: 11px;
 }
 
-.model-menu .mrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  font: 600 14px/1.3 var(--font-ui);
-  width: 100%;
-  text-align: left;
+/* ===== モデルを選ぶシート（§6.6） =====
+   接続先の /models をそのまま全部並べ、検索で絞る。会話のピルと設定のモデル欄で共通。
+   一覧の長さで背の高さが変わらないよう、高さは固定して中身をスクロールさせる */
+.sheet.model-sheet {
+  height: min(88dvh, 780px);
+  padding-bottom: 0;
+}
+
+.model-sheet .sheet-head h3 {
+  font: 700 17px/1.4 var(--font-ui);
+  letter-spacing: 0;
   color: var(--text);
 }
 
-.model-menu .mrow + .mrow {
-  border-top: 1px solid var(--border);
-}
-
-.model-menu .mrow.active {
-  color: var(--accent-ink);
-}
-
-.model-menu .mrow .ck {
-  color: var(--accent);
-  display: grid;
-  place-items: center;
-}
-
-/* 行の名前と、その下の「いまは Opus 5.5」（最新の名前が実際にどの版で答えたか、§6.6） */
-.model-menu .mrow .ml {
+.mp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 20px calc(16px + var(--safe-bottom));
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  min-width: 0;
+  gap: 16px;
 }
 
-.model-menu .mrow .ml small {
-  font: 500 11.5px/1.3 var(--font-ui);
-  color: var(--muted-strong);
+.mp-default,
+.mp-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
 }
 
-/* 「最新を自動で使う」の小見出し。接続先の見出しと重なっても区別できるよう地を付けない */
-.model-menu .mgroup.sub {
-  background: none;
-  padding-top: 11px;
+/* 既定の行。選んでいるときは参考どおり枠をアクセント色に、地をクリームに */
+.mp-default {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
 }
 
-/* 「版を固定して選ぶ（N件）」。押すと固定の候補が開く */
-.model-menu .mrow.mfold {
-  font: 600 13px/1.3 var(--font-ui);
-  color: var(--muted-strong);
+.mp-default.on {
+  border-color: var(--accent);
   background: var(--surface-2);
 }
 
-.model-menu .mrow.mfold svg {
-  transition: transform 0.15s;
+.mp-default .txt,
+.mp-row .txt,
+.model-field .txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
-.model-menu .mrow.mfold.open svg {
-  transform: rotate(180deg);
+.mp-default .txt b {
+  font: 700 15px/1.35 var(--font-ui);
+  color: var(--text);
+}
+
+.mp-default .txt span,
+.mp-row .txt span,
+.model-field .txt span {
+  font: 500 12px/1.45 var(--font-ui);
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+
+.mp-default .ck,
+.mp-row .ck {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+/* 接続先の切り替え */
+.mp-conns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mp-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  font: 600 13.5px/1 var(--font-ui);
+  color: var(--muted-strong);
+}
+
+.mp-conn.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--accent-ink);
+}
+
+.mp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mp-label {
+  font: 600 12px/1.4 var(--font-ui);
+  color: var(--muted-strong);
+}
+
+.mp-direct {
+  display: flex;
+  gap: 8px;
+}
+
+.mp-direct input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+}
+
+.mp-direct .pill {
+  flex: 0 0 auto;
+  height: 46px;
+  padding: 0 18px;
+  font-size: 14px;
+}
+
+.mp-direct .pill:disabled {
+  opacity: 0.45;
+}
+
+.mp-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 検索は一覧の上に貼りつける。下の行が透けないよう、地で覆う */
+.mp-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  margin-bottom: 4px;
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  box-shadow: 0 -4px 0 4px var(--bg);
+}
+
+.mp-search svg {
+  flex: 0 0 auto;
+  color: var(--muted-strong);
+}
+
+.mp-search input,
+.mp-search input:focus {
+  height: 46px;
+  padding: 0;
+  background: none;
+}
+
+/* 枠は入力欄ではなく、虫眼鏡ごと囲む箱に付ける */
+.mp-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mp-search input:focus-visible {
+  outline: none;
+}
+
+/* ブラウザ標準の × は色が合わないので消し、自前の「検索を消す」を置く */
+.mp-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.mp-clear {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  margin-right: -6px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--muted-strong);
+}
+
+.mp-row {
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mp-row .txt b {
+  font: 500 14.5px/1.4 var(--font-ui);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mp-row.on .txt b {
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+
+.mp-state {
+  padding: 16px 2px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-strong);
+}
+
+/* 設定のモデル欄。押すと上のシートが開く */
+.model-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 14px;
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.model-field .txt b {
+  font: 600 14px/1.35 var(--font-ui);
+  color: var(--field-ink);
+}
+
+.model-field svg {
+  flex: 0 0 auto;
+  color: var(--field-ink);
 }
 
 /* ===== モーダル ===== */

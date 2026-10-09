@@ -5,6 +5,8 @@ import { api, check, clearMockRequests, generate, mockRequests, reply, setQueue,
 const T1800 = 877 * 1440 + 18 * 60;
 const OPUS = '~anthropic/claude-opus-latest';
 const SONNET = '~anthropic/claude-sonnet-latest';
+/** モックの /models に載せていない「最新」。実際に答えた版から長さを引く経路を見る */
+const HAIKU = '~anthropic/claude-haiku-latest';
 
 async function setup(label) {
   const world = (await api('POST', '/worlds', { name: label })).json;
@@ -41,19 +43,23 @@ export async function latestModelSuite() {
   await api('PUT', '/settings', { auto_summarize: 0, auto_extract: 0 });
   const budget = (ctx) => ctx - (base.max_tokens + 200) - base.context_safety_tokens;
   try {
-    // 候補: 先頭に「最新」、後ろに版を固定したもの
+    // 表示名の辞書（画面の候補ではない）。「最新」の名前にも名前が付いている
     const curated = (await api('GET', '/models/curated')).json;
-    check('候補の先頭6件は「最新」',
+    check('表示名の辞書に「最新」の名前がある',
       curated.slice(0, 6).every((m) => m.latest === true && /^~.+-latest$/.test(m.id) && m.label.includes('（最新）')),
       curated.slice(0, 6).map((m) => m.id).join(','));
-    check('版を固定した候補も残る', curated.some((m) => m.id === 'anthropic/claude-opus-5.5' && !m.latest));
+
+    // 一覧（シートが並べるもの）にも「最新」の名前が載っている（本物の OpenRouter と同じ）
+    const listed = (await api('GET', '/models?connection=')).json;
+    check('モデルの一覧に「最新」の名前も載る', listed.some((m) => m.id === OPUS && m.context_length > 0),
+      listed.filter((m) => m.id.startsWith('~')).map((m) => m.id).join(','));
 
     const w = await setup('lt');
     await api('PUT', `/chats/${w.chat.id}`, { model: OPUS });
     check('答える前は記録が無い', !((await resolved())[OPUS]));
     const p0 = (await api('GET', `/chats/${w.chat.id}/prompt-preview`)).json;
-    check('答える前は既定の長さで予算を組む', p0.inputBudget === budget(base.fallback_context_length),
-      `${p0.inputBudget} / ${budget(base.fallback_context_length)}`);
+    check('一覧に載っている「最新」は、その長さで予算を組む', p0.inputBudget === budget(1000000),
+      `${p0.inputBudget} / ${budget(1000000)}`);
 
     // 1回目: 上流へは「最新」の名前のまま送り、答えた版を覚える
     const r1 = await turn(w, 'こんにちは');
@@ -63,10 +69,6 @@ export async function latestModelSuite() {
     check('答えた版を覚える', v1?.model === 'anthropic/claude-opus-5.5', JSON.stringify(v1));
     check('表示名は候補の名前', v1?.label === 'Opus 5.5', v1?.label);
 
-    // 予算: 一覧に「最新」の名前が無くても、答えた版の長さを使う
-    const p1 = (await api('GET', `/chats/${w.chat.id}/prompt-preview`)).json;
-    check('答えた後は実際の版の長さで予算を組む', p1.inputBudget === budget(1000000),
-      `${p1.inputBudget} / ${budget(1000000)}`);
 
     // 同じ版のあいだは書き直さない
     await turn(w, 'つづけて');
@@ -80,6 +82,16 @@ export async function latestModelSuite() {
     check('新しい版が答えたら記録が変わる', v2?.model === 'anthropic/claude-opus-5.6' && v2.updated_at > v1.updated_at,
       JSON.stringify(v2));
     check('候補に無い版は一覧の名前から表示名を作る', v2?.label === 'Opus 5.6', v2?.label);
+
+    // 予算: 一覧に「最新」の名前が無いときは、実際に答えた版の長さを使う（32k に落とさない）
+    await api('PUT', `/chats/${w.chat.id}`, { model: HAIKU });
+    const h0 = (await api('GET', `/chats/${w.chat.id}/prompt-preview`)).json;
+    check('一覧に無い「最新」は、答える前は既定の長さ', h0.inputBudget === budget(base.fallback_context_length),
+      `${h0.inputBudget} / ${budget(base.fallback_context_length)}`);
+    await turn(w, 'はいくで');
+    const h1 = (await api('GET', `/chats/${w.chat.id}/prompt-preview`)).json;
+    check('答えた後は実際の版の長さで予算を組む', h1.inputBudget === budget(200000),
+      `${h1.inputBudget} / ${budget(200000)}`);
 
     // 版を固定したモデルは記録しない（応答の model 欄が違っていても）
     await api('PUT', `/chats/${w.chat.id}`, { model: 'anthropic/claude-opus-5' });

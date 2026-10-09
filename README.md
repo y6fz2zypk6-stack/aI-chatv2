@@ -18,8 +18,8 @@ React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
 | 7 | pendingイベント / PWA | ✅ |
 | v1.5.3 | 進行フラグ（state.vars）/ 条件式DSL / 確率・チェック方式・優先度つきイベント | ✅ |
 
-- チャット内でモデルを切替（ヘッダーのピル）。候補は `shared/types.ts` の `CURATED_MODELS`。
-  先頭の「（最新）」は OpenRouter の `~…-latest` の名前で、新しい版が出ても書き換えずに済む（SPEC §6.6）
+- チャット内でモデルを切替（ヘッダーのピル）。接続先の `/models` の一覧から検索して選ぶか、IDを直接入力する。
+  一覧の先頭の `~…-latest` は OpenRouter が常に最新版へ振り向ける名前で、新しい版が出ても選び直さずに済む（SPEC §6.6）
 - キャラクター・ペルソナのアイコンは画像をアップロード可能（丸枠のカメラバッジから）
 - 書き出し: 世界一式（独自JSON・往復可）/ キャラクター（Character Card V2）/
   ロアブック（V2 character_book）/ 会話（JSON: 候補含む・テキスト）

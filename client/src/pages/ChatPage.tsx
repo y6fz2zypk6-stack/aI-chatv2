@@ -20,7 +20,7 @@ import {
 import { TEMPORARY_INSTRUCTION_MAX_CHARS } from '@shared/types';
 import { parseUtterances, type ParseContext } from '@shared/utterances';
 import { api, streamGenerate, type DonePayload } from '../api';
-import { noteOf, useModelGroups, type ModelOption } from '../models';
+import ModelPicker from '../ModelPicker';
 import { Avatar, Field, makeThumb, Modal, TriToggle } from '../components';
 import { Icon } from '../icons';
 import { ask, useApp } from '../store';
@@ -179,11 +179,8 @@ export default function ChatPage() {
   const [memPreview, setMemPreview] = useState<MemoryPreview | null>(null);
   const [memLoading, setMemLoading] = useState(false);
   const [memSaving, setMemSaving] = useState(false);
+  /** モデルを選ぶシート（§6.6）を開いているか */
   const [modelMenu, setModelMenu] = useState(false);
-  /** モデルのメニューで「版を固定して選ぶ」を開いているか */
-  const [showPinned, setShowPinned] = useState(false);
-  /** モデルの選択肢（接続先ごと、§6.6） */
-  const { groups: modelGroups, reload: reloadModels } = useModelGroups();
   const [advanceOpen, setAdvanceOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const autoplayCancel = useRef(false);
@@ -309,6 +306,9 @@ export default function ChatPage() {
     const map = new Map(characters.map((c) => [c.id, c]));
     return (cid?: string) => (cid ? map.get(cid) : undefined);
   }, [characters]);
+
+  // **早期 return より前に置く**（フックの数が描画ごとに変わると React が落ちる）
+  const closeModelMenu = useCallback(() => setModelMenu(false), []);
 
   if (!detail) return <div className="empty-note">読み込み中…</div>;
   const { chat, messages, gameTime } = detail;
@@ -547,18 +547,6 @@ export default function ChatPage() {
 
   const effModel = chat.model || defaultModel;
 
-  const openModelMenu = () => {
-    // 版を固定した候補を選んでいる会話では、畳まずに開いてチェックを見せる
-    setShowPinned(
-      modelGroups.some(
-        (g) => g.options.some((o) => o.latest) && g.options.some((o) => !o.latest && o.ref === chat.model),
-      ),
-    );
-    // 「いまは〜」は応答のたびに変わり得るので、開くたびに引き直す
-    reloadModels();
-    setModelMenu(true);
-  };
-
   // 生成中の本文を話者に分けるための文脈（サーバの組み立てと同じ: 参加キャラ／準レギュラー／ペルソナ名）
   const parseCtx: ParseContext = {
     participants: characters.filter((c) => chat.participant_ids.includes(c.id)),
@@ -578,7 +566,7 @@ export default function ChatPage() {
           <b>{titleName}</b>
           <span className="sub">{chat.narrator_enabled ? 'ナレーターあり' : 'ナレーターなし'}</span>
         </div>
-        <button className="model-pill" onClick={openModelMenu}>
+        <button className="model-pill" onClick={() => setModelMenu(true)} aria-label={`モデル: ${modelLabel(effModel)}`}>
           <span className="lbl">{modelLabel(effModel)}</span>
           <Icon.chevD />
         </button>
@@ -1077,69 +1065,16 @@ export default function ChatPage() {
         </Modal>
       )}
 
+      {/* モデルを選ぶシート。接続先の一覧をそのまま並べ、検索・直接入力で選ぶ（§6.6） */}
       {modelMenu && (
-        <>
-          <div className="menu-backdrop" onClick={() => setModelMenu(false)} />
-          <div className="model-menu">
-            <button className={`mrow${!chat.model ? ' active' : ''}`} onClick={() => void pickModel('')}>
-              <span className="ml">
-                {`既定 ・ ${modelLabel(defaultModel)}`}
-                {noteOf(modelGroups, defaultModel) && <small>{noteOf(modelGroups, defaultModel)}</small>}
-              </span>
-              {!chat.model && (
-                <span className="ck">
-                  <Icon.check size={16} />
-                </span>
-              )}
-            </button>
-            {/* 接続先ごとに区切る（§6.6）。組み込みだけのときは見出しを出さない */}
-            {modelGroups.map((g) => {
-              const row = (o: ModelOption) => (
-                <button
-                  key={o.ref}
-                  className={`mrow${chat.model === o.ref ? ' active' : ''}`}
-                  onClick={() => void pickModel(o.ref)}
-                >
-                  <span className="ml">
-                    {o.label}
-                    {o.note && <small>{o.note}</small>}
-                  </span>
-                  {chat.model === o.ref && (
-                    <span className="ck">
-                      <Icon.check size={16} />
-                    </span>
-                  )}
-                </button>
-              );
-              const latest = g.options.filter((o) => o.latest);
-              const pinned = g.options.filter((o) => !o.latest);
-              return (
-                <div key={g.connection.id || 'builtin'}>
-                  {modelGroups.length > 1 && <div className="mgroup">{g.connection.name}</div>}
-                  {g.failed && <div className="mgroup mute">モデル一覧を取れませんでした</div>}
-                  {latest.length === 0 ? (
-                    pinned.map(row)
-                  ) : (
-                    <>
-                      {/* 「最新」は新しい版が出たら自動で切り替わる。版を固定した候補は畳んでおく */}
-                      <div className="mgroup sub">最新を自動で使う</div>
-                      {latest.map(row)}
-                      <button
-                        className={`mrow mfold${showPinned ? ' open' : ''}`}
-                        aria-expanded={showPinned}
-                        onClick={() => setShowPinned((v) => !v)}
-                      >
-                        <span className="ml">版を固定して選ぶ（{pinned.length}件）</span>
-                        <Icon.chevD size={16} />
-                      </button>
-                      {showPinned && pinned.map(row)}
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
+        <ModelPicker
+          title="この会話のモデル"
+          value={chat.model}
+          defaultTitle="既定（会話の本文）を使う"
+          defaultRef={defaultModel}
+          onPick={(ref) => void pickModel(ref)}
+          onClose={closeModelMenu}
+        />
       )}
 
       {editing && (

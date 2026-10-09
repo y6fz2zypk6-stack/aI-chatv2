@@ -30,7 +30,31 @@ let modelsDelayMs = 0;
 const LATEST = {
   '~anthropic/claude-opus-latest': 'anthropic/claude-opus-5.5',
   '~anthropic/claude-sonnet-latest': 'anthropic/claude-sonnet-5.5',
+  '~anthropic/claude-haiku-latest': 'anthropic/claude-haiku-4.5',
 };
+
+/**
+ * OpenRouter 役の /models。本物と同じく「最新」の名前（~…-latest）も載せる。
+ * **`~anthropic/claude-haiku-latest` だけは載せない。** 一覧に名前が無いときに、
+ * 実際に答えた版から長さを引く経路（§6.5）を通すため
+ */
+const OPENROUTER_MODELS = [
+  { id: '~anthropic/claude-fable-latest', name: 'Anthropic: Claude Fable Latest', context_length: 1000000 },
+  { id: '~anthropic/claude-opus-latest', name: 'Anthropic: Claude Opus Latest', context_length: 1000000 },
+  { id: '~anthropic/claude-sonnet-latest', name: 'Anthropic: Claude Sonnet Latest', context_length: 1000000 },
+  { id: '~google/gemini-flash-latest', name: 'Google: Gemini Flash Latest', context_length: 1048576 },
+  { id: '~openai/gpt-latest', name: 'OpenAI: GPT Latest', context_length: 400000 },
+  { id: '~x-ai/grok-latest', name: 'xAI: Grok Latest', context_length: 500000 },
+  { id: 'anthropic/claude-fable-5.1', name: 'Anthropic: Claude Fable 5.1', context_length: 1000000 },
+  { id: 'anthropic/claude-haiku-4.5', name: 'Anthropic: Claude Haiku 4.5', context_length: 200000 },
+  { id: 'anthropic/claude-opus-5.5', name: 'Anthropic: Claude Opus 5.5', context_length: 1000000 },
+  { id: 'anthropic/claude-opus-5.6', name: 'Anthropic: Claude Opus 5.6', context_length: 1000000 },
+  { id: 'anthropic/claude-sonnet-5.5', name: 'Anthropic: Claude Sonnet 5.5', context_length: 1000000 },
+  { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek: DeepSeek V4 Pro', context_length: 1048576 },
+  { id: 'google/gemini-3.8-flash', name: 'Google: Gemini 3.8 Flash', context_length: 1048576 },
+  { id: 'openai/gpt-6.1-sol', name: 'OpenAI: GPT-6.1 Sol', context_length: 400000 },
+  { id: 'x-ai/grok-4.7', name: 'xAI: Grok 4.7', context_length: 500000 },
+];
 
 const server = http.createServer(async (req, res) => {
   // テスト用: 受け取ったリクエストを覗く / 消す
@@ -65,14 +89,8 @@ const server = http.createServer(async (req, res) => {
         data: [
           { id: 'anthropic/claude-opus-5', name: 'Claude Opus 5', context_length: 200000 },
           { id: 'anthropic/claude-sonnet-5', name: 'Claude Sonnet 5', context_length: 200000 },
-          // OpenRouter 役のときだけ。「最新」の名前そのものは載せず、実際の版から長さを引く経路を通す（§6.5）。
           // 2つ目のモック（自前の接続先の役）には出さない
-          ...(process.env.MOCK_SECOND
-            ? []
-            : [
-                { id: 'anthropic/claude-opus-5.5', name: 'Anthropic: Claude Opus 5.5', context_length: 1000000 },
-                { id: 'anthropic/claude-opus-5.6', name: 'Anthropic: Claude Opus 5.6', context_length: 1000000 },
-              ]),
+          ...(process.env.MOCK_SECOND ? [] : OPENROUTER_MODELS),
         ],
       }),
     );

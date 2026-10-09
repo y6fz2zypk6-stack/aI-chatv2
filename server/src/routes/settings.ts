@@ -43,7 +43,7 @@ settingsRouter.get('/images/models', async (req, res) => {
   }
 });
 
-// 選択候補（モデルピル・設定のプルダウン用）。OpenRouterに繋がらなくても返せる
+// 表示名の辞書（shared/types.ts の CURATED_MODELS）。画面の候補には使わない（一覧は /models、§6.6）
 settingsRouter.get('/models/curated', (_req, res) => {
   res.json(CURATED_MODELS);
 });

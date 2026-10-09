@@ -1,12 +1,14 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { ConnectionView, Settings } from '@shared/types';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { modelLabel, type ConnectionView, type Settings } from '@shared/types';
 import { api } from '../../api';
 import { Field, Modal, TopBar } from '../../components';
-import type { ModelGroup, ModelOption } from '../../models';
+import { Icon } from '../../icons';
+import ModelPicker from '../../ModelPicker';
+import { describeModelRef, useModelMeta } from '../../models';
 import { ask, useApp } from '../../store';
 import { useSettings } from './useSettings';
 
-// 設定のサブページで使い回す部品。ModelSelect と ConnectionEditor は分割前の SettingsPage.tsx から移したもの
+// 設定のサブページで使い回す部品。ConnectionEditor は分割前の SettingsPage.tsx から移したもの
 
 /** サブページの枠。戻り先は既定でハブ（`/settings`） */
 export function SettingsSubPage({
@@ -155,54 +157,55 @@ export function LongTextPage({
 }
 
 /**
- * モデルの選択肢を接続先ごとに `<optgroup>` で分ける（§6.6）。
- * 値は `<接続先ID>::<モデルID>`。組み込みは区切り無しの素のモデルID。
+ * 設定のモデル欄（§6.6）。押すとモデルを選ぶシート（`ModelPicker`）が開く。
+ * 値は `<接続先ID>::<モデルID>`。組み込みは区切り無しの素のモデルID。空文字は「既定」
  */
-export function ModelSelect({
+export function ModelField({
   value,
-  groups,
   onChange,
-  emptyLabel = '既定（.env の設定）',
+  title,
+  emptyLabel,
+  defaultTitle,
+  defaultRef,
 }: {
   value: string;
-  groups: ModelGroup[];
   onChange: (ref: string) => void;
-  /** 空を選んだときの意味。裏の台本では「裏方の処理と同じ」になる */
-  emptyLabel?: string;
+  /** シートの見出し（例: 「会話の本文のモデル」） */
+  title: string;
+  /** 空のときの表示（例: 「既定（.env）」「裏方の処理と同じ」） */
+  emptyLabel: string;
+  /** シートの既定の行の見出し（例: 「既定（.env）を使う」） */
+  defaultTitle: string;
+  /** 空のとき実際に使われるモデル参照 */
+  defaultRef: string;
 }) {
-  const known = groups.some((g) => g.options.some((o) => o.ref === value));
+  const [open, setOpen] = useState(false);
+  const { connections, resolved } = useModelMeta();
+  // シートは onClose で Esc を購読するので、描画のたびに作り直さない
+  const close = useCallback(() => setOpen(false), []);
   return (
-    <div className="select-wrap">
-      <select value={known ? value : ''} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{emptyLabel}</option>
-        {/* 一覧に無いIDを選んでいるとき（自由入力・消えたモデル）も見えるようにする */}
-        {!known && value && <option value={value}>{value}（一覧に無い指定）</option>}
-        {groups.map((g) => {
-          const opt = (o: ModelOption) => (
-            <option key={o.ref} value={o.ref}>
-              {o.note ? `${o.label} — ${o.note}` : o.label}
-            </option>
-          );
-          const latest = g.options.filter((o) => o.latest);
-          if (!latest.length) {
-            return (
-              <optgroup key={g.connection.id || 'builtin'} label={g.connection.name}>
-                {g.options.map(opt)}
-              </optgroup>
-            );
-          }
-          // 組み込みは「最新を自動で使う」と「版を固定」に分ける（§6.6）
-          return (
-            <Fragment key={g.connection.id || 'builtin'}>
-              <optgroup label={`${g.connection.name} ・ 最新を自動で使う`}>{latest.map(opt)}</optgroup>
-              <optgroup label={`${g.connection.name} ・ 版を固定`}>
-                {g.options.filter((o) => !o.latest).map(opt)}
-              </optgroup>
-            </Fragment>
-          );
-        })}
-      </select>
-    </div>
+    <>
+      <button type="button" className="model-field" onClick={() => setOpen(true)}>
+        <span className="txt">
+          <b>{value ? modelLabel(value) : emptyLabel}</b>
+          <span>{describeModelRef(connections, resolved, value || defaultRef)}</span>
+        </span>
+        <Icon.chevD size={14} />
+      </button>
+      {open && (
+        <ModelPicker
+          title={title}
+          value={value}
+          defaultTitle={defaultTitle}
+          defaultRef={defaultRef}
+          onPick={(ref) => {
+            setOpen(false);
+            onChange(ref);
+          }}
+          onClose={close}
+        />
+      )}
+    </>
   );
 }
 

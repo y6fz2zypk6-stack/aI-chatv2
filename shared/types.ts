@@ -860,13 +860,16 @@ export function makeModelRef(connectionId: string, modelId: string): string {
   return connectionId ? `${connectionId}${MODEL_REF_SEP}${modelId}` : modelId;
 }
 
-/** モデル選択に出す候補（チャットヘッダー・設定で共通利用） */
+/**
+ * よく使うモデルの短い表示名（ピルの「Opus（最新）」など）。
+ * **選択の候補ではない。** 画面は接続先の `/models` をそのまま並べて選ばせる（§6.6）
+ */
 export interface CuratedModel {
   id: string;
   label: string;
   /**
    * 系列の最新版へ振り向ける OpenRouter の名前（`~作者/系列-latest`）か。
-   * 新しい版が出ても候補を書き換えずに済む。どの版が答えたかは `/models/resolved`（§6.6）
+   * どの版が答えたかは `/models/resolved`（§6.6）
    */
   latest?: boolean;
 }
@@ -997,15 +1000,17 @@ export function summarizeEveryMessages(interval: number): number {
   return Math.max(2, interval - retainWindow(interval, interval));
 }
 
+// 表示名の辞書（§6.6）。ここに無いモデルも選べる（IDの末尾で表示する）。
+// 新しいモデルが出ても、ここを書き換える必要は無い
 export const CURATED_MODELS: CuratedModel[] = [
-  // 最新を自動で使う（§6.6）。新しい版が出ても、ここは書き換えなくてよい
+  // 最新を自動で使う名前
   { id: '~anthropic/claude-opus-latest', label: 'Claude Opus（最新）', latest: true },
   { id: '~anthropic/claude-sonnet-latest', label: 'Claude Sonnet（最新）', latest: true },
   { id: '~anthropic/claude-fable-latest', label: 'Claude Fable（最新）', latest: true },
   { id: '~openai/gpt-latest', label: 'GPT（最新）', latest: true },
   { id: '~google/gemini-flash-latest', label: 'Gemini Flash（最新）', latest: true },
   { id: '~x-ai/grok-latest', label: 'Grok（最新）', latest: true },
-  // 版を固定する
+  // 版の付いたもの
   { id: 'anthropic/claude-opus-5.5', label: 'Claude Opus 5.5' },
   { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },
   { id: 'anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5' },

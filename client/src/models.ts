@@ -1,106 +1,58 @@
-import { useEffect, useState } from 'react';
-import {
-  CURATED_MODELS,
-  makeModelRef,
-  type ConnectionView,
-  type ModelInfo,
-  type ResolvedModel,
-} from '@shared/types';
+import { useCallback, useEffect, useState } from 'react';
+import { parseModelRef, type ConnectionView, type ResolvedModel } from '@shared/types';
 import { api } from './api';
 
-/** モデルの選択肢1つ */
-export interface ModelOption {
-  ref: string;
-  label: string;
-  /** 系列の最新版へ振り向ける名前（§6.6）。画面では「最新を自動で使う」にまとめる */
-  latest?: boolean;
-  /** 「いまは Opus 5.5」。一度でも答えていれば出る */
-  note?: string;
-}
-
 /**
- * モデルの選択肢を接続先ごとに組む（§6.6）。
- *
- * 組み込み（`.env` の OpenRouter）は `CURATED_MODELS` をそのまま使う。先頭は「最新」の名前で、
- * 実際に答えた版が分かれば `note`（「いまは Opus 5.5」）を添える。
- * 登録した接続先は `/connections/:id/models` から引くが、**`/models` を持たない
- * サービス（ローカルの推論サーバなど）がある**ので、取れなくても選択肢が空になるだけで
- * 壊れないようにし、自由入力を必ず併設する。
+ * モデル選択のまわりの情報（§6.6）: 接続先の一覧と、「最新」の名前が実際にどの版で答えたか。
+ * **どちらも取れなくても画面は壊さない。** 接続先の名前や「いまは〜」が出ないだけにする
  */
-export interface ModelGroup {
-  connection: ConnectionView;
-  options: ModelOption[];
-  /** モデル一覧を引けなかった（自由入力で指定する必要がある） */
-  failed: boolean;
-}
-
-export function useModelGroups(): { groups: ModelGroup[]; connections: ConnectionView[]; reload: () => void } {
+export function useModelMeta(): {
+  connections: ConnectionView[];
+  resolved: Record<string, ResolvedModel>;
+  reload: () => void;
+} {
   const [connections, setConnections] = useState<ConnectionView[]>([]);
-  const [groups, setGroups] = useState<ModelGroup[]>([]);
+  const [resolved, setResolved] = useState<Record<string, ResolvedModel>>({});
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    void (async () => {
-      let list: ConnectionView[] = [];
-      try {
-        list = await api.get<ConnectionView[]>('/connections');
-      } catch {
-        // 接続先が引けなくても、組み込みの候補だけは出す
-        list = [];
-      }
-      if (!alive) return;
-      setConnections(list);
-      // 実際に答えた版。取れなくても候補は出す（「いまは〜」が出ないだけ）
-      let resolved: Record<string, ResolvedModel> = {};
-      try {
-        resolved = await api.get<Record<string, ResolvedModel>>('/models/resolved');
-      } catch {
-        resolved = {};
-      }
-      if (!alive) return;
-
-      const built: ModelGroup[] = [];
-      for (const c of list) {
-        if (c.builtin) {
-          built.push({
-            connection: c,
-            options: CURATED_MODELS.map((m) => ({
-              ref: m.id,
-              label: m.label,
-              latest: m.latest,
-              note: m.latest && resolved[m.id] ? `いまは ${resolved[m.id].label}` : undefined,
-            })),
-            failed: false,
-          });
-          continue;
-        }
-        try {
-          const models = await api.get<ModelInfo[]>(`/connections/${c.id}/models`);
-          built.push({
-            connection: c,
-            options: models.map((m) => ({ ref: makeModelRef(c.id, m.id), label: m.name || m.id })),
-            failed: false,
-          });
-        } catch {
-          built.push({ connection: c, options: [], failed: true });
-        }
-      }
-      if (alive) setGroups(built);
-    })();
+    api
+      .get<ConnectionView[]>('/connections')
+      .then((list) => alive && setConnections(list))
+      .catch(() => alive && setConnections([]));
+    api
+      .get<Record<string, ResolvedModel>>('/models/resolved')
+      .then((r) => alive && setResolved(r))
+      .catch(() => {
+        /* 「いまは〜」が出ないだけ */
+      });
     return () => {
       alive = false;
     };
   }, [tick]);
 
-  return { groups, connections, reload: () => setTick((t) => t + 1) };
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+  return { connections, resolved, reload };
 }
 
-/** 候補の中から、その参照の「いまは〜」を探す（既定の行など、候補の外で出すとき用） */
-export function noteOf(groups: ModelGroup[], ref: string): string | undefined {
-  for (const g of groups) {
-    const o = g.options.find((x) => x.ref === ref);
-    if (o) return o.note;
-  }
-  return undefined;
+/** モデル参照の接続先の表示名。組み込みは「OpenRouter（.env）」 */
+export function connectionNameOf(connections: ConnectionView[], ref: string): string {
+  const id = parseModelRef(ref).connectionId;
+  const found = connections.find((c) => c.id === id);
+  if (found) return found.name;
+  return id ? '（見つからない接続先）' : 'OpenRouter（.env）';
+}
+
+/** 「OpenRouter（.env） · ~anthropic/claude-opus-latest · いまは Opus 5.5」。空の参照は空文字 */
+export function describeModelRef(
+  connections: ConnectionView[],
+  resolved: Record<string, ResolvedModel>,
+  ref: string,
+): string {
+  if (!ref) return '';
+  const now = resolved[ref];
+  return [connectionNameOf(connections, ref), parseModelRef(ref).modelId, now ? `いまは ${now.label}` : '']
+    .filter(Boolean)
+    .join(' · ');
 }

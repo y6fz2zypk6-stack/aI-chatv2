@@ -1,6 +1,5 @@
 import { Field, SectionHead, SettingRow, Stepper, Toggle } from '../../components';
-import { useModelGroups } from '../../models';
-import { Loading, ModelSelect, More, Note, SettingsSubPage } from './parts';
+import { Loading, ModelField, More, Note, SettingsSubPage } from './parts';
 import { useSettings } from './useSettings';
 
 /**
@@ -9,7 +8,6 @@ import { useSettings } from './useSettings';
  */
 export default function DirectorSettingsPage() {
   const { settings, set } = useSettings();
-  const { groups } = useModelGroups();
   if (!settings) return <Loading title="裏の台本" />;
 
   return (
@@ -45,11 +43,13 @@ export default function DirectorSettingsPage() {
       <div className="section">
         <SectionHead>更新のしかた</SectionHead>
         <Field label="台本を書くモデル">
-          <ModelSelect
+          <ModelField
             value={settings.director_model}
-            groups={groups}
-            emptyLabel="裏方の処理と同じ"
             onChange={(v) => void set({ director_model: v })}
+            title="台本を書くモデル"
+            emptyLabel="裏方の処理と同じ"
+            defaultTitle="裏方の処理と同じにする"
+            defaultRef={settings.utility_model}
           />
         </Field>
         <SettingRow label="更新の間隔" unit="回" hint="応答がこの回数たまるごとに書き直します。最初の台本だけは応答2回で作ります">
