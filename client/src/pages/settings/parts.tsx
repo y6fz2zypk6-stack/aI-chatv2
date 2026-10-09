@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ConnectionView, Settings } from '@shared/types';
 import { api } from '../../api';
 import { Field, Modal, TopBar } from '../../components';
-import type { ModelGroup } from '../../models';
+import type { ModelGroup, ModelOption } from '../../models';
 import { ask, useApp } from '../../store';
 import { useSettings } from './useSettings';
 
@@ -177,15 +177,30 @@ export function ModelSelect({
         <option value="">{emptyLabel}</option>
         {/* 一覧に無いIDを選んでいるとき（自由入力・消えたモデル）も見えるようにする */}
         {!known && value && <option value={value}>{value}（一覧に無い指定）</option>}
-        {groups.map((g) => (
-          <optgroup key={g.connection.id || 'builtin'} label={g.connection.name}>
-            {g.options.map((o) => (
-              <option key={o.ref} value={o.ref}>
-                {o.label}
-              </option>
-            ))}
-          </optgroup>
-        ))}
+        {groups.map((g) => {
+          const opt = (o: ModelOption) => (
+            <option key={o.ref} value={o.ref}>
+              {o.note ? `${o.label} — ${o.note}` : o.label}
+            </option>
+          );
+          const latest = g.options.filter((o) => o.latest);
+          if (!latest.length) {
+            return (
+              <optgroup key={g.connection.id || 'builtin'} label={g.connection.name}>
+                {g.options.map(opt)}
+              </optgroup>
+            );
+          }
+          // 組み込みは「最新を自動で使う」と「版を固定」に分ける（§6.6）
+          return (
+            <Fragment key={g.connection.id || 'builtin'}>
+              <optgroup label={`${g.connection.name} ・ 最新を自動で使う`}>{latest.map(opt)}</optgroup>
+              <optgroup label={`${g.connection.name} ・ 版を固定`}>
+                {g.options.filter((o) => !o.latest).map(opt)}
+              </optgroup>
+            </Fragment>
+          );
+        })}
       </select>
     </div>
   );

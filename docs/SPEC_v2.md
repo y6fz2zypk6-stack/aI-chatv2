@@ -684,6 +684,25 @@ OpenAI直・DeepSeek直・Groq・手元の LM Studio / Ollama など。
 **`::` を含まない値は組み込み。** `anthropic/claude-opus-5` のような既存の値がそのまま動く
 （移行が要らない）。`::` は ULID にもモデルIDにも現れないので曖昧さが無い。
 
+#### 最新の指定 — `~作者/系列-latest`
+
+OpenRouter には、常にその系列の最新版へ振り向ける名前がある（`~anthropic/claude-opus-latest` など）。
+候補（`CURATED_MODELS`）の先頭にこれを6つ置き（Opus・Sonnet・Fable・GPT・Gemini Flash・Grok）、
+既定の `default_model` / `utility_model` もこれにした。**新しい版が出ても、候補も `.env` も書き換えずに済む。**
+版を固定した候補も後ろに残す（新しい版が合わなかったときに戻れるように）。
+
+| 項目 | 仕様 |
+| --- | --- |
+| 送り方 | 上流へは名前のまま送る。解決は OpenRouter がする |
+| 答えた版 | 応答の `model` 欄（ストリームは最初のチャンク、非ストリーミングは本体）を `resolved_models` に記録する。**送った名前が `~…-latest` で、返った値が違うときだけ。** 版が変わったときだけ書く（メモリにも持つ） |
+| 表示 | `GET /models/resolved` が名前ごとに `{ model, label, updated_at }` を返し、画面は「いまは Opus 5.5」と出す。`label` は候補の名前 → 接続先のモデル一覧の名前（「Anthropic: 」を外す） → IDの末尾の順 |
+| 予算（§6.5） | `contextLengthOf` は一覧に名前そのものが無ければ、**記録した版の長さ**を使う。無いまま既定（32k）に落とすと、長いモデルなのに履歴を削りすぎる |
+| キャッシュ（§6.7） | `~anthropic/…` も Anthropic として区切りを付ける（`supportsPromptCache` の判定は `~` を許す） |
+| 表示名 | `modelLabel` は候補の名前（「Claude 」を外して `Opus（最新）`）。候補に無い `~作者/名前-latest` は `名前（最新）` |
+
+**既存の設定や会話は書き換えない。** 版を固定して選んだ会話は、その選択を尊重する。
+記録は表示と予算のためのもので、**記録の失敗で生成は止めない**（警告だけ残す）。
+
 #### キーの扱い
 
 **キーはDBに平文で入るが、レスポンスには絶対に載せない**（不変条件43）。
@@ -1532,7 +1551,7 @@ worldDayOf(cfg, time) = Math.floor((time - day_rollover_min) / 1440)
 |---|---|
 | POST | `/login`, `/logout` |
 | GET | `/session`, `/config` |
-| GET | `/models`, `/models/curated` |
+| GET | `/models`, `/models/curated`, `/models/resolved`（「最新」の名前ごとに実際に答えた版、§6.6） |
 | GET / PUT | `/settings` |
 | GET | `/worlds/:id/export`, `/characters/:id/export`, `/worlds/:id/lorebook/export`, `/chats/:id/export` |
 | POST | `/worlds/import`, `/worlds/:id/characters/import`, `/worlds/:id/lorebook/import` |
@@ -1575,8 +1594,8 @@ event: notice  { kind: 'summary' | 'memory', ok, message }   ← done のあと�
 | キー | 既定 | 説明 |
 |---|---|---|
 | `system_prompt` | （既定文） | アプリ全体共通の指示 |
-| `default_model` | env | |
-| `utility_model` | env | 要約・抽出・継続判定 |
+| `default_model` | env（未設定なら `~anthropic/claude-opus-latest`） | 「最新」の指定は §6.6 |
+| `utility_model` | env（未設定なら `~anthropic/claude-sonnet-latest`） | 要約・抽出・継続判定 |
 | `max_tokens` | 2048 | **本文の生成にだけ効く。** 要約・抽出には効かない |
 | `utility_max_tokens` | 8192 | 要約・抽出の1回あたりの出力上限。本文とは別枠 |
 | `context_safety_tokens` | 1024 | |

@@ -864,6 +864,25 @@ export function makeModelRef(connectionId: string, modelId: string): string {
 export interface CuratedModel {
   id: string;
   label: string;
+  /**
+   * 系列の最新版へ振り向ける OpenRouter の名前（`~作者/系列-latest`）か。
+   * 新しい版が出ても候補を書き換えずに済む。どの版が答えたかは `/models/resolved`（§6.6）
+   */
+  latest?: boolean;
+}
+
+/** OpenRouter の「最新」の名前（`~anthropic/claude-opus-latest` など）か */
+export function isLatestAlias(modelId: string): boolean {
+  return /^~[^/]+\/.+-latest$/.test(modelId);
+}
+
+/** 「最新」の応答に対して、実際に答えた版（GET /models/resolved の値） */
+export interface ResolvedModel {
+  /** 実際に答えた版のモデルID（例: `anthropic/claude-opus-5.5`） */
+  model: string;
+  /** その短い表示名（例: `Opus 5.5`） */
+  label: string;
+  updated_at: number;
 }
 
 /**
@@ -979,6 +998,14 @@ export function summarizeEveryMessages(interval: number): number {
 }
 
 export const CURATED_MODELS: CuratedModel[] = [
+  // 最新を自動で使う（§6.6）。新しい版が出ても、ここは書き換えなくてよい
+  { id: '~anthropic/claude-opus-latest', label: 'Claude Opus（最新）', latest: true },
+  { id: '~anthropic/claude-sonnet-latest', label: 'Claude Sonnet（最新）', latest: true },
+  { id: '~anthropic/claude-fable-latest', label: 'Claude Fable（最新）', latest: true },
+  { id: '~openai/gpt-latest', label: 'GPT（最新）', latest: true },
+  { id: '~google/gemini-flash-latest', label: 'Gemini Flash（最新）', latest: true },
+  { id: '~x-ai/grok-latest', label: 'Grok（最新）', latest: true },
+  // 版を固定する
   { id: 'anthropic/claude-opus-5.5', label: 'Claude Opus 5.5' },
   { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8' },
   { id: 'anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5' },
@@ -1002,6 +1029,9 @@ export function modelLabel(ref: string): string {
   const { modelId } = parseModelRef(ref);
   if (!modelId) return '既定';
   const found = CURATED_MODELS.find((m) => m.id === modelId);
-  const label = found ? found.label : modelId.split('/').pop()!;
-  return label.replace(/^Claude\s+/i, '');
+  if (found) return found.label.replace(/^Claude\s+/i, '');
+  // 候補に無い「最新」の名前（`~作者/系列-latest`）は「系列（最新）」と出す
+  const latest = /^~[^/]+\/(.+)-latest$/.exec(modelId);
+  if (latest) return `${latest[1]}（最新）`;
+  return modelId.split('/').pop()!;
 }

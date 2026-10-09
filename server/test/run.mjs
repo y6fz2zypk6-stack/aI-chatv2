@@ -115,7 +115,7 @@ try {
   launch(
     process.execPath,
     [path.join(here, 'mock-llm.mjs')],
-    { MOCK_PORT: String(MOCK2_PORT), MOCK_QUEUE: queue2Path },
+    { MOCK_PORT: String(MOCK2_PORT), MOCK_QUEUE: queue2Path, MOCK_SECOND: '1' },
     'mock2',
   );
   await waitFor(`http://localhost:${MOCK_PORT}/v1/models`);
@@ -206,6 +206,10 @@ try {
   await s8.connectionCrudSuite();
   await s8.connectionRoutingSuite(MOCK2_PORT);
 
+  // 「最新」のモデル（§6.6）。答えた版の記録は再起動の後にも見る
+  const s10 = await import('./suite-latest.mjs');
+  const latestSaved = await s10.latestModelSuite();
+
   // メモリーの棚卸し（書き出し → 整理案 → 適用）
   const s7 = await import('./suite-memreview.mjs');
   const rw = await s7.setupReviewWorld('rv');
@@ -226,6 +230,10 @@ try {
   // 受付直後のロック取得は、モデル一覧のキャッシュが空の状態でしか観測できない。
   // 再起動直後のここで実行する
   await s.acceptLockSuite(w);
+
+  // **acceptLockSuite より後に置くこと。** 表示名を作るときにモデル一覧を引くので、
+  // 先に呼ぶとキャッシュが埋まり、上の競合の窓が作れなくなる
+  await s10.latestRestoredSuite(latestSaved);
 
   exitCode = report() > 0 ? 1 : 0;
 } catch (err) {

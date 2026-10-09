@@ -2133,6 +2133,40 @@ textarea.tall {
   place-items: center;
 }
 
+/* 行の名前と、その下の「いまは Opus 5.5」（最新の名前が実際にどの版で答えたか、§6.6） */
+.model-menu .mrow .ml {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.model-menu .mrow .ml small {
+  font: 500 11.5px/1.3 var(--font-ui);
+  color: var(--muted-strong);
+}
+
+/* 「最新を自動で使う」の小見出し。接続先の見出しと重なっても区別できるよう地を付けない */
+.model-menu .mgroup.sub {
+  background: none;
+  padding-top: 11px;
+}
+
+/* 「版を固定して選ぶ（N件）」。押すと固定の候補が開く */
+.model-menu .mrow.mfold {
+  font: 600 13px/1.3 var(--font-ui);
+  color: var(--muted-strong);
+  background: var(--surface-2);
+}
+
+.model-menu .mrow.mfold svg {
+  transition: transform 0.15s;
+}
+
+.model-menu .mrow.mfold.open svg {
+  transform: rotate(180deg);
+}
+
 /* ===== モーダル ===== */
 
 .modal-overlay {

@@ -187,6 +187,14 @@ CREATE TABLE IF NOT EXISTS event_fires (
 );
 CREATE INDEX IF NOT EXISTS idx_event_fires_chat ON event_fires(chat_id, event_id);
 
+-- 「最新」の名前（`~anthropic/claude-opus-latest` など、§6.6）に、実際に答えた版。
+-- 上流の応答の model 欄から記録する。画面の「いまは Opus 5.5」の表示と、予算のコンテキスト長に使う
+CREATE TABLE IF NOT EXISTS resolved_models (
+  ref TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 -- up_to_seq が範囲判定の正。up_to_message_id は参照・表示用に残す
 -- （境界のメッセージが削除されても範囲が壊れないようにするため）
 CREATE TABLE IF NOT EXISTS summaries (

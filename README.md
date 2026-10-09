@@ -18,7 +18,8 @@ React + TypeScript + Vite / Express 5 + SQLite / OpenRouter。
 | 7 | pendingイベント / PWA | ✅ |
 | v1.5.3 | 進行フラグ（state.vars）/ 条件式DSL / 確率・チェック方式・優先度つきイベント | ✅ |
 
-- チャット内でモデルを切替（ヘッダーのピル）。候補は `shared/types.ts` の `CURATED_MODELS`
+- チャット内でモデルを切替（ヘッダーのピル）。候補は `shared/types.ts` の `CURATED_MODELS`。
+  先頭の「（最新）」は OpenRouter の `~…-latest` の名前で、新しい版が出ても書き換えずに済む（SPEC §6.6）
 - キャラクター・ペルソナのアイコンは画像をアップロード可能（丸枠のカメラバッジから）
 - 書き出し: 世界一式（独自JSON・往復可）/ キャラクター（Character Card V2）/
   ロアブック（V2 character_book）/ 会話（JSON: 候補含む・テキスト）
@@ -144,7 +145,7 @@ sudo ufw deny 3000
 | `SESSION_SECRET` | ログインパスワードの比較に使うHMAC鍵（ランダムな長い文字列）。未設定なら `APP_PASSWORD` を代用。セッションIDの署名には使いません |
 | `COOKIE_SECURE` | 認証Cookieに `Secure` を付ける。未設定なら `APP_URL` が https:// のときだけ有効 |
 | `TRUST_PROXY` | リバースプロキシ配下で `X-Forwarded-*` を信頼する段数（nginx等の背後なら `1`）。ログイン制限のIP判定に必要 |
-| `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `anthropic/claude-opus-5.5` / `anthropic/claude-sonnet-5.5` |
+| `DEFAULT_MODEL` / `UTILITY_MODEL` | 既定 `~anthropic/claude-opus-latest` / `~anthropic/claude-sonnet-latest`（常に最新版。版を固定するなら `anthropic/claude-opus-5.5` のように書く） |
 | `BIND` | 待ち受けるインターフェース。未設定なら全インターフェース。Tailscale等でVPN内だけに公開するなら `127.0.0.1`。公開IPやLANのアドレスを書いても「絞った」ことにはなりません（パスワード無しなら起動を中止します） |
 | `ALLOW_UNAUTHENTICATED` | `1` のときだけ、無認証＋全インターフェースでの起動を許可する |
 | `STREAM_CONNECT_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` | ストリームの待ち時間の上限（既定60000ミリ秒ずつ）。上流が黙り込んだときに生成を打ち切る |

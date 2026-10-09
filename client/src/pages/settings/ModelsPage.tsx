@@ -26,6 +26,9 @@ export default function ModelsPage() {
         <Field label="モデル">
           <ModelSelect value={settings.default_model} groups={groups} onChange={(v) => void set({ default_model: v })} />
         </Field>
+        <Note>
+          「（最新）」を選ぶと、新しい版が出たとき自動で切り替わります。書きぶりや料金が変わることがあるので、気になるときは版を固定してください。
+        </Note>
         <SettingRow label="応答の長さの上限" unit="トークン" hint="1回の応答で書ける量。本文だけに効きます">
           <Stepper value={settings.max_tokens} step={256} min={256} onChange={(v) => void set({ max_tokens: v })} />
         </SettingRow>

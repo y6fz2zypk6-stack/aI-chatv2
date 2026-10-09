@@ -1,4 +1,5 @@
-import type { ModelInfo } from '../../../shared/types.js';
+import { isLatestAlias, type ModelInfo } from '../../../shared/types.js';
+import { getResolvedModel, recordResolvedModel } from '../db/repo/resolvedModels.js';
 import { headersOf, resolveConnection, resolveModelRef, type ResolvedConnection } from './provider.js';
 
 /**
@@ -66,6 +67,22 @@ export function toWireMessages(
   });
 }
 
+// ---- 「最新」の名前（§6.6） ----
+
+/**
+ * `~anthropic/claude-opus-latest` のような名前で呼んだとき、応答の `model` 欄に入っている
+ * 実際の版を覚える。画面の「いまは Opus 5.5」と、予算のコンテキスト長（§6.5）に使う。
+ * **記録の失敗で生成を止めない。** 表示のための情報なので、警告だけ残す
+ */
+function noteServedModel(ref: string, modelId: string, served: unknown): void {
+  if (typeof served !== 'string' || !served || served === modelId || !isLatestAlias(modelId)) return;
+  try {
+    recordResolvedModel(ref, served);
+  } catch (err) {
+    console.warn(`[models] 実際の版を記録できませんでした: ${(err as Error).message}`);
+  }
+}
+
 // ---- モデル情報（context_length のキャッシュ、§6.5） ----
 
 /** **接続先ごとに分ける。** 1本だと別のサービスの一覧を取り違える */
@@ -114,7 +131,12 @@ export async function contextLengthOf(ref: string, fallback: number): Promise<nu
   try {
     const models = await listModels(conn.id);
     const m = models.find((x) => x.id === modelId);
-    return m?.context_length || fallback;
+    if (m?.context_length) return m.context_length;
+    // 「最新」の名前が一覧に載っていなければ、前回実際に答えた版の長さを使う。
+    // 載っていないだけで既定（32k）に落とすと、長いモデルなのに履歴を削りすぎる
+    const served = isLatestAlias(modelId) ? getResolvedModel(ref) : undefined;
+    const s = served ? models.find((x) => x.id === served) : undefined;
+    return s?.context_length || fallback;
   } catch {
     return fallback;
   }
@@ -208,6 +230,8 @@ export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
   let full = '';
   // 接続先の解決は try の外で行う。キー未設定などはそのまま呼び出し側へ投げる
   const { conn, modelId } = resolveModelRef(opts.model);
+  /** 実際に答えた版は最初の1回だけ見れば足りる（§6.6） */
+  let servedNoted = false;
   try {
     let res: Response;
     arm(CONNECT_TIMEOUT_MS, 'connect_timeout');
@@ -258,8 +282,13 @@ export async function streamChat(opts: StreamOptions): Promise<StreamResult> {
           if (data === '[DONE]') continue;
           try {
             const json = JSON.parse(data) as {
+              model?: string;
               choices?: { delta?: { content?: string } }[];
             };
+            if (!servedNoted && json.model) {
+              servedNoted = true;
+              noteServedModel(opts.model, modelId, json.model);
+            }
             const delta = json.choices?.[0]?.delta?.content;
             if (delta) {
               full += delta;
@@ -318,8 +347,10 @@ export async function complete(opts: {
     throw new Error(`${conn.name} からエラー ${res.status}: ${text.slice(0, 300)}`);
   }
   const json = (await res.json()) as {
+    model?: string;
     choices?: { message?: { content?: string; refusal?: string }; finish_reason?: string }[];
   };
+  noteServedModel(opts.model, modelId, json.model);
   const choice = json.choices?.[0];
   return {
     text: choice?.message?.content ?? '',

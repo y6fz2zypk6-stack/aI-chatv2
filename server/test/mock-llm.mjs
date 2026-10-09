@@ -23,6 +23,15 @@ const PNG_1X1 =
 
 let modelsDelayMs = 0;
 
+/**
+ * 「最新」の名前（§6.6）を送られたときに、応答の model 欄へ入れる実際の版。
+ * 本物の OpenRouter と同じく、答えた版を返す。キューの item.servedModel で上書きできる
+ */
+const LATEST = {
+  '~anthropic/claude-opus-latest': 'anthropic/claude-opus-5.5',
+  '~anthropic/claude-sonnet-latest': 'anthropic/claude-sonnet-5.5',
+};
+
 const server = http.createServer(async (req, res) => {
   // テスト用: 受け取ったリクエストを覗く / 消す
   if (req.url.endsWith('/__requests')) {
@@ -56,6 +65,14 @@ const server = http.createServer(async (req, res) => {
         data: [
           { id: 'anthropic/claude-opus-5', name: 'Claude Opus 5', context_length: 200000 },
           { id: 'anthropic/claude-sonnet-5', name: 'Claude Sonnet 5', context_length: 200000 },
+          // OpenRouter 役のときだけ。「最新」の名前そのものは載せず、実際の版から長さを引く経路を通す（§6.5）。
+          // 2つ目のモック（自前の接続先の役）には出さない
+          ...(process.env.MOCK_SECOND
+            ? []
+            : [
+                { id: 'anthropic/claude-opus-5.5', name: 'Anthropic: Claude Opus 5.5', context_length: 1000000 },
+                { id: 'anthropic/claude-opus-5.6', name: 'Anthropic: Claude Opus 5.6', context_length: 1000000 },
+              ]),
         ],
       }),
     );
@@ -121,6 +138,8 @@ const server = http.createServer(async (req, res) => {
   const item = popQueue() ?? {
     text: 'ナレーター: （既定応答）\n\n@@@STATE\nelapsed_minutes: 10\n@@@END',
   };
+  // 応答の model 欄。本物と同じく、実際に答えた版を入れる
+  const served = item.servedModel ?? LATEST[reqJson.model] ?? reqJson.model;
 
   // status を指定すると上流エラーを再現できる（停止との区別を見るため）
   if (item.status && item.status >= 400) {
@@ -136,6 +155,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
+        model: served,
         choices: [
           {
             message: { content: item.text, ...(item.refusal ? { refusal: item.refusal } : {}) },
@@ -186,7 +206,7 @@ const server = http.createServer(async (req, res) => {
       closed = true;
       break;
     }
-    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: ch } }] })}\n\n`);
+    res.write(`data: ${JSON.stringify({ model: served, choices: [{ delta: { content: ch } }] })}\n\n`);
     sent++;
     if (item.gapMs) await new Promise((r) => setTimeout(r, item.gapMs));
   }

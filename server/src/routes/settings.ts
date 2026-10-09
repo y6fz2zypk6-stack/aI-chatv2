@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { CURATED_MODELS } from '../../../shared/types.js';
+import { CURATED_MODELS, modelLabel, parseModelRef, type ResolvedModel } from '../../../shared/types.js';
+import { listResolvedModels } from '../db/repo/resolvedModels.js';
 import { DEFAULT_SETTINGS, getSettings, updateSettings } from '../db/repo/settings.js';
 import { listModels } from '../llm/openrouter.js';
 import { listImageModels } from '../llm/image.js';
@@ -45,6 +46,32 @@ settingsRouter.get('/images/models', async (req, res) => {
 // 選択候補（モデルピル・設定のプルダウン用）。OpenRouterに繋がらなくても返せる
 settingsRouter.get('/models/curated', (_req, res) => {
   res.json(CURATED_MODELS);
+});
+
+/**
+ * 実際に答えた版の短い表示名。候補にあればその名前、無ければ接続先のモデル一覧の名前
+ * （「Anthropic: Claude Opus 5.6」→「Opus 5.6」）、それも無ければIDの末尾
+ */
+async function servedLabel(ref: string, model: string): Promise<string> {
+  if (CURATED_MODELS.some((m) => m.id === model)) return modelLabel(model);
+  try {
+    const info = (await listModels(parseModelRef(ref).connectionId)).find((m) => m.id === model);
+    if (info?.name && info.name !== info.id) {
+      return info.name.replace(/^[^:]+:\s*/, '').replace(/^Claude\s+/i, '');
+    }
+  } catch {
+    // 一覧が引けなくてもIDから作れる
+  }
+  return model.split('/').pop() || model;
+}
+
+// 「最新」の名前（§6.6）ごとに、実際に答えた版。画面の「いまは Opus 5.5」に使う
+settingsRouter.get('/models/resolved', async (_req, res) => {
+  const out: Record<string, ResolvedModel> = {};
+  for (const r of listResolvedModels()) {
+    out[r.ref] = { model: r.model, label: await servedLabel(r.ref, r.model), updated_at: r.updated_at };
+  }
+  res.json(out);
 });
 
 // 全モデル一覧（設定画面の自由入力の補完用）。?connection= で接続先を指定できる
